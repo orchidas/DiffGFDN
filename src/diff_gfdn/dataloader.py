@@ -1,0 +1,347 @@
+from loguru import logger
+from pathlib import Path
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+from numpy.typing import NDArray
+from typing import List, Tuple
+import torch
+import pickle
+from dataclasses import dataclass
+from torch.utils import data
+from scipy.fft import rfft, rfftfreq
+from abc import ABC
+
+
+@dataclass
+class Meshgrid():
+    xmesh: torch.tensor
+    ymesh: torch.tensor
+    zmesh: torch.tensor
+
+
+class RoomDataset(ABC):
+    """Parent class for any room dataset"""
+
+    def __init__(self, num_rooms: int, sample_rate: float,
+                 source_position: NDArray, receiver_position: NDArray,
+                 rirs: NDArray, room_dims: List, room_start_coord: List,
+                 absorption_coeffs: List):
+        self.sample_rate = sample_rate
+        self.num_rooms = num_rooms
+        self.source_position = source_position
+        self.receiver_position = receiver_position
+        self.rirs = rirs
+        self.num_rec = self.receiver_position.shape[0]
+        self.num_src = self.source_position.shape[0]
+        self.rir_length = self.rirs.shape[1]
+        self.absorption_coeffs = absorption_coeffs
+        self.room_dims = room_dims
+        self.room_start_coord = room_start_coord
+
+    @property
+    def num_freq_bins(self):
+        return int(np.pow(2, np.ceil(np.log2(self.rir_length))))
+
+    @property
+    def freq_bins_rad(self):
+        return rfftfreq(self.num_freq_bins)
+
+    @property
+    def freq_bins_hz(self):
+        return rfftfreq(self.num_freq_bins, d=1.0 / self.sample_rate)
+
+    @property
+    def rir_mag_response(self):
+        return np.abs(rfft(self.rirs, n=self.num_freq_bins, axis=-1))
+
+    def get_3D_meshgrid(self, grid_spacing_m: float) -> Meshgrid:
+        """
+        Returns the 3D meshgrid of the room's geometry
+        Args:
+            grid_spacing_m: spacing for creating the meshgrid
+        Returns:
+            Tuple : tuple of x, y and z meshes in 3D
+        """
+        Xcombined = []
+        Ycombined = []
+        Zcombined = []
+        for nroom in range(self.num_rooms):
+            num_x_points = self.room_dims[nroom][0] / grid_spacing_m
+            num_y_points = self.room_dims[nroom][1] / grid_spacing_m
+            num_z_points = self.room_dims[nroom][2] / grid_spacing_m
+            x = np.linspace(
+                self.room_start_coord[nroom][0],
+                self.room_start_coord[nroom][0] + self.room_dims[nroom][0])
+            y = np.linspace(
+                self.room_start_coord[nroom][1],
+                self.room_start_coord[nroom][1] + self.room_dims[nroom][1])
+            z = np.linspace(
+                self.room_start_coord[nroom][2],
+                self.room_start_coord[nroom][2] + self.room_dims[nroom][2])
+            (xm, ym, zm) = np.meshgrid(x, y, z)
+            Xcombined = np.concatenate((Xcombined, xm.flatten()))
+            Ycombined = np.concatenate((Ycombined, ym.flatten()))
+            Zcombined = np.concatenate((Zcombined, zm.flatten()))
+
+        return Meshgrid(torch.from_numpy(Xcombined),
+                        torch.from_numpy(Ycombined),
+                        torch.from_numpy(Zcombined))
+
+    def plot_3D_meshgrid(self, mesh_3D: Meshgrid):
+        """Plot the 3D meshgrid to visualise the room geometry"""
+        xmesh = mesh_3D.xmesh.cpu().detach().numpy()
+        ymesh = mesh_3D.ymesh.cpu().detach().numpy()
+        zmesh = mesh_3D.zmesh.cpu().detach().numpy()
+
+        x_flat = xmesh.flatten()
+        y_flat = ymesh.flatten()
+        z_flat = zmesh.flatten()
+
+        # Plot using scatter without any additional data for color
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+
+        # Plot the X, Y, Z points
+        ax.scatter(x_flat, y_flat, z_flat, color='b', marker='.')
+
+        # Set the limits for all axes
+        ax.set_xlim(0,
+                    self.room_dims[-1][0] + self.room_start_coord[-1][0] + 0.5)
+        ax.set_ylim(0,
+                    self.room_dims[-1][1] + self.room_start_coord[-1][1] + 0.5)
+        ax.set_zlim(0, self.room_dims[-1][-1] + 0.5)
+
+        # Set the viewing angle so the origin is in the front bottom-left corner
+        # ax.view_init(elev=90, azim=-90)
+
+        # Labels and title
+        ax.set_xlabel('X axis')
+        ax.set_ylabel('Y axis')
+        ax.set_zlabel('Z axis')
+        ax.set_title('3D mesh grid of coupled space')
+
+        # Show the plot
+        plt.show()
+
+
+class ThreeRoomDataset(RoomDataset):
+    """
+    Parse data from the three room dataset by Gotz et al from
+    'Dynamic late reverberation rendering using the common slope model'
+    in Proc. of AES International Conference on Audio for Gaming, 2024.
+    """
+
+    def __init__(self, filepath: Path):
+        """Read the data from the filepath"""
+        num_rooms = 3
+        assert str(filepath).endswith(
+            '.pkl'), "provide the path to the .pkl file"
+        # read contents from .mat file
+        try:
+            logger.info('Reading pkl file ...')
+            with open(filepath, 'rb') as f:
+                srir_mat = pickle.load(f)
+                sample_rate = srir_mat['fs']
+                source_position = srir_mat['srcPos'].T
+                receiver_position = srir_mat['rcvPos'].T
+                # these are second order ambisonic signals
+                # I am guessing the first channel contains the W component
+                rirs = srir_mat['srirs'][0, ...].T
+
+        except Exception as e:
+            raise FileNotFoundError(f"File was not found at {str(filepath)}")
+        logger.info("Done reading pkl file")
+        # uniform absorption coefficients of the three rooms
+        absorption_coeffs = np.array([0.2, 0.01, 0.1])
+        # (x,y) dimensions of the 3 rooms
+        room_dims = [(4.0, 8.0, 3.0), (6.0, 3.0, 3.0), (4.0, 8.0, 3.0)]
+        # this denotes the 3D position of the first vertex of the floor
+        room_start_coord = [(0, 0, 0), (4.0, 2.0, 0), (6.0, 5.0, 0)]
+        super().__init__(num_rooms, sample_rate, source_position,
+                         receiver_position, rirs, room_dims, room_start_coord,
+                         absorption_coeffs)
+        # how far apart the receivers are placed
+        mic_spacing_m = 0.3
+        self.mesh_3D = super().get_3D_meshgrid(mic_spacing_m)
+
+
+class InputFeatures():
+    """
+    Contains input features to our Diff GFDN network. These are
+    frequency bins at which the magnitude response is calculated,
+    and the source and listener positions where the RIRs are measured,
+    and the meshgrid of the room geometry
+    """
+
+    def __init__(self, z_values: torch.tensor, source_position: torch.tensor,
+                 listener_position: torch.tensor, mesh_3D: Meshgrid):
+        """
+        Args:
+        z_values: values around the unit circle (polar)
+        source_position: postion of the source in cartesian coordinates
+        listener_position: position of a receiver in cartesian coordinates
+        mesh_3D: mesh grid of the space geometry
+        """
+        self.z_values = z_values
+        self.source_position = source_position
+        self.listener_position = listener_position
+        self.mesh_3D = mesh_3D
+
+    def __repr__(self):
+        return (
+            f"InputFeatures(\n"
+            f"  z_values={self.z_values.tolist()},\n"
+            f"  source_position={self.source_position.tolist()},\n"
+            f"  listener_position={self.listener_position.tolist()}\n",
+            f"  mesh_3D={self.mesh_3D.xmesh, self.mesh_3D.ymesh, self.mesh_3D.zmesh}\n",
+            f")")
+
+
+class RIRDataset(data.Dataset):
+
+    def __init__(self, device: torch.device, room_data: RoomDataset):
+        """
+        RIR dataset containing magnitude response of RIRs around the unit circle,
+        for different receiver positions.
+        During batch processing, each batch will contain all the frequency bins
+        but different sets of receiver positions
+        Args:
+            device (str): cuda or cpu
+            room_data (RoomDataset): object of the room dataset class
+                        containing information about the RIRs and source and listener positions
+
+        """
+        # spatial data
+        self.source_position = torch.from_numpy(room_data.source_position)
+        self.listener_positions = torch.from_numpy(room_data.receiver_position)
+        self.mesh_3D = room_data.mesh_3D
+
+        # frequency-domain data
+        freq_bins_rad = torch.from_numpy(room_data.freq_bins_rad)
+        # this ensures that we cover half the unit circle (other half is symmetric)
+        self.z_values = torch.polar(torch.ones_like(freq_bins_rad),
+                                    freq_bins_rad * 2 * np.pi)
+        self.rir_mag_response = torch.from_numpy(room_data.rir_mag_response)
+
+    def __len__(self):
+        """Get length of dataset (equal to number of receiver positions)"""
+        return self.source_position.shape[0] * self.listener_positions.shape[0]
+
+    def __getitem__(self, idx: int):
+        """
+        Get data at a particular index
+        """
+        rir_mag_response = self.rir_mag_response[idx, :]
+
+        # Return an instance of InputFeatures
+        input_features = InputFeatures(self.z_values, self.source_position,
+                                       self.listener_positions[idx],
+                                       self.mesh_3D)
+
+        return {'input': input_features, 'target': rir_mag_response}
+
+
+def custom_collate(batch: data.Dataset):
+    """
+    This method is needed because Mwahgrid is a custom class, and pytorch's 
+    built in collate function cannot collate it
+    """
+    # these are independent of the source/receiver locations
+    z_values = batch[0]['input'].z_values
+    source_position = batch[0]['input'].source_position
+
+    # Assuming mesh_3D is a Meshgrid object with attributes xmesh, ymesh, zmesh
+    x_mesh = batch[0]['input'].mesh_3D.xmesh
+    y_mesh = batch[0]['input'].mesh_3D.ymesh
+    z_mesh = batch[0]['input'].mesh_3D.zmesh
+
+    # this is of size (Lx * Ly * Lz) x 3
+    mesh_3D_data = torch.stack((x_mesh, y_mesh, z_mesh), dim=1)
+
+    # depends on source/receiver positions
+    source_positions = [item['input'].source_position for item in batch]
+    listener_positions = [item['input'].listener_position for item in batch]
+    targets = [item['target'] for item in batch]
+
+    return {
+        'z_values': z_values,
+        'source_position': torch.stack(source_positions),
+        'listener_position': torch.stack(listener_positions),
+        'mesh_3D': mesh_3D_data,
+        'target': torch.stack(targets)
+    }
+
+
+def split_dataset(dataset: data.Dataset, split: float):
+    """
+    Randomly split a dataset into non-overlapping new datasets of 
+    sizes given in 'split' argument
+    """
+    logger.info(f'Length of the dataset is {len(dataset)}')
+
+    # use split % of dataset for validation
+    train_set_size = int(len(dataset) * split)
+    valid_set_size = len(dataset) - train_set_size
+
+    seed = torch.Generator(device=get_device()).manual_seed(42)
+    train_set, valid_set = torch.utils.data.random_split(
+        dataset, [train_set_size, valid_set_size], generator=seed)
+
+    logger.info(
+        f'The size of the training set is {len(train_set)} and the size of the validation set is {len(valid_set)}'
+    )
+    return train_set, valid_set
+
+
+def get_dataloader(dataset: data.Dataset,
+                   batch_size: int,
+                   shuffle: bool = True) -> data.DataLoader:
+    """Create torch dataloader form given dataset"""
+    dataloader = data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        generator=torch.Generator(device=get_device()),
+        drop_last=True,
+        collate_fn=custom_collate)
+    return dataloader
+
+
+def get_device():
+    """Output 'cuda' if gpu is available, 'cpu' otherwise"""
+    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+def load_dataset(room_data: RoomDataset,
+                 device: torch.device,
+                 train_valid_split_ratio: float = 0.8,
+                 batch_size: int = 32,
+                 shuffle: bool = True):
+    """
+    Get training and validation dataset
+    Args:
+        room_data (RoomDataset): object of type RoomDataset
+        device (str): cuda (GPU) or cpu
+        train_valid_split_ratio (float): ratio between training and validation set
+        batch_size (int): number of samples in each batch size
+        shuffle (bool): whether to randomly shuffle data during training
+    """
+    dataset = RIRDataset(device, room_data)
+    # split data into training and validation set
+    train_set, valid_set = split_dataset(dataset, train_valid_split_ratio)
+
+    # dataloaders
+    train_loader = get_dataloader(
+        train_set,
+        batch_size=batch_size,
+        shuffle=shuffle,
+    )
+
+    valid_loader = get_dataloader(
+        valid_set,
+        batch_size=batch_size,
+        shuffle=shuffle,
+    )
+    return train_loader, valid_loader

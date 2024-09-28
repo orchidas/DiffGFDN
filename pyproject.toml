@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools ~= 67.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["diff_gfdn"]
+# include the name of the folder containing the library
+# eg: include = ["diff_gfdn"]
+
+[project]
+name = "DiffGFDN"
+description = "Differentiable Grouped Feedback Delay Networks \
+for dynamic and efficient late reverberation rendering in coupled spaces"
+version = "0.0.1"
+requires-python = ">=3.8"
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: Other/Proprietary License",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "loguru>=0.6.0",
+    "notebook",
+    "numpy",
+    "scipy",
+    "h5py",
+    "tqdm",
+    "matplotlib",
+    "pydantic",
+    "torch",
+    "torchaudio",
+    "soundfile",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-cov", "tox"]
+dev = [
+    "flake8",
+    "flake8-pyproject",
+    "isort>=5.12.0",
+    "mypy",
+    "pylint",
+    "nbstripout",
+    "yapf",
+]
+
+[tool.flake8]
+max-line-length = 120
+extend-ignore = "E203"
+
+[tool.isort]
+line_length = 120
+profile = "black"
+sections = [
+    "FUTURE",
+    "STDLIB",
+    "THIRDPARTY",
+    "FIRSTPARTY",
+    "LOCALFOLDER",
+]
+known_first_party = [ "src"]
+force_sort_within_sections = true
+force_alphabetical_sort_within_sections = true
+honor_noqa = true
+
+[tool.yapf]
+based_on_style = "google"
+spaces_before_comment = 2
+split_before_logical_operator = true
+column_limit = 120
+split_all_top_level_comma_separated_values = true
+each_dict_entry_on_separate_line = true
+force_multiline_dict = true

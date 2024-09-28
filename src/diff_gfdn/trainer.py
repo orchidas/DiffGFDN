@@ -1,0 +1,136 @@
+import time
+import os
+from importlib import Path
+from loguru import logger
+from tqdm import trange, tqdm
+import torch
+import torchaudio
+from torch.utils.data import DataLoader
+from .losses import edr_loss
+from .model import DiffGFDN
+from .config.config import TrainerConfig
+from .dataloader import InputFeatures
+from .utils import get_response, get_str_results
+
+
+class Trainer:
+
+    def __init__(self, net: DiffGFDN, trainer_config: TrainerConfig):
+        """Class to train the DiffGFDN"""
+
+        self.net = net
+        self.device = trainer_config.device
+        self.max_epochs = trainer_config.max_epochs
+        self.patience = 5
+        self.early_stop = 0
+        self.train_dir = Path(trainer_config.train_dir).resolve()
+        self.ir_dir = Path(trainer_config.ir_dir).resolve()
+
+        self.optimizer = torch.optim.Adam(net.parameters(),
+                                          lr=trainer_config.lr)
+        self.criterion = edr_loss()
+        self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
+                                                         step_size=10,
+                                                         gamma=0.1)
+
+    def to_device(self):
+        for i, criterion in enumerate(self.criterion):
+            self.criterion[i] = self.criterion[i].to(self.device)
+
+    def train(self, train_dataset: DataLoader):
+        """Train the network"""
+        self.train_loss = []
+
+        st = time.time()  # start time
+        for epoch in trange(self.max_epochs, desc='Training'):
+            st_epoch = time.time()
+
+            # training
+            epoch_loss = 0
+            for data in train_dataset:
+                epoch_loss += self.train_step(data)
+            self.scheduler.step()
+            self.train_loss.append(epoch_loss / len(train_dataset))
+            et_epoch = time.time()
+            self.save_model(epoch)
+            self.print_results(epoch, et_epoch - st_epoch)
+
+            # early stopping
+            if (epoch >= 1):
+                if (abs(self.train_loss[-2] - self.train_loss[-1]) <= 0.0001):
+                    self.early_stop += 1
+                else:
+                    self.early_stop = 0
+            if self.early_stop == self.patience:
+                break
+
+        et = time.time()  # end time
+        logger.info('Training time: {:.3f}s'.format(et - st))
+
+        # save the trained IRs
+        logger.info("Saving the trained IRs...")
+        for data in train_dataset:
+            position = data.receiver_position
+            filename = f"train_ir_({position[0], position[1], position[2]})m.wav"
+            H = self.save_ir(data, directory=self.ir_dir, filename=filename)
+
+    def train_step(self, data):
+        """Single step of training"""
+        self.optimizer.zero_grad()
+        H = self.net(data)
+        loss = self.criterion[0](H, data['labels'])
+
+        loss.backward()
+        self.optimizer.step()
+        return loss.item()
+
+    def validate(valid_dataset: DataLoader):
+        """Validate the training with unseen data and save the resulting IRs"""
+        total_loss = 0
+        self.valid_loss = []
+        for data in valid_dataset:
+            position = data.receiver_position
+            logger.info(
+                f"Running the network for position: ({position[0], position[1], position[2]}) m"
+            )
+            filename = f"valid_ir_({position[0], position[1], position[2]})m.wav"
+            H = self.save_ir(data, directory=self.ir_dir, filename=filename)
+            loss = self.criterion[0](H, data['target'])
+            cur_loss = loss.item()
+            total_loss += cur_loss
+            self.valid_loss.append(cur_loss)
+            logger.info(
+                f"The validation loss for the current position is {cur_loss}")
+
+        net_valid_loss = total_loss / len(valid_dataset)
+        logger.info(f"The net validation loss is {net_valid_loss}")
+
+    def print_results(self, e: int, e_time):
+        print(get_str_results(epoch=e, train_loss=self.train_loss,
+                              time=e_time))
+
+    def save_model(self, e: int):
+        dir_path = os.path.join(self.train_dir, 'checkpoints')
+        # create checkpoint folder
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+        # save model
+        torch.save(self.net.state_dict(),
+                   os.path.join(dir_path, 'model_e' + str(e) + '.pt'))
+
+    @torch.no_grad()
+    def save_ir(self,
+                input_features: InputFeatures,
+                directory: str,
+                filename='ir.wav',
+                norm=False):
+        H, h = get_response(input_features, self.net)
+        if norm:
+            h = torch.div(h, torch.max(torch.abs(h)))
+        filepath = os.path.join(directory, filename)
+        torchaudio.save(filepath,
+                        torch.stack((h.squeeze(0), h.squeeze(0)), 1).cpu(),
+                        self.net.sample_rate,
+                        bits_per_sample=32,
+                        channels_first=False)
+        return H

@@ -1,0 +1,31 @@
+repos:
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.6.0
+    hooks:
+      - id: nbstripout
+  - repo: https://github.com/pycqa/isort
+    rev: 5.12.0
+    hooks:
+      - id: isort
+        name: isort (python)
+  - repo: https://github.com/pycqa/flake8
+    rev: 5.0.4
+    hooks:
+      - id: flake8
+        args: [
+              "--ignore=D100,D205,D400,W291,E501,D104,W504,E125,W503,E126",
+              ]
+        additional_dependencies: ["flake8-docstrings"]
+  - repo: local
+    hooks:
+      - id: pylint
+        name: pylint
+        entry: pylint
+        language: system
+        types: [python]
+        require_serial: true
+        args: [
+            src/,
+            "--rcfile=pylintrc", # Link to local config file
+            "--disable=C0103,C0209,E1102",
+          ]
