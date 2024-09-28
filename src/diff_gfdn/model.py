@@ -1,12 +1,15 @@
-import torch
+from typing import Dict, List, Tuple
+
 import numpy as np
-from typing import List, Tuple, Dict
-from torch import nn
+import torch
 from loguru import logger
-from .config.config import FeedbackLoopConfig, OutputFilterConfig, CouplingMatrixType
-from .utils import absorption_to_gain_per_sample, to_complex
+from torch import nn
+
+from .config.config import (CouplingMatrixType, FeedbackLoopConfig,
+                            OutputFilterConfig)
 from .feedback_loop import FeedbackLoop
 from .gain_filters import SVF_from_MLP
+from .utils import absorption_to_gain_per_sample, to_complex
 
 
 class DiffGFDN(nn.Module):

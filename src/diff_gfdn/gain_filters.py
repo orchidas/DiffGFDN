@@ -1,8 +1,10 @@
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
 import torch
 import torch.nn as nn
-from typing import List, Optional, Tuple, Dict
-import numpy as np
-from dataclasses import dataclass
+
 from .dataloader import Meshgrid
 
 

@@ -1,9 +1,11 @@
+from enum import Enum
 from pathlib import Path
-from pydantic import BaseModel, computed_field
+from typing import List, Tuple
+
 import numpy as np
 import sympy as sp
-from enum import Enum
-from typing import Tuple, List
+from pydantic import BaseModel, computed_field
+
 from ..utils import ms_to_samps
 
 

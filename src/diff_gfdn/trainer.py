@@ -1,15 +1,17 @@
-import time
 import os
+import time
 from importlib import Path
-from loguru import logger
-from tqdm import trange, tqdm
+
 import torch
 import torchaudio
+from loguru import logger
 from torch.utils.data import DataLoader
-from .losses import edr_loss
-from .model import DiffGFDN
+from tqdm import tqdm, trange
+
 from .config.config import TrainerConfig
 from .dataloader import InputFeatures
+from .losses import edr_loss
+from .model import DiffGFDN
 from .utils import get_response, get_str_results
 
 

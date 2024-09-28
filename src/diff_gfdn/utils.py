@@ -1,8 +1,10 @@
-from typing import Tuple, List, Union, Dict
+from typing import Dict, List, Tuple, Union
+
 import numpy as np
 import torch
 import torch.nn as nn
 from numpy.typing import ArrayLike, NDArray
+
 from .dataloader import InputFeatures
 
 

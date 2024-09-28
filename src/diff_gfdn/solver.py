@@ -1,13 +1,15 @@
-import torch
 import os
-from typing import Optional, List
 from pathlib import Path
+from typing import List, Optional
+
 import matplotlib.pyplot as plt
-from scipy.io import savemat
+import torch
 from loguru import logger
+from scipy.io import savemat
+
+from .config.config import DiffGFDNConfig
 from .dataloader import ThreeRoomDataset, load_dataset
 from .model import DiffGFDN
-from .config.config import DiffGFDNConfig
 
 
 def save_parameters(net: DiffGFDN, dir_path: str, filename: str):

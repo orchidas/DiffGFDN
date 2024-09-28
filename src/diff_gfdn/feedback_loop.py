@@ -1,6 +1,8 @@
+from typing import Optional
+
 import torch
 import torch.nn as nn
-from typing import Optional
+
 from .config.config import CouplingMatrixType
 from .utils import matrix_convolution, to_complex
 
