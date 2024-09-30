@@ -2,19 +2,17 @@ from typing import Dict, List, Tuple, Union
 
 import numpy as np
 import torch
-import torch.nn as nn
-from numpy.typing import ArrayLike, NDArray
-
-from .dataloader import InputFeatures
+from numpy.typing import ArrayLike
+from torch import nn
 
 
-def db(x: NDArray[float],
+def db(x: torch.tensor,
        is_squared: bool = False,
-       min_value: float = -200) -> NDArray[float]:
-    """Converts values to decibels.
+       min_value: float = -200) -> torch.tensor:
+    """Convert values to decibels.
 
     Args:
-        x (NDArray):
+        x (torch.tensor):
             value(s) to be converted to dB.
         is_squared (bool):
             Indicates whether `x` represents some power-like quantity (True) or some root-power-like quantity (False).
@@ -24,13 +22,14 @@ def db(x: NDArray[float],
     Returns:
         An array with the converted values, in dB.
     """
-    x = np.abs(x)
+    x = torch.abs(x)
     factor = 10.0 if is_squared else 20.0
-    y = factor * np.log10(x + np.finfo(np.float64).eps)
+    y = factor * torch.log10(x + torch.finfo(torch.float32).eps)
     return y.clip(min=min_value)
 
 
-def db2lin(x: ArrayLike) -> NDArray:
+def db2lin(
+        x: Union[torch.tensor, ArrayLike]) -> Union[torch.tensor, ArrayLike]:
     """Convert from decibels to linear
 
     Args:
@@ -39,13 +38,21 @@ def db2lin(x: ArrayLike) -> NDArray:
     Returns:
         (ArrayLike): values converted to linear
     """
-    return np.power(10.0, x * 0.05)
+    return torch.power(10.0, x * 0.05)
 
 
 def ms_to_samps(ms: Union[float, ArrayLike],
                 fs: float) -> Union[int, ArrayLike]:
+    """
+    Convert ms to samples
+    Args:
+        ms (float or ArrayLike): time in ms
+        fs (float): sampling rate
+    Returns:
+        int, ArrayLike: time in samples
+    """
     samp = ms * 1e-3 * fs
-    if isinstance(samp, np.ndarray):
+    if np.isscalar(samp):
         return samp.astype(np.int32)
     else:
         return int(samp)

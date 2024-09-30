@@ -1,15 +1,15 @@
 import os
 import time
 from importlib import Path
+from typing import Dict
 
 import torch
 import torchaudio
 from loguru import logger
 from torch.utils.data import DataLoader
-from tqdm import tqdm, trange
+from tqdm import trange
 
 from .config.config import TrainerConfig
-from .dataloader import InputFeatures
 from .losses import edr_loss
 from .model import DiffGFDN
 from .utils import get_response, get_str_results
@@ -19,7 +19,6 @@ class Trainer:
 
     def __init__(self, net: DiffGFDN, trainer_config: TrainerConfig):
         """Class to train the DiffGFDN"""
-
         self.net = net
         self.device = trainer_config.device
         self.max_epochs = trainer_config.max_epochs
@@ -30,13 +29,14 @@ class Trainer:
 
         self.optimizer = torch.optim.Adam(net.parameters(),
                                           lr=trainer_config.lr)
-        self.criterion = edr_loss()
+        self.criterion = edr_loss(self.net.sample_rate)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=10,
                                                          gamma=0.1)
 
     def to_device(self):
-        for i, criterion in enumerate(self.criterion):
+        """Return the device to train on - CPU or GPU"""
+        for i in range(len(self.criterion)):
             self.criterion[i] = self.criterion[i].to(self.device)
 
     def train(self, train_dataset: DataLoader):
@@ -58,8 +58,8 @@ class Trainer:
             self.print_results(epoch, et_epoch - st_epoch)
 
             # early stopping
-            if (epoch >= 1):
-                if (abs(self.train_loss[-2] - self.train_loss[-1]) <= 0.0001):
+            if epoch >= 1:
+                if abs(self.train_loss[-2] - self.train_loss[-1]) <= 0.0001:
                     self.early_stop += 1
                 else:
                     self.early_stop = 0
@@ -74,19 +74,20 @@ class Trainer:
         for data in train_dataset:
             position = data.receiver_position
             filename = f"train_ir_({position[0], position[1], position[2]})m.wav"
-            H = self.save_ir(data, directory=self.ir_dir, filename=filename)
+            self.save_ir(data, directory=self.ir_dir, filename=filename)
 
     def train_step(self, data):
         """Single step of training"""
         self.optimizer.zero_grad()
         H = self.net(data)
-        loss = self.criterion[0](H, data['labels'])
+        loss = self.criterion[0](data['target_rir_response'], H)
 
         loss.backward()
         self.optimizer.step()
         return loss.item()
 
-    def validate(valid_dataset: DataLoader):
+    @torch.no_grad()
+    def validate(self, valid_dataset: DataLoader):
         """Validate the training with unseen data and save the resulting IRs"""
         total_loss = 0
         self.valid_loss = []
@@ -97,7 +98,7 @@ class Trainer:
             )
             filename = f"valid_ir_({position[0], position[1], position[2]})m.wav"
             H = self.save_ir(data, directory=self.ir_dir, filename=filename)
-            loss = self.criterion[0](H, data['target'])
+            loss = self.criterion[0](data['target_rir_response'], H)
             cur_loss = loss.item()
             total_loss += cur_loss
             self.valid_loss.append(cur_loss)
@@ -108,10 +109,12 @@ class Trainer:
         logger.info(f"The net validation loss is {net_valid_loss}")
 
     def print_results(self, e: int, e_time):
+        """Print results of training"""
         print(get_str_results(epoch=e, train_loss=self.train_loss,
                               time=e_time))
 
     def save_model(self, e: int):
+        """Save the model at epoch number e"""
         dir_path = os.path.join(self.train_dir, 'checkpoints')
         # create checkpoint folder
         if not os.path.exists(dir_path):
@@ -122,10 +125,20 @@ class Trainer:
 
     @torch.no_grad()
     def save_ir(self,
-                input_features: InputFeatures,
+                input_features: Dict,
                 directory: str,
                 filename='ir.wav',
-                norm=False):
+                norm=False) -> torch.tensor:
+        """
+        Save the impulse response generated from the model
+        Args:
+            input_features (Dict): dictionary of input features
+            directory (str): where to save the audio
+            filename (str): filename of the particular RIR
+            norm (bool): whether to normalise the RIR
+        Returns:
+            torch.tensor - the frequency response at the given input features
+        """
         H, h = get_response(input_features, self.net)
         if norm:
             h = torch.div(h, torch.max(torch.abs(h)))

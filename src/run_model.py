@@ -5,12 +5,13 @@ import time
 from pathlib import Path
 from typing import Dict
 
-import torch
 import yaml
 from pydantic import BaseModel
 
 from diff_gfdn.config.config import DiffGFDNConfig
 from diff_gfdn.solver import run_training
+
+# pylint: disable=W1514
 
 
 def load_yaml_config(file_path: str):
@@ -65,9 +66,8 @@ def parse_args() -> argparse.Namespace:
         "--config_file",
         nargs='*',
         default=None,
-        help=
-        "Configuration file (YAML) containing upmixer parameters (if none provided, the default parameters "
-        + "are loaded).",
+        help="Configuration file (YAML) containing upmixer parameters \
+        (if none provided the default parameters are loaded).",
     )
 
     arguments = parser.parse_args()
@@ -79,7 +79,7 @@ if __name__ == '__main__':
     args = parse_args()
     if args.config_file:
         config_dict = load_and_validate_config(args.config_path,
-                                               DiffGFDNTrainConfig)
+                                               DiffGFDNConfig)
     else:
         config_dict = DiffGFDNConfig()
 

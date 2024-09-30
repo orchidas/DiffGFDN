@@ -2,7 +2,6 @@ import pickle
 from pathlib import Path
 
 import h5py
-import numpy as np
 from loguru import logger
 
 # This script converts the .mat file to pickle format which can be read much faster by Python

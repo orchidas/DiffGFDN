@@ -3,18 +3,18 @@ from pathlib import Path
 from typing import List, Optional
 
 import matplotlib.pyplot as plt
-import torch
 from loguru import logger
 from scipy.io import savemat
 
 from .config.config import DiffGFDNConfig
 from .dataloader import ThreeRoomDataset, load_dataset
 from .model import DiffGFDN
+from .trainer import Trainer
 
 
 def save_parameters(net: DiffGFDN, dir_path: str, filename: str):
     """
-    save parameters of DiffGFDN() net to .mat file 
+    Save parameters of DiffGFDN() net to .mat file 
     Args    net (nn.Module): trained FDN() network
             dir_path (string): path to output firectory
             filename (string): name of the file 
@@ -39,7 +39,7 @@ def save_parameters(net: DiffGFDN, dir_path: str, filename: str):
 
 def gfdn2dir(net: DiffGFDN):
     """
-    save learnable parameters to a dictionary  
+    Save learnable parameters to a dictionary  
     Args    net (nn.Module): trained FDN() network
     Output  d (dictionary of tensors): FDN() net parameters 
     """
@@ -57,13 +57,13 @@ def save_loss(train_loss: List,
               save_plot=True,
               filename: str = '',
               xaxis_label: Optional[str] = "epoch #"):
-    '''
-    save training and validation loss values in .mat format
+    """
+    Save training and validation loss values in .mat format
     Args    train_loss (list): training loss values at each epoch
             output_dir (string): path to output directory
             save_plot (bool): if True saves the plot of the losses in .pdf format
             filename (string): additional string to add before .pdf and .mat
-    '''
+    """
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
@@ -91,11 +91,12 @@ def run_training(config_dict: DiffGFDNConfig):
 
     # add number of groups to the config dictionary
     config_dict = config_dict.copy(update={"num_groups": room_data.num_rooms})
-    assert config_dict.num_delay_lines % config_dict.num_groups == 0, "Delay lines must be divisible by number of groups in network"
+    assert config_dict.num_delay_lines % config_dict.num_groups == 0, "Delay lines must be \
+    divisible by number of groups in network"
 
     if config_dict.sample_rate != room_data.sample_rate:
         logger.warn("Config sample rate does not match data, alterning it")
-        config_dict.sample_rate = sample_rate
+        config_dict.sample_rate = room_data.sample_rate
 
     # get the training config
     trainer_config = config_dict.trainer_config
@@ -109,8 +110,8 @@ def run_training(config_dict: DiffGFDNConfig):
     model = DiffGFDN(room_data.sample_rate, room_data.num_rooms,
                      config_dict.delay_length_samps,
                      room_data.absorption_coeffs, room_data.room_dims,
-                     trainer_config.device, feedback_loop_config,
-                     output_filter_config)
+                     trainer_config.device, config_dict.feedback_loop_config,
+                     config_dict.output_filter_config)
 
     # create the trainer object
     trainer = Trainer(model, trainer_config)
@@ -118,7 +119,6 @@ def run_training(config_dict: DiffGFDNConfig):
     # save initial parameters and ir
     save_parameters(trainer.net, trainer_config.train_dir,
                     'parameters_init.mat')
-    trainer.save_ir(trainer_config.ir_dir, filename='ir_init.wav')
 
     # train the network
     trainer.train(train_dataset)

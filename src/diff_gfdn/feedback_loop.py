@@ -1,22 +1,35 @@
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
+import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 
 from .config.config import CouplingMatrixType
 from .utils import matrix_convolution, to_complex
 
+# pylint: disable=E0606
+
 
 class Skew(nn.Module):
+    """Return a skew symmetric matrix from matrix X"""
 
-    def forward(self, X):
+    def forward(self, X: torch.tensor):
+        """
+        Args:
+            X : square real matrix
+        """
         A = X.triu(1)
         return A - A.transpose(-1, -2)
 
 
 class MatrixExponential(nn.Module):
+    """Return the exponentiated matrix X"""
 
-    def forward(self, X):
+    def forward(self, X: torch.tensor):
+        """
+        Args:
+            X : square real matrix
+        """
         return torch.matrix_exp(X)
 
 
@@ -33,6 +46,10 @@ class ND_Rotation(nn.Module):
                               torch.cos(angle)]])
 
     def forward(self, alpha: torch.tensor) -> torch.tensor:
+        """
+        Args
+            alpha (torch.tensor): N-1 rotation angles
+        """
         N = len(alpha) + 1
         givens_matrix = torch.eye(N)
 
@@ -48,6 +65,12 @@ class FIRParaunitary(nn.Module):
     """Construct FIR paraunitary matrix from unit norm vectors"""
 
     def __init__(self, N: int, order: int):
+        """
+        Args:
+        N (int): dimensions of the matrix
+        order (int): order of the polynomial matrix
+        """
+        super().__init__()
         self.N = N
         self.order = order
 
@@ -75,15 +98,16 @@ class FIRParaunitary(nn.Module):
         Returns:
             torch.tensor: N x N x order paraunitary matrix
         """
-        assert unitary_matrix.shape == (self.N, self.N)
+        assert unitary_matrix.shape == (self.N, self.N)  # noqa: E251
         assert unit_vectors.shape == (self.N, self.order - 1)
 
         # this is going to be the polynomial matrix we construct
+        # add a dimension after the last axis
         poly_matrix = unitary_matrix[..., None]
 
         for k in range(self.order - 1):
             cur_householder_matrix = self.construct_elementary_householder_matrix(
-                unit_vectors[:, k], self.N)
+                unit_vectors[:, k])
             poly_matrix = matrix_convolution(cur_householder_matrix,
                                              poly_matrix)
 
@@ -108,9 +132,10 @@ class FeedbackLoop(nn.Module):
             gains (List): delay line absorption gains
             coupling_matrix_type (CouplingMatrixType): scalar or filter coupling
         """
+        super().__init__()
         self.num_groups = num_groups
         self.num_delay_lines_per_group = num_delay_lines_per_group
-        self.delays = self.delays
+        self.delays = delays
         self.num_delays = len(self.delays)
         self.absorption_gains = gains
         self._eps = 1e-9
@@ -149,7 +174,6 @@ class FeedbackLoop(nn.Module):
 
     def forward(self, z: torch.tensor) -> torch.tensor:
         """Compute (D_m(z^{-1}) - A(z)Gamma(z))^{-1}"""
-
         # this will be of size num_freq_points x Ndel x Ndel
         D = torch.diag_embed(torch.unsqueeze(z, dim=-1)**self.delays)
 
@@ -202,7 +226,7 @@ class FeedbackLoop(nn.Module):
             alpha = self.alpha.clamp(min=-0.25 * np.pi, max=0.25 * np.pi)
             phi = self.nd_rotation(alpha)
 
-        elif coupling_matrix_type == CouplingMatrixType.FILTER:
+        elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
             # generate householder matrix from unitary vector
             # ensure that the vectors have unit norm
             unit_vectors = self.unit_vectors / (
@@ -231,7 +255,7 @@ class FeedbackLoop(nn.Module):
             coupled_feedback_matrix = block_M * torch.kron(
                 self.phi, ones_matrix)
 
-        elif coupling_matrix_type == CouplingMatrixType.FILTER:
+        elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
             # computed as A[k] = M_block circ (Phi[k] otimes 1)
             coupled_feedback_matrix = torch.zeros(
                 (self.num_delays, self.num_delays, self.coupling_matrix_order))
@@ -242,11 +266,13 @@ class FeedbackLoop(nn.Module):
         return to_complex(coupled_feedback_matrix)
 
     def print(self):
+        """Print the parameters"""
         for name, param in self.named_parameters():
             if param.requires_grad:
                 print(name, param.data)
 
-    def get_parameters(self):
+    def get_parameters(self) -> Tuple:
+        """Return the model parameters as a Tuple"""
         M = [self.ortho_param(self.M[i]) for i in range(self.num_groups)]
         Phi = self.phi
         L0 = self.ortho_param(self.unitary_matrix)
@@ -257,7 +283,8 @@ class FeedbackLoop(nn.Module):
         return (M, Phi, L0, unit_vectors, coupled_feedback_matrix)
 
     @torch.no_grad()
-    def get_param_dict(self):
+    def get_param_dict(self) -> Dict:
+        """Return the model parameters as a dict"""
         param_np = {}
         param_np['coupling_matrix'] = self.phi.squeeze().cpu().numpy()
         param_np['individual_mixing_matrix'] = self.M.squeeze().cpu().numpy()

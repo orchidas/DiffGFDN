@@ -3,14 +3,15 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 
-from .dataloader import Meshgrid
+# pylint: disable=E0606
 
 
 @dataclass
 class SVF:
     """Dataclass representing a state variable filter, which can then be converted to a biquad"""
+
     cutoff_frequency: float
     resonance: float
     m_LP: float
@@ -28,13 +29,14 @@ class BiquadCascade:
     # denominator coeffs of size num_sos x 3
     den_coeffs: torch.Tensor
 
-    def from_svf_coeffs(self, svf_coeffs: List[SVF]):
+    @staticmethod
+    def from_svf_coeffs(svf_coeffs: List[SVF]):
         """Get the biquad cascade from SVF coefficients"""
         num_sos = len(svf_coeffs)
         num_coeffs = torch.zeros((num_sos, 3))
         den_coeffs = torch.zeros_like(num_coeffs)
         for i in range(num_sos):
-            cur_svf = svf[i]
+            cur_svf = svf_coeffs[i]
             num_coeffs[
                 i,
                 0] = cur_svf.cutoff_frequency**2 * cur_svf.m_LP + cur_svf.cutoff_frequency * cur_svf.m_BP + cur_svf.m_HP
@@ -59,12 +61,14 @@ class BiquadCascade:
 class SoftPlus(nn.Module):
 
     def forward(self, x: torch.Tensor):
+        """Softplus function ensures positive output for SVF resonance"""
         return torch.div(torch.log(1 + torch.exp(x)), torch.log(2))
 
 
 class TanSigmoid(nn.Module):
 
     def forward(self, x: torch.Tensor):
+        """Tan-sigmoid ensures positive output for SVF frequency"""
         sigmoid = torch.div(1, 1 + torch.exp(-x))
         return torch.tan(np.pi * sigmoid * 0.5)
 
@@ -87,18 +91,18 @@ class SOSFilter(nn.Module):
 
     def forward(self, z: torch.Tensor, biquad_cascade: BiquadCascade):
         """
+        Calculate prod_i (b0,i + b1,iz^{-1} + b2,i z^{-2}) / (a0,i + a1,i z^{-1} + a2,iz^{-2})
         Here, z represents the input frequency sampling points
-        So, we need to calculate prod_i (b0,i + b1,iz^{-1} + b2,i z^{-2}) / (a0,i + a1,i z^{-1} + a2,iz^{-2})
         """
         H = torch.ones(len(z), dtype=torch.complex64)
         for k in range(self.num_biquads):
             H *= torch.div(
-                biquad_cascade.num_coeffs[i, 0] +
-                biquad_cascade.num_coeffs[i, 1] * torch.pow(z, -1) +
-                biquad_cascade.num_coeffs[i, 2] * torch.pow(z, -2),
-                biquad_cascade.den_coeffs[i, 0] +
-                biquad_cascade.den_coeffs[i, 1] * torch.pow(z, -1) +
-                biquad_cascade.den_coeffs[i, 2] * torch.pow(z, -2))
+                biquad_cascade.num_coeffs[k, 0] +
+                biquad_cascade.num_coeffs[k, 1] * torch.pow(z, -1) +
+                biquad_cascade.num_coeffs[k, 2] * torch.pow(z, -2),
+                biquad_cascade.den_coeffs[k, 0] +
+                biquad_cascade.den_coeffs[k, 1] * torch.pow(z, -1) +
+                biquad_cascade.den_coeffs[k, 2] * torch.pow(z, -2))
 
         return H
 
@@ -118,22 +122,30 @@ class SinusoidalEncoding(nn.Module):
     This increases the input feature dimension
     """
 
-    def forward(self, num_fourier_features: int, pos_coords: torch.tensor):
-        """ 
+    def __init__(self, num_fourier_features: int):
+        """
         Args:
             num_fourier_features: Lower dimensional features are expanded to this size
+        """
+        super().__init__()
+        self.num_fourier_features = num_fourier_features
+
+    def forward(self, pos_coords: torch.tensor):
+        """
+        Args:
             pos_coords: the position coordinates of the receivers
         """
-
         # x contains the position coordinates of size num_pos_pts x 3
         num_pos_pts, num_pos_features = pos_coords.shape
+        encoded_pos = torch.zeros(
+            num_pos_pts, num_pos_features * self.num_fourier_features * 2)
 
         start_idx = 0
-        for l in range(num_fourier_features):
+        for k in range(self.num_fourier_features):
             encoded_pos[:, start_idx:start_idx +
                         2 * num_pos_features] = torch.cat(
-                            (torch.sin(2**l * np.pi * pos_coords),
-                             torch.cos(2**l * np.pi * pos_coords)),
+                            (torch.sin(2**k * np.pi * pos_coords),
+                             torch.cos(2**k * np.pi * pos_coords)),
                             dim=-1)
             start_idx += 2 * num_pos_features
         # this is of size num_pos_pts x (3 * num_fourier_features * 2)
@@ -163,7 +175,6 @@ class OneHotEncoding(nn.Module):
                    positions where receivers were found in the meshgrid,
                    and the closest corresponding points in the meshgrid
         """
-
         one_hot_encoding = torch.zeros_like(X_flat)
         num_pos_pts = len(receiver_pos)
         closest_points = torch.zeros_like(receiver_pos)
@@ -186,6 +197,11 @@ class OneHotEncoding(nn.Module):
         return one_hot_encoding, closest_points
 
     def forward(self, mesh_3D: torch.tensor, receiver_pos: torch.tensor):
+        """
+        Args:
+            mesh_3D (torch.tensor): Lx * Ly * Lz, 3 3D mesh coordinates
+            receiver_pos (torch.tensor): Bx3 positions of the receivers in batch
+        """
         # Flatten the meshgrid arrays
         X_flat = mesh_3D[..., 0].view(-1, 1)  # Shape (L_x * L_y * L_z, 1)
         Y_flat = mesh_3D[..., 1].view(-1, 1)  # Shape (L_x * L_y, * L_z, 1)
@@ -203,7 +219,8 @@ class OneHotEncoding(nn.Module):
 class MLP(nn.Module):
 
     def __init__(self, num_pos_features: int, num_hidden_layers: int,
-                 num_neurons: int, num_biquads: int, num_delay_lines: int):
+                 num_neurons: int, num_biquads_in_cascade: int,
+                 num_delay_lines: int):
         """
         Initialize the MLP.
 
@@ -211,26 +228,29 @@ class MLP(nn.Module):
             num_pos_features (int): Number of spatial features
             num_hidden_layers (int): Number of hidden layers.
             num_neurons (int): Number of neurons in each hidden layer.
-            num_biquads (int): Number of biquads in cascade
+            num_biquads_in_cascaed (int): Number of biquads in cascade
             num_delay_lines (int): number of delay lines in FDN
         """
-        super(MLP, self).__init__()
+        super().__init__()
 
         # input is only position dependent.
         input_size = num_pos_features
         # Output layer has (num_del * 5 SVF params * num_biquads) features
-        output_size = num_del * 5 * num_biquads_in_cascade
+        output_size = num_delay_lines * 5 * num_biquads_in_cascade
 
         # Create a list of layers for the MLP
         layers = []
 
         # Input layer -> First hidden layer
         layers.append(nn.Linear(input_size, num_neurons))
+        # layer normalisation to ensure that weights and biases are distributed in (0,1)
+        layers.append(nn.LayerNorm(input_size, num_neurons))
         layers.append(nn.ReLU())  # Activation function
 
         # Add N hidden layers with L neurons each
         for _ in range(num_hidden_layers):
             layers.append(nn.Linear(num_neurons, num_neurons))
+            layers.append(nn.LayerNorm(num_neurons, num_neurons))
             layers.append(nn.ReLU())  # Activation function
 
         # Last hidden layer -> Output layer
@@ -239,7 +259,11 @@ class MLP(nn.Module):
         # Combine layers into a Sequential model
         self.model = nn.Sequential(*layers)
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.tensor):
+        """
+        Args:
+        x (torch.tensor): input feature vector
+        """
         return self.model(x)
 
 
@@ -277,7 +301,7 @@ class SVF_from_MLP(nn.Module):
             # number of input features would be 3. Since we are encoding them,
             # the number of features is 3 * num_fourier_features * 2
             num_input_features = 3 * num_fourier_features * 2
-            self.encoder = SinusoidalEncoding()
+            self.encoder = SinusoidalEncoding(num_fourier_features)
         elif encoding_type == "one_hot":
             # in this case, the (x,y,z) locations of the meshgrid and the
             # corresponding one-hot vector (1s where all the receiver locations are)
@@ -305,7 +329,7 @@ class SVF_from_MLP(nn.Module):
 
     def forward(self, x: Dict) -> torch.tensor:
         """
-        Runs the input features through the MLP, gets the filter coefficients as output of the MLP
+        Run the input features through the MLP, gets the filter coefficients as output of the MLP
         Then returns the frequency response of the cascade of SVF filters
         """
         z_values = x['z_values']
@@ -319,12 +343,12 @@ class SVF_from_MLP(nn.Module):
 
         # encode the position coordinates only
         if self.encoding_type == "direct":
-            encoded_position = self.encoder(num_fourier_features, position)
+            encoded_position = self.encoder(position)
         elif self.encoding_type == "one_hot":
             encoded_position, _ = self.encoder(mesh_3D, position)
 
         # run the MLP, output of the MLP are the state variable filter coefficients
-        self.svf_params = MLP(encoded_position).reshape(
+        self.svf_params = self.mlp(encoded_position).reshape(
             self.num_delay_lines, self.num_biquads, 5)
 
         # always ensure that the filter cutoff frequency and resonance is positive
@@ -344,11 +368,13 @@ class SVF_from_MLP(nn.Module):
         return H
 
     def print(self):
+        """Print the value of the parameters"""
         for name, param in self.named_parameters():
             if param.requires_grad:
                 print(name, param.data)
 
-    def get_parameters(self):
+    def get_parameters(self) -> Tuple:
+        """Return the parameters as tuple"""
         svf_params = self.svf_params
         biquad_coeffs = torch.cat(
             (self.biquad_cascade.num_coeffs, self.biquad_cascade.den_coeffs),
@@ -356,7 +382,8 @@ class SVF_from_MLP(nn.Module):
         return (svf_params, biquad_coeffs)
 
     @torch.no_grad()
-    def get_param_dict(self):
+    def get_param_dict(self) -> Dict:
+        """Return the parameters as a dict"""
         param_np = {}
         param_np['svf_params'] = self.svf_params.squeeze().cpu().numpy()
         param_np['biquad_coeffs'] = torch.cat(

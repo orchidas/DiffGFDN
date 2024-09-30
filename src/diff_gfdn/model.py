@@ -2,11 +2,9 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
-from loguru import logger
 from torch import nn
 
-from .config.config import (CouplingMatrixType, FeedbackLoopConfig,
-                            OutputFilterConfig)
+from .config.config import FeedbackLoopConfig, OutputFilterConfig
 from .feedback_loop import FeedbackLoop
 from .gain_filters import SVF_from_MLP
 from .utils import absorption_to_gain_per_sample, to_complex
@@ -71,7 +69,11 @@ class DiffGFDN(nn.Module):
             output_filter_config.num_neurons_per_layer)
 
     def forward(self, x: Dict) -> torch.tensor:
-        """Compute H(z) = c(z)^H (D - A(z)Gamma(z))^{-1} b(z)"""
+        """
+        Compute H(z) = c(z)^H (D - A(z)Gamma(z))^{-1} b(z) + d(z)
+        Args:
+            x(dict) : input feature dict
+        """
         z = x['z_values']
         num_freq_pts = len(z)
         # this is of size Ndel x num_freq_points
@@ -83,11 +85,13 @@ class DiffGFDN(nn.Module):
         P = self.feedback_loop(z)
         # C.T @ P
         Htemp = torch.einsum('kn, knm -> km', C.T, P)
-        # C.T @ P @ B
-        H = torch.diagonal(torch.mm(Htemp, B))
+        # C.T @ P @ B + d(z)
+        direct_filter = x['target_early_response']
+        H = torch.diagonal(torch.mm(Htemp, B)) + direct_filter
         return H
 
-    def get_parameters(self):
+    def get_parameters(self) -> Tuple:
+        """Return the parameters as a tuple"""
         delays = self.delays
         gain_per_sample = self.gain_per_sample
         b = self.input_gains
@@ -98,7 +102,8 @@ class DiffGFDN(nn.Module):
                 svf_params, biquad_coeffs)
 
     @torch.no_grad()
-    def get_param_dict(self):
+    def get_param_dict(self) -> Dict:
+        """Return the parameters as a dict"""
         param_np = {}
         param_np['delays'] = self.delays.squeeze().cpu().numpy()
         param_np['gains_per_sample'] = self.gain_per_sample.squeeze().cpu(

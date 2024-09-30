@@ -1,6 +1,5 @@
 from enum import Enum
-from pathlib import Path
-from typing import List, Tuple
+from typing import List
 
 import numpy as np
 import sympy as sp
@@ -11,6 +10,7 @@ from ..utils import ms_to_samps
 
 class CouplingMatrixType(Enum):
     """Different types of coupling matrix"""
+
     SCALAR = "scalar_matrix"
     FILTER = "filter_matrix"
 
@@ -54,6 +54,7 @@ class TrainerConfig(BaseModel):
 
 class DiffGFDNConfig(BaseModel):
     """Config file for training the DiffGFDN"""
+
     # path to three room dataset
     room_dataset_path: str = '../resources/Georg_3room_FDTD/srirs.pkl'
     # sampling rate of the FDN
@@ -62,8 +63,8 @@ class DiffGFDNConfig(BaseModel):
     trainer_config: TrainerConfig = TrainerConfig()
     # number of delay lines
     num_delay_lines: int = 12
-    # delay range in ms
-    delay_range_ms: List[float] = [50.0, 100.0]
+    # delay range in ms - first delay should be after the mixing time
+    delay_range_ms: List[float] = [20.0, 50.0]
     # config for the feedback loop
     feedback_loop_config: FeedbackLoopConfig = FeedbackLoopConfig()
     # number of biquads in SVF

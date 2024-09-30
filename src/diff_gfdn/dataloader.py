@@ -2,16 +2,17 @@ import pickle
 from abc import ABC
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from loguru import logger
-from mpl_toolkits.mplot3d import Axes3D
 from numpy.typing import NDArray
 from scipy.fft import rfft, rfftfreq
 from torch.utils import data
+
+from .utils import ms_to_samps
 
 
 @dataclass
@@ -21,13 +22,69 @@ class Meshgrid():
     zmesh: torch.tensor
 
 
+@dataclass
+class InputFeatures():
+    """
+    Contains input features to our Diff GFDN network. These are
+    frequency bins at which the magnitude response is calculated,
+    and the source and listener positions where the RIRs are measured,
+    and the meshgrid of the room geometry
+    Args:
+        z_values: values around the unit circle (polar)
+        source_position: postion of the source in cartesian coordinates
+        listener_position: position of a receiver in cartesian coordinates
+        mesh_3D: mesh grid of the space geometry
+    """
+
+    z_values: torch.tensor
+    source_position: torch.tensor
+    listener_position: torch.tensor
+    mesh_3D: Meshgrid
+
+    def __repr__(self):
+        # pylint: disable=E0306
+        return (
+            f"InputFeatures(\n"
+            f"  z_values={self.z_values.tolist()}, \n"
+            f"  source_position={self.source_position.tolist()}, \n"
+            f"  listener_position={self.listener_position.tolist()}, \n",
+            f"  mesh_3D={self.mesh_3D.xmesh, self.mesh_3D.ymesh, self.mesh_3D.zmesh}, \n",
+            ")")
+
+
+@dataclass
+class Target():
+    # the frequency response of the target RIR, split into early and late parts
+    early_rir_mag_response: torch.tensor
+    late_rir_mag_response: torch.tensor
+    rir_mag_response: torch.tensor
+
+
 class RoomDataset(ABC):
     """Parent class for any room dataset"""
 
-    def __init__(self, num_rooms: int, sample_rate: float,
-                 source_position: NDArray, receiver_position: NDArray,
-                 rirs: NDArray, room_dims: List, room_start_coord: List,
-                 absorption_coeffs: List):
+    def __init__(self,
+                 num_rooms: int,
+                 sample_rate: float,
+                 source_position: NDArray,
+                 receiver_position: NDArray,
+                 rirs: NDArray,
+                 room_dims: List,
+                 room_start_coord: List,
+                 absorption_coeffs: List,
+                 mixing_time_ms: float = 20.0):
+        """
+        Args:
+            num_rooms (int): number of rooms in coupled space
+            sample_rate (float): sample rate of dataset
+            source_position (NDArray): position of sources in cartesian coordinate
+            receiver_position (NDArray): position of receivers in cartesian coordinate
+            rirs (NDArray): omni-rirs at all source and receiver positions
+            room_dims (List): l,w,h for each room in coupled space
+            room_start_coord (List): coordinates of the room's starting vertex (first room starts at origin)
+            absorption_coeffs (List): uniform absorption coefficients for each room
+            mixing_time_ms (float): mixing time of the RIR for early-late split
+        """
         self.sample_rate = sample_rate
         self.num_rooms = num_rooms
         self.source_position = source_position
@@ -35,30 +92,63 @@ class RoomDataset(ABC):
         self.rirs = rirs
         self.num_rec = self.receiver_position.shape[0]
         self.num_src = self.source_position.shape[0]
-        self.rir_length = self.rirs.shape[1]
+        self.rir_length = self.rirs.shape[-1]
         self.absorption_coeffs = absorption_coeffs
         self.room_dims = room_dims
         self.room_start_coord = room_start_coord
+        self.mixing_time_ms = mixing_time_ms
+        self.early_late_split()
 
     @property
     def num_freq_bins(self):
+        """Number of frequency bins in the magnitude response"""
         return int(np.pow(2, np.ceil(np.log2(self.rir_length))))
 
     @property
     def freq_bins_rad(self):
+        """Frequency bins in radians"""
         return rfftfreq(self.num_freq_bins)
 
     @property
     def freq_bins_hz(self):
+        """Frequency bins in Hz"""
         return rfftfreq(self.num_freq_bins, d=1.0 / self.sample_rate)
 
     @property
     def rir_mag_response(self):
-        return np.abs(rfft(self.rirs, n=self.num_freq_bins, axis=-1))
+        """Frequency response of the RIRs, time along last axis"""
+        return rfft(self.rirs, n=self.num_freq_bins, axis=-1)
+
+    def early_late_split(self, win_len_ms: float = 5.0):
+        """Split the RIRs into early and late response based on mixing time"""
+        mixing_time_samps = ms_to_samps(self.mixing_time_ms, self.sample_rate)
+        win_len_samps = ms_to_samps(win_len_ms, self.sample_rate)
+        window = np.broadcast_to(np.hanning(win_len_samps),
+                                 (self.rirs.shape[0], win_len_samps))
+
+        # create fade in and fade out windows to avoid discontinuities
+        fade_in_win = window[:, :win_len_samps // 2]
+        fade_out_win = window[:, win_len_samps // 2:]
+
+        # truncate rir into early and late parts
+        self.early_rirs = self.rirs[:, :mixing_time_samps]
+        self.late_rirs = self.rirs[:, mixing_time_samps:]
+
+        # apply fade-in and fade-out windows
+        self.early_rirs[:, -win_len_samps // 2:] *= fade_out_win
+        self.late_rirs[:, :win_len_samps // 2] *= fade_in_win
+
+        # get frequency response
+        self.late_rir_mag_response = rfft(self.late_rirs,
+                                          n=self.num_freq_bins,
+                                          axis=-1)
+        self.early_rir_mag_response = rfft(self.early_rirs,
+                                           n=self.num_freq_bins,
+                                           axis=-1)
 
     def get_3D_meshgrid(self, grid_spacing_m: float) -> Meshgrid:
         """
-        Returns the 3D meshgrid of the room's geometry
+        Return the 3D meshgrid of the room's geometry
         Args:
             grid_spacing_m: spacing for creating the meshgrid
         Returns:
@@ -73,13 +163,16 @@ class RoomDataset(ABC):
             num_z_points = self.room_dims[nroom][2] / grid_spacing_m
             x = np.linspace(
                 self.room_start_coord[nroom][0],
-                self.room_start_coord[nroom][0] + self.room_dims[nroom][0])
+                self.room_start_coord[nroom][0] + self.room_dims[nroom][0],
+                num_x_points)
             y = np.linspace(
                 self.room_start_coord[nroom][1],
-                self.room_start_coord[nroom][1] + self.room_dims[nroom][1])
+                self.room_start_coord[nroom][1] + self.room_dims[nroom][1],
+                num_y_points)
             z = np.linspace(
                 self.room_start_coord[nroom][2],
-                self.room_start_coord[nroom][2] + self.room_dims[nroom][2])
+                self.room_start_coord[nroom][2] + self.room_dims[nroom][2],
+                num_z_points)
             (xm, ym, zm) = np.meshgrid(x, y, z)
             Xcombined = np.concatenate((Xcombined, xm.flatten()))
             Ycombined = np.concatenate((Ycombined, ym.flatten()))
@@ -143,15 +236,16 @@ class ThreeRoomDataset(RoomDataset):
             logger.info('Reading pkl file ...')
             with open(filepath, 'rb') as f:
                 srir_mat = pickle.load(f)
-                sample_rate = srir_mat['fs']
+                sample_rate = srir_mat['fs'][0]
                 source_position = srir_mat['srcPos'].T
                 receiver_position = srir_mat['rcvPos'].T
                 # these are second order ambisonic signals
                 # I am guessing the first channel contains the W component
-                rirs = srir_mat['srirs'][0, ...].T
+                rirs = np.squeeze(srir_mat['srirs'][0, ...]).T
 
-        except Exception as e:
-            raise FileNotFoundError(f"File was not found at {str(filepath)}")
+        except Exception as exc:
+            raise FileNotFoundError(
+                f"File was not found at {str(filepath)}") from exc
         logger.info("Done reading pkl file")
         # uniform absorption coefficients of the three rooms
         absorption_coeffs = np.array([0.2, 0.01, 0.1])
@@ -165,38 +259,6 @@ class ThreeRoomDataset(RoomDataset):
         # how far apart the receivers are placed
         mic_spacing_m = 0.3
         self.mesh_3D = super().get_3D_meshgrid(mic_spacing_m)
-
-
-class InputFeatures():
-    """
-    Contains input features to our Diff GFDN network. These are
-    frequency bins at which the magnitude response is calculated,
-    and the source and listener positions where the RIRs are measured,
-    and the meshgrid of the room geometry
-    """
-
-    def __init__(self, z_values: torch.tensor, source_position: torch.tensor,
-                 listener_position: torch.tensor, mesh_3D: Meshgrid):
-        """
-        Args:
-        z_values: values around the unit circle (polar)
-        source_position: postion of the source in cartesian coordinates
-        listener_position: position of a receiver in cartesian coordinates
-        mesh_3D: mesh grid of the space geometry
-        """
-        self.z_values = z_values
-        self.source_position = source_position
-        self.listener_position = listener_position
-        self.mesh_3D = mesh_3D
-
-    def __repr__(self):
-        return (
-            f"InputFeatures(\n"
-            f"  z_values={self.z_values.tolist()},\n"
-            f"  source_position={self.source_position.tolist()},\n"
-            f"  listener_position={self.listener_position.tolist()}\n",
-            f"  mesh_3D={self.mesh_3D.xmesh, self.mesh_3D.ymesh, self.mesh_3D.zmesh}\n",
-            f")")
 
 
 class RIRDataset(data.Dataset):
@@ -217,6 +279,7 @@ class RIRDataset(data.Dataset):
         self.source_position = torch.from_numpy(room_data.source_position)
         self.listener_positions = torch.from_numpy(room_data.receiver_position)
         self.mesh_3D = room_data.mesh_3D
+        self.device = device
 
         # frequency-domain data
         freq_bins_rad = torch.from_numpy(room_data.freq_bins_rad)
@@ -224,35 +287,38 @@ class RIRDataset(data.Dataset):
         self.z_values = torch.polar(torch.ones_like(freq_bins_rad),
                                     freq_bins_rad * 2 * np.pi)
         self.rir_mag_response = torch.from_numpy(room_data.rir_mag_response)
+        self.late_rir_mag_response = torch.from_numpy(
+            room_data.late_rir_mag_response)
+        self.early_rir_mag_response = torch.from_numpy(
+            room_data.early_rir_mag_response)
 
     def __len__(self):
         """Get length of dataset (equal to number of receiver positions)"""
         return self.source_position.shape[0] * self.listener_positions.shape[0]
 
     def __getitem__(self, idx: int):
-        """
-        Get data at a particular index
-        """
-        rir_mag_response = self.rir_mag_response[idx, :]
-
+        """Get data at a particular index"""
         # Return an instance of InputFeatures
         input_features = InputFeatures(self.z_values, self.source_position,
                                        self.listener_positions[idx],
                                        self.mesh_3D)
+        target_labels = Target(self.early_rir_mag_response[idx, :],
+                               self.late_rir_mag_response[idx, :],
+                               self.rir_mag_response[idx, :])
 
-        return {'input': input_features, 'target': rir_mag_response}
+        return {'input': input_features, 'target': target_labels}
 
 
 def custom_collate(batch: data.Dataset):
     """
-    This method is needed because Mwahgrid is a custom class, and pytorch's 
+    Collate datapoints in the dataloader.
+    This method is needed because Meshgrid is a custom class, and pytorch's 
     built in collate function cannot collate it
     """
     # these are independent of the source/receiver locations
     z_values = batch[0]['input'].z_values
-    source_position = batch[0]['input'].source_position
 
-    # Assuming mesh_3D is a Meshgrid object with attributes xmesh, ymesh, zmesh
+    # mesh_3D is a Meshgrid object with attributes xmesh, ymesh, zmesh
     x_mesh = batch[0]['input'].mesh_3D.xmesh
     y_mesh = batch[0]['input'].mesh_3D.ymesh
     z_mesh = batch[0]['input'].mesh_3D.zmesh
@@ -263,14 +329,22 @@ def custom_collate(batch: data.Dataset):
     # depends on source/receiver positions
     source_positions = [item['input'].source_position for item in batch]
     listener_positions = [item['input'].listener_position for item in batch]
-    targets = [item['target'] for item in batch]
+    target_early_response = [
+        item['target'].early_rir_mag_response for item in batch
+    ]
+    target_late_response = [
+        item['target'].late_rir_mag_response for item in batch
+    ]
+    target_rir_response = [item['target'].rir_mag_response for item in batch]
 
     return {
         'z_values': z_values,
         'source_position': torch.stack(source_positions),
         'listener_position': torch.stack(listener_positions),
         'mesh_3D': mesh_3D_data,
-        'target': torch.stack(targets)
+        'target_early_response': torch.stack(target_early_response),
+        'target_late_response': torch.stack(target_late_response),
+        'target_rir_response': torch.stack(target_rir_response)
     }
 
 
