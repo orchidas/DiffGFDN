@@ -37,7 +37,7 @@ class DiffGFDN(nn.Module):
         self.num_groups = num_groups
         assert len(absorption_coeffs) == self.num_groups
         self.absorption_coeffs = absorption_coeffs
-        self.delays = torch.tensor(delays).squeeze()
+        self.delays = torch.tensor(delays, dtype=torch.int32)
         self.num_delay_lines = len(delays)
         self.num_delay_lines_per_group = int(self.num_delay_lines /
                                              self.num_groups)
@@ -60,8 +60,8 @@ class DiffGFDN(nn.Module):
             torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
         self.feedback_loop = FeedbackLoop(
             self.num_groups, self.num_delay_lines_per_group, self.delays,
-            self.absorption_coeffs, feedback_loop_config.coupling_matrix_type,
-            feedback_loop_config.coupling_matrix_order)
+            self.gain_per_sample, feedback_loop_config.coupling_matrix_type,
+            feedback_loop_config.pu_matrix_order)
         self.output_filters = SVF_from_MLP(
             output_filter_config.num_biquads_svf, self.num_delay_lines,
             output_filter_config.num_fourier_features,

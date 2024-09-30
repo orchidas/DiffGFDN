@@ -158,9 +158,9 @@ class RoomDataset(ABC):
         Ycombined = []
         Zcombined = []
         for nroom in range(self.num_rooms):
-            num_x_points = self.room_dims[nroom][0] / grid_spacing_m
-            num_y_points = self.room_dims[nroom][1] / grid_spacing_m
-            num_z_points = self.room_dims[nroom][2] / grid_spacing_m
+            num_x_points = int(self.room_dims[nroom][0] / grid_spacing_m)
+            num_y_points = int(self.room_dims[nroom][1] / grid_spacing_m)
+            num_z_points = int(self.room_dims[nroom][2] / grid_spacing_m)
             x = np.linspace(
                 self.room_start_coord[nroom][0],
                 self.room_start_coord[nroom][0] + self.room_dims[nroom][0],
@@ -236,7 +236,7 @@ class ThreeRoomDataset(RoomDataset):
             logger.info('Reading pkl file ...')
             with open(filepath, 'rb') as f:
                 srir_mat = pickle.load(f)
-                sample_rate = srir_mat['fs'][0]
+                sample_rate = srir_mat['fs'][0][0]
                 source_position = srir_mat['srcPos'].T
                 receiver_position = srir_mat['rcvPos'].T
                 # these are second order ambisonic signals

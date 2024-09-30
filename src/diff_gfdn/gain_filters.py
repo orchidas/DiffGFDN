@@ -19,6 +19,7 @@ class SVF:
     m_BP: float
 
 
+@dataclass
 class BiquadCascade:
     """Dataclass representing a biquad cascade"""
 
@@ -62,7 +63,7 @@ class SoftPlus(nn.Module):
 
     def forward(self, x: torch.Tensor):
         """Softplus function ensures positive output for SVF resonance"""
-        return torch.div(torch.log(1 + torch.exp(x)), torch.log(2))
+        return torch.div(torch.log(1 + torch.exp(x)), np.log(2))
 
 
 class TanSigmoid(nn.Module):
@@ -235,8 +236,10 @@ class MLP(nn.Module):
 
         # input is only position dependent.
         input_size = num_pos_features
+        self.num_biquads = num_biquads_in_cascade
+        self.num_delay_lines = num_delay_lines
         # Output layer has (num_del * 5 SVF params * num_biquads) features
-        output_size = num_delay_lines * 5 * num_biquads_in_cascade
+        output_size = self.num_delay_lines * 5 * self.num_biquads
 
         # Create a list of layers for the MLP
         layers = []
@@ -244,13 +247,13 @@ class MLP(nn.Module):
         # Input layer -> First hidden layer
         layers.append(nn.Linear(input_size, num_neurons))
         # layer normalisation to ensure that weights and biases are distributed in (0,1)
-        layers.append(nn.LayerNorm(input_size, num_neurons))
+        layers.append(nn.LayerNorm(num_neurons))
         layers.append(nn.ReLU())  # Activation function
 
         # Add N hidden layers with L neurons each
         for _ in range(num_hidden_layers):
             layers.append(nn.Linear(num_neurons, num_neurons))
-            layers.append(nn.LayerNorm(num_neurons, num_neurons))
+            layers.append(nn.LayerNorm(num_neurons))
             layers.append(nn.ReLU())  # Activation function
 
         # Last hidden layer -> Output layer
@@ -259,12 +262,30 @@ class MLP(nn.Module):
         # Combine layers into a Sequential model
         self.model = nn.Sequential(*layers)
 
+        # Add an adaptive average pooling layer to pool over the batch dimension
+        self.pooling = nn.AdaptiveAvgPool1d(
+            1)  # Pool down to 1 value along the batch dimension
+
     def forward(self, x: torch.tensor):
         """
         Args:
         x (torch.tensor): input feature vector
         """
-        return self.model(x)
+        x = self.model(x)
+        # pool the output layer to ensure that size is 5 x num_delay_lines x num_biquads
+        # Reshape x to [batch_size, 5 * N * K, 1] so we can apply 1D pooling
+        x = x.unsqueeze(-1)
+
+        # Apply adaptive average pooling to reduce the batch dimension
+        x = self.pooling(x.permute(
+            1, 2, 0))  # batch along the last axis, shape[5*K*N, 1, B]
+
+        # Remove the last dimension (size 1)
+        x = x.squeeze(-1)
+        # Average across the batch dimension and reshape to [5, N, K]
+        x = x.view(self.num_delay_lines, self.num_biquads, 5)
+
+        return x
 
 
 class SVF_from_MLP(nn.Module):
@@ -312,20 +333,15 @@ class SVF_from_MLP(nn.Module):
         self.mlp = MLP(num_input_features, num_hidden_layers, num_neurons,
                        self.num_biquads, self.num_delay_lines)
 
-        self.svf_params = nn.Parameter(
-            torch.rand(self.num_delay_lines, self.num_biquads, 5))
-
-        # always ensure that the filter cutoff frequency and resonance is positive
-        self.svf_params[..., 0] = TanSigmoid(self.svf_params[..., 0])
-        self.svf_params[..., 1] = SoftPlus(self.svf_params[..., 1])
-
         self.biquad_cascade = [
-            BiquadCascade(self.num_sos, self.zeros((self.num_sos, 3)),
-                          self.zeros((self.num_sos, 3)))
+            BiquadCascade(self.num_biquads, torch.zeros((self.num_biquads, 3)),
+                          torch.zeros((self.num_biquads, 3)))
             for k in range(self.num_delay_lines)
         ]
 
         self.sos_filter = SOSFilter(self.num_biquads)
+        self.soft_plus = SoftPlus()
+        self.tan_sigmoid = TanSigmoid()
 
     def forward(self, x: Dict) -> torch.tensor:
         """
@@ -339,7 +355,8 @@ class SVF_from_MLP(nn.Module):
         mesh_3D = x['mesh_3D']
 
         # this will be the output tensor
-        H = torch.zeros((self.num_delay_lines, len(x)), dtype=torch.complex64)
+        H = torch.zeros((self.num_delay_lines, len(z_values)),
+                        dtype=torch.complex64)
 
         # encode the position coordinates only
         if self.encoding_type == "direct":
@@ -348,12 +365,15 @@ class SVF_from_MLP(nn.Module):
             encoded_position, _ = self.encoder(mesh_3D, position)
 
         # run the MLP, output of the MLP are the state variable filter coefficients
-        self.svf_params = self.mlp(encoded_position).reshape(
-            self.num_delay_lines, self.num_biquads, 5)
+        self.svf_params = self.mlp(encoded_position)
 
-        # always ensure that the filter cutoff frequency and resonance is positive
-        self.svf_params[..., 0] = TanSigmoid(self.svf_params[..., 0])
-        self.svf_params[..., 1] = SoftPlus(self.svf_params[..., 1])
+        # always ensure that the filter cutoff frequency and resonance are positive
+        self.svf_params[..., 0] = self.tan_sigmoid(
+            self.svf_params[..., 0].view(-1)).reshape(self.num_delay_lines,
+                                                      self.num_biquads)
+        self.svf_params[..., 1] = self.soft_plus(
+            self.svf_params[..., 1].view(-1)).reshape(self.num_delay_lines,
+                                                      self.num_biquads)
 
         for i in range(self.num_delay_lines):
             svf_params_del_line = self.svf_params[i, ...]

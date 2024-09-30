@@ -137,8 +137,10 @@ class FeedbackLoop(nn.Module):
         self.num_delay_lines_per_group = num_delay_lines_per_group
         self.delays = delays
         self.num_delays = len(self.delays)
-        self.absorption_gains = gains
+        self.delay_line_gains = gains
         self._eps = 1e-9
+        self.coupling_matrix_type = coupling_matrix_type
+        self.coupling_matrix_order = coupling_matrix_order
 
         # initialise the feedback matrices, which are learnable
         # these are individual feedback matrices for each group that
@@ -147,18 +149,18 @@ class FeedbackLoop(nn.Module):
         self.M = nn.Parameter(
             (2 * torch.rand(self.num_groups, self.num_delay_lines_per_group,
                             self.num_delay_lines_per_group) - 1) /
-            torch.sqrt(self.num_delay_lines_per_group))
+            np.sqrt(self.num_delay_lines_per_group))
 
         # orthonormal parameterisation of the matrices in M
         self.ortho_param = nn.Sequential(Skew(), MatrixExponential())
 
-        if coupling_matrix_type == CouplingMatrixType.SCALAR:
+        if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
             # Nroom - 1 rotation angles for getting an Nroom x Nroom unitary coupling matrix
             self.alpha = nn.Parameter(
                 (2 * torch.rand(self.num_groups - 1) - 1) / (0.25 * np.pi))
             self.nd_rotation = ND_Rotation()
 
-        elif coupling_matrix_type == CouplingMatrixType.FILTER:
+        elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
             self.coupling_matrix_order = coupling_matrix_order
             # order - 1 unit norm householder vectors
             self.unit_vectors = nn.Parameter(
@@ -167,7 +169,7 @@ class FeedbackLoop(nn.Module):
 
             self.unitary_matrix = nn.Parameter(
                 (2 * torch.rand(self.num_groups, self.num_groups) - 1) /
-                torch.sqrt(self.num_groups))
+                np.sqrt(self.num_groups))
 
             self.fir_paraunitary = FIRParaunitary(self.num_groups,
                                                   self.coupling_matrix_order)
@@ -178,14 +180,14 @@ class FeedbackLoop(nn.Module):
         D = torch.diag_embed(torch.unsqueeze(z, dim=-1)**self.delays)
 
         # this is of size Ndel x Ndel
-        Gamma = to_complex(torch.diag(self.absorption_gains**self.delays))
+        Gamma = to_complex(torch.diag(self.delay_line_gains**self.delays))
 
         # get coupled feedback matrix of size Ndel x Ndel x num_freq_points
         self.coupled_feedback_matrix = self.get_coupled_feedback_matrix()
 
         # this should be of size num_freq_pts x Ndel x Ndel
         if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
-            A = torch.einsum('k, mn -> kmn', z, self.coupling_feedback_matrix)
+            A = torch.einsum('k, mn -> kmn', z, self.coupled_feedback_matrix)
         else:
             # view converts z into a 2D matrix of size num_freq_pts x 1,
             # but it does not copy the data, hence z ultimately remains unaffected.
@@ -203,7 +205,8 @@ class FeedbackLoop(nn.Module):
         Adecay = torch.einsum('kmn, np -> kmp', A, Gamma)
         # the inverse will be taken along the last 2 dimensions
         # the size is num_freq_pts x Ndel x Ndel
-        return torch.linalg.inv(D - Adecay)
+        # this is a complex double, but einsum can only handle complex float
+        return (torch.linalg.inv(D - Adecay)).to(torch.complex64)
 
     def construct_block_mixing_matrix(self):
         """Form a block matrix with the individual mixing matrices and the coupling matrix"""
@@ -233,6 +236,7 @@ class FeedbackLoop(nn.Module):
                 torch.norm(self.unit_vectors, dim=0, keepdim=True) + self._eps)
             phi = self.fir_paraunitary(self.ortho_param(self.unitary_matrix),
                                        unit_vectors)
+        # assert is_paraunitary(phi)
         return phi
 
     def get_coupled_feedback_matrix(self) -> torch.tensor:
@@ -263,6 +267,7 @@ class FeedbackLoop(nn.Module):
                 coupled_feedback_matrix[..., k] += block_M * torch.kron(
                     self.phi[..., k], ones_matrix)
 
+        # assert is_paraunitary(coupled_feedback_matrix)
         return to_complex(coupled_feedback_matrix)
 
     def print(self):

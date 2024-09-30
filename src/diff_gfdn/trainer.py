@@ -1,6 +1,6 @@
 import os
 import time
-from importlib import Path
+from pathlib import Path
 from typing import Dict
 
 import torch
@@ -45,6 +45,7 @@ class Trainer:
 
         st = time.time()  # start time
         for epoch in trange(self.max_epochs, desc='Training'):
+            logger.info(f'Epoch #{epoch}')
             st_epoch = time.time()
 
             # training
@@ -80,7 +81,7 @@ class Trainer:
         """Single step of training"""
         self.optimizer.zero_grad()
         H = self.net(data)
-        loss = self.criterion[0](data['target_rir_response'], H)
+        loss = self.criterion(data['target_rir_response'], H)
 
         loss.backward()
         self.optimizer.step()
@@ -98,7 +99,7 @@ class Trainer:
             )
             filename = f"valid_ir_({position[0], position[1], position[2]})m.wav"
             H = self.save_ir(data, directory=self.ir_dir, filename=filename)
-            loss = self.criterion[0](data['target_rir_response'], H)
+            loss = self.criterion(data['target_rir_response'], H)
             cur_loss = loss.item()
             total_loss += cur_loss
             self.valid_loss.append(cur_loss)

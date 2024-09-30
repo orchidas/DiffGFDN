@@ -38,7 +38,10 @@ def db2lin(
     Returns:
         (ArrayLike): values converted to linear
     """
-    return torch.power(10.0, x * 0.05)
+    if torch.is_tensor(x):
+        return torch.pow(10.0, x * 0.05)
+    else:
+        return np.power(10.0, x * 0.05)
 
 
 def ms_to_samps(ms: Union[float, ArrayLike],
@@ -53,9 +56,9 @@ def ms_to_samps(ms: Union[float, ArrayLike],
     """
     samp = ms * 1e-3 * fs
     if np.isscalar(samp):
-        return samp.astype(np.int32)
-    else:
         return int(samp)
+    else:
+        return samp.astype(np.int32)
 
 
 @torch.no_grad()

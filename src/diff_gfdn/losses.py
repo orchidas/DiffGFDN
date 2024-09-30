@@ -60,8 +60,8 @@ def get_stft_torch(rir: torch.tensor,
                    sample_rate: float,
                    win_size: int,
                    hop_size: int,
-                   window: Optional[torch.tensor] = None,
                    nfft: int = 2**10,
+                   window: Optional[torch.tensor] = None,
                    time_axis: int = -1):
     """Get STFT from a time domain signal"""
     time_samps = rir.shape[time_axis]
@@ -93,16 +93,24 @@ def get_stft_torch(rir: torch.tensor,
     freqs = torch.fft.rfftfreq(nfft, d=1.0 / sample_rate)
     time_frames = torch.arange(0, rir.shape[time_axis] - hop_size,
                                hop_size) / sample_rate
-    assert len(freqs) == S.shape[0]
+
+    assert len(freqs) == S.shape[1]
     assert len(time_frames) == S.shape[-1]
     return S, freqs, time_frames
 
 
-def get_edr_from_stft(S: torch.zeros()):
-    """Get energy decay relief from the STFT"""
-    num_freqs, num_time_frames = S.shape
-    edr = torch.zeros((num_freqs, num_time_frames), dtype=torch.float32)
+def get_edr_from_stft(S: torch.tensor):
+    """
+    Get energy decay relief from the STFT
+    Args:
+        S(torch.tensor): complex STFT of size B x F x T
+    Returns:
+        real EDR of size B x F x T
+    """
+    batch_size, num_freqs, num_time_frames = S.shape
+    edr = torch.zeros((batch_size, num_freqs, num_time_frames),
+                      dtype=torch.float32)
     for m in range(num_time_frames):
-        edr[:, m] = torch.sum(torch.abs(S[:, m:])**2, axis=-1)
+        edr[..., m] = torch.sum(torch.abs(S[..., m:])**2, axis=-1)
     edr = db(edr, is_squared=True)
     return edr

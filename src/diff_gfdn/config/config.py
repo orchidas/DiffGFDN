@@ -43,7 +43,7 @@ class TrainerConfig(BaseModel):
     # split between traning and validation
     train_valid_split: float = 0.8
     # maximum epochs for training
-    max_epochs: int = 10
+    max_epochs: int = 5
     # learning rate for Adam optimiser
     lr: float = 0.01
     # directory to save results
