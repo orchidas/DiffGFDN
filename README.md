@@ -16,29 +16,27 @@ reduces memory requirements of storing measured RIRs, but is also faster than co
 - We use an MLP to train the input and output filters of the DiffGFDN. The inputs into the MLP are either 1) (x,y,z) spatial coordinates encoded with Fourier transformations OR 2) a 3D meshgrid of the space's geometry with a 4th dimension (one-hot vector) denoting where the source/receivers are located in the space. The input tensor size is $(B, L)$
 - The output of the MLP are state-variable filter (SVF) coefficients which are then converted into a cascade of biquad IIR filters. For a model with $N$ delay lines and $K_{\text{biquad}}$ cascaded biquads, the MLP should output a tensor of size $(N, K_{\text{biquad}}, 5)$, regardless of the batch size. For this we  need to use pooling.  We add an adaptive average pooling in the output layer for dimensionality reduction.
 - The feedback matrix, $A(z)$ has a unique structure that is given by
-$$
-\begin{align}
-A(z) &=
+``` math
+A(z) =
 \begin{bmatrix}
 \Phi_{11}(z) \mathbf{M_1}^2 & \Phi_{12}(z) \mathbf{M_1M_2} & \Phi_{13}(z) \mathbf{M_1M_3} \\ \Phi_{21}(z) \mathbf{M_2M_1} & \Phi_{22}(z) \mathbf{M_2}^2 &   \Phi_{23}(z) \mathbf{M_2M_3}\\
 \Phi_{31}(z) \mathbf{M_3M_1} &  \Phi_{32}(z) \mathbf{M_3M_2} & 
  \Phi_{33}(z) \mathbf{M_3}^2
 \end{bmatrix} \\
-& \Phi(z) \Phi^H(z^{-1}) = \mathbf{I}, \mathbf{M^i}^H \mathbf{M_i} = \mathbf{I}
-\end{align}
-$$
+ \Phi(z) \Phi^H(z^{-1}) = \mathbf{I}, \mathbf{M^i}^H \mathbf{M_i} = \mathbf{I}
+```
 where $\mathbf{M_i} \in \mathbb{R}^{N_\text{del} \times N_\text{del}}$ is the unitary mixing matix for each individual room, and $\Phi(z) \in \mathbb{R}^{N_\text{room} \times N_\text{room} \times p}$ is the paraunitary coupling matrix. The unitary matrices are represented as exponentiated skew symmetric matrices which are learnt during training, and the paraunitary matrix is constructed from degree-1 Householder reflections, given by
-$
+$$
 \Phi(z) = \prod_{i=1}^p (\mathbf{I} - (1-z^{-1})) \mathbf{u_i u_i}^H, \ s.t., \mathbf{u_i}^H \mathbf{u_i} = 1
-$
+$$
 where the $\mathbf{u_i}$'s are learnt during training
 
 ### Loss function
 
 To match a desired impulse response at a source-receiver location $H_{ij}(z)$, we minimise the normalised energy decay relief (EDR) loss between the DiffGFDN's output, $\hat{H}_{ij}(z)$,  and the desired RIR at each location,
-$$
-\begin{align}
+
+``` math
 \text{EDR}(k, m) = 10 \log_{10} \left(\sum_{\tau=m}^M |H_{ij}(k, \tau) |^2 \right) 
 \text{EDR}_{\text{loss}} = \frac{ \sum_k \sum_m |EDR_{H_{ij}}(k, m) - EDR_{\hat{H}_{ij}}(k, m)|}{\sum_k \sum_m |EDR_{H_{ij}}(k, m)|}
 \end{align}
-$$
+```
