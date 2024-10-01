@@ -13,7 +13,7 @@ reduces memory requirements of storing measured RIRs, but is also faster than co
 !["Differentiable GFDN architecture"](./notes/diffGFDN.png)
 
 - The network is trained with the frequency-sampling method to make it differentiable.
-- We use an MLP to train the input and output filters of the DiffGFDN. The inputs into the MLP are either 1) (x,y,z) spatial coordinates encoded with Fourier transformations OR 2) a 3D meshgrid of the space's geometry with a 4th dimension (one-hot vector) denoting where the source/receivers are located in the space. The input tensor size is $(B, L)$
+- We use an MLP to train the input and output filters of the DiffGFDN. The inputs into the MLP are either 1) $(x,y,z)$ spatial coordinates encoded with Fourier transformations OR 2) a 3D meshgrid of the space's geometry with a 4th dimension (one-hot vector) denoting where the source/receivers are located in the space. The input tensor size is $(B, L)$
 - The output of the MLP are state-variable filter (SVF) coefficients which are then converted into a cascade of biquad IIR filters. For a model with $N$ delay lines and $K_{\text{biquad}}$ cascaded biquads, the MLP should output a tensor of size $(N, K_{\text{biquad}}, 5)$, regardless of the batch size. For this we  need to use pooling.  We add an adaptive average pooling in the output layer for dimensionality reduction.
 - The feedback matrix, $A(z)$ has a unique structure that is given by
 ``` math
@@ -24,12 +24,12 @@ A(z) &=
 \Phi_{31}(z) \mathbf{M_3M_1} &  \Phi_{32}(z) \mathbf{M_3M_2} & 
  \Phi_{33}(z) \mathbf{M_3}^2
 \end{bmatrix} \\
- &\Phi(z) \Phi^H(z^{-1}) = \mathbf{I}, \ \mathbf{M_i}^H \mathbf{M_i} = \mathbf{I}
+ &\Phi(z) \Phi^H(z^{-1}) = \mathbf{I}, \quad \mathbf{M_i}^H \mathbf{M_i} = \mathbf{I}
  \end{align*}
 ```
 where $\mathbf{M_i} \in \mathbb{R}^{N_\text{del} \times N_\text{del}}$ is the unitary mixing matix for each individual room, and $\Phi(z) \in \mathbb{R}^{N_\text{room} \times N_\text{room} \times p}$ is the paraunitary coupling matrix. The unitary matrices are represented as exponentiated skew symmetric matrices which are learnt during training, and the paraunitary matrix is constructed from degree-1 Householder reflections, given by
 ```math
-\Phi(z) = \prod_{i=1}^p (\mathbf{I} - (1-z^{-1})) \mathbf{u_i u_i}^H, \ s.t., \mathbf{u_i}^H \mathbf{u_i} = 1
+\Phi(z) = \prod_{i=1}^p (\mathbf{I} - (1-z^{-1})) \mathbf{u_i u_i}^H, \quad s.t., \ \mathbf{u_i}^H \mathbf{u_i} = 1
 ```
 where the $\mathbf{u_i}$'s are learnt during training.
 

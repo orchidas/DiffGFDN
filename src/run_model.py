@@ -64,7 +64,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "-c",
         "--config_file",
-        nargs='*',
         default=None,
         help="Configuration file (YAML) containing diff GFDN \
         (if none provided the default parameters are loaded).",
@@ -78,7 +77,7 @@ if __name__ == '__main__':
 
     args = parse_args()
     if args.config_file:
-        config_dict = load_and_validate_config(args.config_path,
+        config_dict = load_and_validate_config(args.config_file,
                                                DiffGFDNConfig)
     else:
         config_dict = DiffGFDNConfig()

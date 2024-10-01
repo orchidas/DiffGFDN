@@ -2,6 +2,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
+from loguru import logger
 from torch import nn
 
 from .config.config import FeedbackLoopConfig, OutputFilterConfig
@@ -54,6 +55,7 @@ class DiffGFDN(nn.Module):
                                                   self.sample_rate)[1]
                     for i in range(self.num_groups)
                 ])))
+        logger.info(f'Gains for delay lines are {self.gain_per_sample}')
 
         # here are the different operating blocks
         self.input_gains = nn.Parameter(
@@ -66,7 +68,8 @@ class DiffGFDN(nn.Module):
             output_filter_config.num_biquads_svf, self.num_delay_lines,
             output_filter_config.num_fourier_features,
             output_filter_config.num_hidden_layers,
-            output_filter_config.num_neurons_per_layer)
+            output_filter_config.num_neurons_per_layer,
+            output_filter_config.encoding_type)
 
     def forward(self, x: Dict) -> torch.tensor:
         """

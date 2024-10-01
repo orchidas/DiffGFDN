@@ -72,8 +72,7 @@ def get_response(x: Dict, net: nn.Module):
     """
     with torch.no_grad():
         H = net(x)
-        H = torch.sum(H, dim=-1)
-        h = torch.fft.irfft(H)
+        h = torch.fft.irfft(H, dim=-1)
     return H, h
 
 

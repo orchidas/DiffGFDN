@@ -18,6 +18,16 @@ class CouplingMatrixType(Enum):
         return str(self.value)
 
 
+class FeatureEncodingType(Enum):
+    """Different types of encoding for the input MLP features"""
+
+    SINE = "sinusoidal"
+    MESHGRID = "meshgrid"
+
+    def __repr__(self) -> str:
+        return str(self.value)
+
+
 class FeedbackLoopConfig(BaseModel):
     # FIR PU matrix order
     pu_matrix_order: int = 2**5
@@ -32,6 +42,7 @@ class OutputFilterConfig(BaseModel):
     num_hidden_layers: int = 1
     num_neurons_per_layer: int = 2**7
     num_fourier_features: int = 10
+    encoding_type: FeatureEncodingType = FeatureEncodingType.SINE
 
 
 class TrainerConfig(BaseModel):

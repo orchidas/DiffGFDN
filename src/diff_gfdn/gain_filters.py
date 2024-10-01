@@ -5,6 +5,8 @@ import numpy as np
 import torch
 from torch import nn
 
+from .config.config import FeatureEncodingType
+
 # pylint: disable=E0606
 
 
@@ -290,14 +292,16 @@ class MLP(nn.Module):
 
 class SVF_from_MLP(nn.Module):
 
-    def __init__(self,
-                 num_biquads: int,
-                 num_delay_lines: int,
-                 num_fourier_features: int = 10,
-                 num_hidden_layers: int = 3,
-                 num_neurons: int = 2**8,
-                 position_type: str = "output_gains",
-                 encoding_type: str = "direct"):
+    def __init__(
+        self,
+        num_biquads: int,
+        num_delay_lines: int,
+        num_fourier_features: int,
+        num_hidden_layers: int,
+        num_neurons: int,
+        encoding_type: FeatureEncodingType,
+        position_type: str = "output_gains",
+    ):
         """
         Train the MLP to get SVF coefficients for a biquad cascade
         Args:
@@ -317,13 +321,14 @@ class SVF_from_MLP(nn.Module):
         self.position_type = position_type
         self.encoding_type = encoding_type
 
-        if encoding_type == "direct":
+        if self.encoding_type == FeatureEncodingType.SINE:
             # if we were feeding the spatial coordinates directly, then the
             # number of input features would be 3. Since we are encoding them,
             # the number of features is 3 * num_fourier_features * 2
             num_input_features = 3 * num_fourier_features * 2
             self.encoder = SinusoidalEncoding(num_fourier_features)
-        elif encoding_type == "one_hot":
+
+        elif self.encoding_type == FeatureEncodingType.MESHGRID:
             # in this case, the (x,y,z) locations of the meshgrid and the
             # corresponding one-hot vector (1s where all the receiver locations are)
             # are inputs to the MLP
@@ -359,9 +364,9 @@ class SVF_from_MLP(nn.Module):
                         dtype=torch.complex64)
 
         # encode the position coordinates only
-        if self.encoding_type == "direct":
+        if self.encoding_type == FeatureEncodingType.SINE:
             encoded_position = self.encoder(position)
-        elif self.encoding_type == "one_hot":
+        elif self.encoding_type == FeatureEncodingType.MESHGRID:
             encoded_position, _ = self.encoder(mesh_3D, position)
 
         # run the MLP, output of the MLP are the state variable filter coefficients

@@ -15,6 +15,7 @@ from .model import DiffGFDN
 from .utils import get_response, get_str_results
 
 
+# flake8: noqa: E231
 class Trainer:
 
     def __init__(self, net: DiffGFDN, trainer_config: TrainerConfig):
@@ -73,9 +74,8 @@ class Trainer:
         # save the trained IRs
         logger.info("Saving the trained IRs...")
         for data in train_dataset:
-            position = data.receiver_position
-            filename = f"train_ir_({position[0], position[1], position[2]})m.wav"
-            self.save_ir(data, directory=self.ir_dir, filename=filename)
+            position = data['listener_position']
+            self.save_ir(data, directory=self.ir_dir, pos_list=position)
 
     def train_step(self, data):
         """Single step of training"""
@@ -93,12 +93,9 @@ class Trainer:
         total_loss = 0
         self.valid_loss = []
         for data in valid_dataset:
-            position = data.receiver_position
-            logger.info(
-                f"Running the network for position: ({position[0], position[1], position[2]}) m"
-            )
-            filename = f"valid_ir_({position[0], position[1], position[2]})m.wav"
-            H = self.save_ir(data, directory=self.ir_dir, filename=filename)
+            position = data['listener_position']
+            logger.info("Running the network for new batch of positiions")
+            H = self.save_ir(data, directory=self.ir_dir, pos_list=position)
             loss = self.criterion(data['target_rir_response'], H)
             cur_loss = loss.item()
             total_loss += cur_loss
@@ -128,14 +125,15 @@ class Trainer:
     def save_ir(self,
                 input_features: Dict,
                 directory: str,
-                filename='ir.wav',
-                norm=False) -> torch.tensor:
+                pos_list: torch.tensor,
+                filename_prefix: str = "ir",
+                norm=True) -> torch.tensor:
         """
         Save the impulse response generated from the model
         Args:
             input_features (Dict): dictionary of input features
             directory (str): where to save the audio
-            filename (str): filename of the particular RIR
+            pos_list (torch.tensor): B x 3 position coordinates
             norm (bool): whether to normalise the RIR
         Returns:
             torch.tensor - the frequency response at the given input features
@@ -143,10 +141,16 @@ class Trainer:
         H, h = get_response(input_features, self.net)
         if norm:
             h = torch.div(h, torch.max(torch.abs(h)))
-        filepath = os.path.join(directory, filename)
-        torchaudio.save(filepath,
-                        torch.stack((h.squeeze(0), h.squeeze(0)), 1).cpu(),
-                        self.net.sample_rate,
-                        bits_per_sample=32,
-                        channels_first=False)
+
+        for num_pos in range(pos_list.shape[0]):
+            filename = f'{filename_prefix}_({pos_list[num_pos,0]:.2f}, \
+            {pos_list[num_pos, 1]:.2f}, {pos_list[num_pos, 2]:.2f}).wav'
+
+            filepath = os.path.join(directory, filename)
+            torchaudio.save(filepath,
+                            torch.stack((h[num_pos, :], h[num_pos, :]),
+                                        dim=1).cpu(),
+                            int(self.net.sample_rate),
+                            bits_per_sample=32,
+                            channels_first=False)
         return H
