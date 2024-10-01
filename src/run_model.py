@@ -66,7 +66,7 @@ def parse_args() -> argparse.Namespace:
         "--config_file",
         nargs='*',
         default=None,
-        help="Configuration file (YAML) containing upmixer parameters \
+        help="Configuration file (YAML) containing diff GFDN \
         (if none provided the default parameters are loaded).",
     )
 

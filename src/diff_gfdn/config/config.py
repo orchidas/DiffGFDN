@@ -29,7 +29,7 @@ class OutputFilterConfig(BaseModel):
     # config for training the output filters based on listener location
     # number of biquads in each filter
     num_biquads_svf: int = 8
-    num_hidden_layers: int = 3
+    num_hidden_layers: int = 1
     num_neurons_per_layer: int = 2**7
     num_fourier_features: int = 10
 
@@ -38,7 +38,7 @@ class TrainerConfig(BaseModel):
     # config file with training parameters
     # number of receivers in each training batch
     batch_size: int = 32
-    # torch device
+    # torch device - cuda or cpu or mps (for apple silicon)
     device: str = 'cpu'
     # split between traning and validation
     train_valid_split: float = 0.8
