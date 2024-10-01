@@ -24,14 +24,14 @@ A(z) &=
 \Phi_{31}(z) \mathbf{M_3M_1} &  \Phi_{32}(z) \mathbf{M_3M_2} & 
  \Phi_{33}(z) \mathbf{M_3}^2
 \end{bmatrix} \\
- &\Phi(z) \Phi^H(z^{-1}) = \mathbf{I}, \ \mathbf{M^i}^H \mathbf{M_i} = \mathbf{I}
+ &\Phi(z) \Phi^H(z^{-1}) = \mathbf{I}, \ \mathbf{M_i}^H \mathbf{M_i} = \mathbf{I}
  \end{align*}
 ```
 where $\mathbf{M_i} \in \mathbb{R}^{N_\text{del} \times N_\text{del}}$ is the unitary mixing matix for each individual room, and $\Phi(z) \in \mathbb{R}^{N_\text{room} \times N_\text{room} \times p}$ is the paraunitary coupling matrix. The unitary matrices are represented as exponentiated skew symmetric matrices which are learnt during training, and the paraunitary matrix is constructed from degree-1 Householder reflections, given by
-$$
+```math
 \Phi(z) = \prod_{i=1}^p (\mathbf{I} - (1-z^{-1})) \mathbf{u_i u_i}^H, \ s.t., \mathbf{u_i}^H \mathbf{u_i} = 1
-$$
-where the $\mathbf{u_i}$'s are learnt during training
+```
+where the $\mathbf{u_i}$'s are learnt during training.
 
 ### Loss function
 
@@ -39,7 +39,7 @@ To match a desired impulse response at a source-receiver location $H_{ij}(z)$, w
 
 ``` math
 \begin{align*}
-\text{EDR}(k, m) &= 10 \log_{10} \left(\sum_{\tau=m}^M |H_{ij}(k, \tau) |^2 \right) 
+\text{EDR}(k, m) &= 10 \log_{10} \left(\sum_{\tau=m}^M |H_{ij}(k, \tau) |^2 \right) \\
 \text{EDR}_{\text{loss}} &= \frac{ \sum_k \sum_m |EDR_{H_{ij}}(k, m) - EDR_{\hat{H}_{ij}}(k, m)|}{\sum_k \sum_m |EDR_{H_{ij}}(k, m)|}
 \end{align*}
 ```
