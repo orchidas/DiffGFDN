@@ -10,6 +10,8 @@ from .feedback_loop import FeedbackLoop
 from .gain_filters import SVF_from_MLP
 from .utils import absorption_to_gain_per_sample, to_complex
 
+# pylint: disable=W0718
+
 
 class DiffGFDN(nn.Module):
 
@@ -82,10 +84,10 @@ class DiffGFDN(nn.Module):
         num_freq_pts = len(z)
         # this is of size B x Ndel x num_freq_points
         C = self.output_filters(x)
-        batch_size = C.shape[0]
+        self.batch_size = C.shape[0]
         # this is also of size B x Ndel x num_freq_points
         B = to_complex(
-            self.input_gains.expand(batch_size, self.num_delay_lines,
+            self.input_gains.expand(self.batch_size, self.num_delay_lines,
                                     num_freq_pts))
         # get the output of the feedback loop, this is of size num_freq_points x Ndel x Ndel
         P = self.feedback_loop(z)
@@ -116,16 +118,27 @@ class DiffGFDN(nn.Module):
         param_np['gains_per_sample'] = self.gain_per_sample.squeeze().cpu(
         ).numpy()
         param_np['input_gains'] = self.input_gains.squeeze().cpu().numpy()
-        param_np['coupling_matrix'] = self.feedback_loop.phi.squeeze().cpu(
-        ).numpy()
         param_np['individual_mixing_matrix'] = self.feedback_loop.M.squeeze(
         ).cpu().numpy()
-        param_np[
-            'coupled_feedback_matrix'] = self.feedback_loop.coupled_feedback_matrix.squeeze(
-            ).cpu().numpy()
-        param_np['output_svf_params'] = self.svf_params.squeeze().cpu().numpy()
-        param_np['output_biquad_coeffs'] = torch.cat(
-            (self.output_filters.biquad_cascade.num_coeffs,
-             self.output_filters.biquad_cascade.den_coeffs),
-            dim=-1).squeeze().cpu().numpy()
+        try:
+            param_np['coupling_matrix'] = self.feedback_loop.nd_rotation(
+                self.feedback_loop.alpha).squeeze().cpu().numpy()
+            param_np[
+                'coupled_feedback_matrix'] = self.feedback_loop.get_coupled_feedback_matrix(
+                ).squeeze().cpu().numpy()
+        except Exception:
+            logger.warning('Parameter not initialised yet in FeedbackLoop!')
+        try:
+            param_np['output_svf_params'] = self.svf_params.squeeze().cpu(
+            ).numpy()
+            param_np['output_biquad_coeffs'] = [[
+                torch.cat(
+                    (self.output_filters.biquad_cascade[b][n].num_coeffs,
+                     self.output_filters.biquad_cascade[b][n].den_coeffs),
+                    dim=-1).squeeze().cpu().numpy()
+                for n in range(self.num_delay_lines)
+            ] for b in range(self.batch_size)]
+        except Exception:
+            logger.warning("Parameter not initialised yet in OutputFilters!")
+
         return param_np

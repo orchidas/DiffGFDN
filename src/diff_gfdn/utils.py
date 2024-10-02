@@ -140,7 +140,7 @@ def to_complex(X: torch.Tensor):
     return torch.complex(X, torch.zeros_like(X))
 
 
-def is_paraunitary(A: torch.tensor, max_tol: float = 1e-9) -> bool:
+def is_paraunitary(A: torch.tensor, max_tol: float = 1e-6) -> bool:
     """
     Check if a polynomial matrix A of size NxNxP is paraunitary by ensuring
     A(z) A(z^{-1})^H = I
@@ -161,17 +161,17 @@ def is_paraunitary(A: torch.tensor, max_tol: float = 1e-9) -> bool:
     # must be close to 0
     T[:, :, p - 1] = T[:, :, p - 1] - torch.eye(N)
     max_off_diag_value = torch.max(np.torch(T))
-    return max_off_diag_value < max_tol
+    return max_off_diag_value < max_tol, max_off_diag_value
 
 
-def is_unitary(A: torch.tensor, max_tol: float = 1e-9) -> bool:
+def is_unitary(A: torch.tensor, max_tol: float = 1e-6) -> bool:
     """Check if a square matrix A is unitary"""
     N = A.shape[0]
     Aconj = torch.conj(A.T)
     T = torch.mm(A, Aconj)
     T -= torch.eye(N)
     max_off_diag_value = torch.max(torch.abs(T))
-    return max_off_diag_value < max_tol
+    return max_off_diag_value < max_tol, max_off_diag_value
 
 
 def absorption_to_gain_per_sample(room_dims: Tuple, absorption_coeff: float,

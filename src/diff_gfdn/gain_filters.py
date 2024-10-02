@@ -366,11 +366,11 @@ class SVF_from_MLP(nn.Module):
         position = x[
             'listener_position'] if self.position_type == "output_gains" else x[
                 'source_position']
-        batch_size = 1 if self.apply_pooling else position.shape[0]
+        self.batch_size = 1 if self.apply_pooling else position.shape[0]
         mesh_3D = x['mesh_3D']
 
         # this will be the output tensor
-        H = torch.zeros((batch_size, self.num_delay_lines, len(z_values)),
+        H = torch.zeros((self.batch_size, self.num_delay_lines, len(z_values)),
                         dtype=torch.complex64)
 
         # encode the position coordinates only
@@ -383,7 +383,8 @@ class SVF_from_MLP(nn.Module):
         self.svf_params = self.mlp(encoded_position)
 
         # always ensure that the filter cutoff frequency and resonance are positive
-        reshape_size = (batch_size, self.num_delay_lines, self.num_biquads)
+        reshape_size = (self.batch_size, self.num_delay_lines,
+                        self.num_biquads)
         self.svf_params[..., 0] = self.tan_sigmoid(
             self.svf_params[..., 0].view(-1)).view(reshape_size)
         self.svf_params[..., 1] = self.soft_plus(
@@ -394,10 +395,10 @@ class SVF_from_MLP(nn.Module):
             BiquadCascade(self.num_biquads, torch.zeros((self.num_biquads, 3)),
                           torch.zeros((self.num_biquads, 3)))
             for i in range(self.num_delay_lines)
-        ] for b in range(batch_size)]
+        ] for b in range(self.batch_size)]
 
         # fill the empty filters
-        for b in range(batch_size):
+        for b in range(self.batch_size):
             for i in range(self.num_delay_lines):
                 svf_params_del_line = self.svf_params[b, i, :]
                 svf_cascade = [
@@ -422,9 +423,12 @@ class SVF_from_MLP(nn.Module):
     def get_parameters(self) -> Tuple:
         """Return the parameters as tuple"""
         svf_params = self.svf_params
-        biquad_coeffs = torch.cat(
-            (self.biquad_cascade.num_coeffs, self.biquad_cascade.den_coeffs),
-            dim=-1)
+        biquad_coeffs = [[
+            torch.cat((self.biquad_cascade[b][n].num_coeffs,
+                       self.biquad_cascade[b][n].den_coeffs),
+                      dim=-1).squeeze().cpu().numpy()
+            for n in range(self.num_delay_lines)
+        ] for b in range(self.batch_size)]
         return (svf_params, biquad_coeffs)
 
     @torch.no_grad()
@@ -432,7 +436,10 @@ class SVF_from_MLP(nn.Module):
         """Return the parameters as a dict"""
         param_np = {}
         param_np['svf_params'] = self.svf_params.squeeze().cpu().numpy()
-        param_np['biquad_coeffs'] = torch.cat(
-            (self.biquad_cascade.num_coeffs, self.biquad_cascade.den_coeffs),
-            dim=-1).squeeze().cpu().numpy()
+        param_np['biquad_coeffs'] = [[
+            torch.cat((self.biquad_cascade[b][n].num_coeffs,
+                       self.biquad_cascade[b][n].den_coeffs),
+                      dim=-1).squeeze().cpu().numpy()
+            for n in range(self.num_delay_lines)
+        ] for b in range(self.batch_size)]
         return param_np

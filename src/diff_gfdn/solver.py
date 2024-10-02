@@ -43,12 +43,15 @@ def gfdn2dir(net: DiffGFDN):
     Args    net (nn.Module): trained FDN() network
     Output  d (dictionary of tensors): FDN() net parameters 
     """
-    d = {}  # enpty dictionary
+    d = {}  # empty dictionary
+    # from parameter dictionary of model
+    d = net.get_param_dict()
+
+    # MLP learned weights and biases
     for name, param in net.named_parameters():
-        if param.requires_grad:
+        if param.requires_grad and name not in d.keys():
             d[name] = param.data
-    d['gain_per_sample'] = net.absorption_coeffs
-    d['delays'] = net.delays
+
     return d
 
 

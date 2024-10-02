@@ -27,6 +27,8 @@ class Trainer:
         self.early_stop = 0
         self.train_dir = Path(trainer_config.train_dir).resolve()
         self.ir_dir = Path(trainer_config.ir_dir).resolve()
+        if not os.path.exists(self.ir_dir):
+            os.makedirs(self.ir_dir)
 
         self.optimizer = torch.optim.Adam(net.parameters(),
                                           lr=trainer_config.lr)
