@@ -1,0 +1,6 @@
+trainer_config:
+    device: 'mps'
+    num_epochs: 5
+    train_valid_split: 0.5
+    train_dir: '../output/less_train_samples/'
+    ir_dir: '../audio/less_train_samples/'

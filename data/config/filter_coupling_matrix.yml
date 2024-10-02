@@ -1,0 +1,6 @@
+trainer_config:
+    device: 'mps'
+    max_epochs: 3
+    train_dir: '../output/mps/'
+feedback_loop_config:
+    coupling_matrix_type: 'filter_matrix'

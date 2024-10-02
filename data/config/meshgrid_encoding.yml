@@ -1,0 +1,7 @@
+trainer_config:
+    device: 'mps'
+    num_epochs: 5
+    train_dir: '../output/mesh_encoding/'
+    ir_dir: '../audio/mesh_encoding/'
+output_filter_config:
+	encoding_type: 'meshgrid'
