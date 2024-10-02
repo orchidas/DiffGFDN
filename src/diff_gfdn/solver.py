@@ -76,7 +76,7 @@ def save_loss(train_loss: List,
         plt.xlabel(xaxis_label)
         plt.ylabel('loss')
         plt.savefig(os.path.join(output_dir, filename + '.pdf'))
-    savemat(os.path.join(output_dir, 'losses' + filename + '.mat'), losses)
+    savemat(os.path.join(output_dir, 'losses_' + filename + '.mat'), losses)
 
 
 def run_training(config_dict: DiffGFDNConfig):

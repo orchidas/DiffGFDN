@@ -1,11 +1,13 @@
+import os
 import pickle
 from abc import ABC
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
+import soundfile as sf
 import torch
 from loguru import logger
 from numpy.typing import NDArray
@@ -13,6 +15,8 @@ from scipy.fft import rfft, rfftfreq
 from torch.utils import data
 
 from .utils import ms_to_samps
+
+# flake8: noqa: E231
 
 
 @dataclass
@@ -226,7 +230,7 @@ class ThreeRoomDataset(RoomDataset):
     in Proc. of AES International Conference on Audio for Gaming, 2024.
     """
 
-    def __init__(self, filepath: Path):
+    def __init__(self, filepath: Path, save_irs: Optional[bool] = False):
         """Read the data from the filepath"""
         num_rooms = 3
         assert str(filepath).endswith(
@@ -259,6 +263,25 @@ class ThreeRoomDataset(RoomDataset):
         # how far apart the receivers are placed
         mic_spacing_m = 0.3
         self.mesh_3D = super().get_3D_meshgrid(mic_spacing_m)
+        if save_irs:
+            logger.info("Saving RIRs")
+            self.save_omni_irs()
+
+    def save_omni_irs(self,
+                      filename_prefix: str = "ir",
+                      directory: str = "../audio/true/"):
+        """Save the omni RIRs for each receiver position as audio files in directory"""
+        if not os.path.isdir(directory):
+            os.makedirs(directory)
+
+        for num_pos in range(self.num_rec):
+            filename = (
+                f'{filename_prefix}_({self.receiver_position[num_pos,0]:.2f}, '
+                f'{self.receiver_position[num_pos, 1]:.2f}, {self.receiver_position[num_pos, 2]:.2f}).wav'
+            )
+
+            filepath = os.path.join(directory, filename)
+            sf.write(filepath, self.rirs[num_pos, :], int(self.sample_rate))
 
 
 class RIRDataset(data.Dataset):

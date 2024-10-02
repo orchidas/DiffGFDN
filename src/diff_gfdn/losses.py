@@ -62,6 +62,7 @@ def get_stft_torch(rir: torch.tensor,
                    hop_size: int,
                    nfft: int = 2**10,
                    window: Optional[torch.tensor] = None,
+                   freq_axis: int = 1,
                    time_axis: int = -1):
     """Get STFT from a time domain signal"""
     time_samps = rir.shape[time_axis]
@@ -94,8 +95,8 @@ def get_stft_torch(rir: torch.tensor,
     time_frames = torch.arange(0, rir.shape[time_axis] - hop_size,
                                hop_size) / sample_rate
 
-    assert len(freqs) == S.shape[1]
-    assert len(time_frames) == S.shape[-1]
+    assert len(freqs) == S.shape[freq_axis]
+    assert len(time_frames) == S.shape[time_axis]
     return S, freqs, time_frames
 
 
@@ -107,9 +108,14 @@ def get_edr_from_stft(S: torch.tensor):
     Returns:
         real EDR of size B x F x T
     """
-    batch_size, num_freqs, num_time_frames = S.shape
-    edr = torch.zeros((batch_size, num_freqs, num_time_frames),
-                      dtype=torch.float32)
+    if S.ndim == 3:
+        batch_size, num_freqs, num_time_frames = S.shape
+        edr = torch.zeros((batch_size, num_freqs, num_time_frames),
+                          dtype=torch.float32)
+    else:
+        num_freqs, num_time_frames = S.shape
+        edr = torch.zeros((num_freqs, num_time_frames), dtype=torch.float32)
+
     for m in range(num_time_frames):
         edr[..., m] = torch.sum(torch.abs(S[..., m:])**2, axis=-1)
     edr = db(edr, is_squared=True)

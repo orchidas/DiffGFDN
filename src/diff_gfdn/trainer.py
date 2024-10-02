@@ -101,10 +101,11 @@ class Trainer:
             total_loss += cur_loss
             self.valid_loss.append(cur_loss)
             logger.info(
-                f"The validation loss for the current position is {cur_loss}")
+                f"The validation loss for the current position is {cur_loss:.4f}"
+            )
 
         net_valid_loss = total_loss / len(valid_dataset)
-        logger.info(f"The net validation loss is {net_valid_loss}")
+        logger.info(f"The net validation loss is {net_valid_loss:.4f}")
 
     def print_results(self, e: int, e_time):
         """Print results of training"""
@@ -143,13 +144,13 @@ class Trainer:
             h = torch.div(h, torch.max(torch.abs(h)))
 
         for num_pos in range(pos_list.shape[0]):
-            filename = f'{filename_prefix}_({pos_list[num_pos,0]:.2f}, \
-            {pos_list[num_pos, 1]:.2f}, {pos_list[num_pos, 2]:.2f}).wav'
+            filename = (
+                f'{filename_prefix}_({pos_list[num_pos,0]:.2f}, '
+                f'{pos_list[num_pos, 1]:.2f}, {pos_list[num_pos, 2]:.2f}).wav')
 
             filepath = os.path.join(directory, filename)
             torchaudio.save(filepath,
-                            torch.stack((h[num_pos, :], h[num_pos, :]),
-                                        dim=1).cpu(),
+                            h[num_pos, :].cpu(),
                             int(self.net.sample_rate),
                             bits_per_sample=32,
                             channels_first=False)
