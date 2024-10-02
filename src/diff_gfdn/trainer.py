@@ -149,8 +149,10 @@ class Trainer:
                 f'{pos_list[num_pos, 1]:.2f}, {pos_list[num_pos, 2]:.2f}).wav')
 
             filepath = os.path.join(directory, filename)
+            # for some reason torch audio expects a 2D tensor
             torchaudio.save(filepath,
-                            h[num_pos, :].cpu(),
+                            torch.stack((h[num_pos, :], h[num_pos, :]),
+                                        dim=1).cpu(),
                             int(self.net.sample_rate),
                             bits_per_sample=32,
                             channels_first=False)

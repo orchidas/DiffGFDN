@@ -43,6 +43,8 @@ class OutputFilterConfig(BaseModel):
     num_neurons_per_layer: int = 2**7
     num_fourier_features: int = 10
     encoding_type: FeatureEncodingType = FeatureEncodingType.SINE
+    # whether to pool all the batches together after the final layer
+    apply_pooling: bool = False
 
 
 class TrainerConfig(BaseModel):

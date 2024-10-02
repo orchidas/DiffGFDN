@@ -69,28 +69,32 @@ class DiffGFDN(nn.Module):
             output_filter_config.num_fourier_features,
             output_filter_config.num_hidden_layers,
             output_filter_config.num_neurons_per_layer,
-            output_filter_config.encoding_type)
+            output_filter_config.encoding_type,
+            output_filter_config.apply_pooling)
 
     def forward(self, x: Dict) -> torch.tensor:
         """
-        Compute H(z) = c(z)^H (D - A(z)Gamma(z))^{-1} b(z) + d(z)
+        Compute H(z) = c(z)^T (D - A(z)Gamma(z))^{-1} b(z) + d(z)
         Args:
             x(dict) : input feature dict
         """
         z = x['z_values']
         num_freq_pts = len(z)
-        # this is of size Ndel x num_freq_points
+        # this is of size B x Ndel x num_freq_points
         C = self.output_filters(x)
-        # this is also of size Ndel x num_freq_points
+        batch_size = C.shape[0]
+        # this is also of size B x Ndel x num_freq_points
         B = to_complex(
-            self.input_gains.expand(self.num_delay_lines, num_freq_pts))
-        # get the output of the feedback loop
+            self.input_gains.expand(batch_size, self.num_delay_lines,
+                                    num_freq_pts))
+        # get the output of the feedback loop, this is of size num_freq_points x Ndel x Ndel
         P = self.feedback_loop(z)
-        # C.T @ P
-        Htemp = torch.einsum('kn, knm -> km', C.T, P)
+        # C.T @ P of size B x Ndel x num_freq_pts
+        Htemp = torch.einsum('knb, knm -> knb', C.permute(-1, 1, 0),
+                             P).permute(-1, 1, 0)
         # C.T @ P @ B + d(z)
         direct_filter = x['target_early_response']
-        H = torch.diagonal(torch.mm(Htemp, B)) + direct_filter
+        H = torch.einsum('bmk, bmk -> bk', Htemp, B) + direct_filter
         return H
 
     def get_parameters(self) -> Tuple:

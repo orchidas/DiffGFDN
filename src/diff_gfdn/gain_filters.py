@@ -34,7 +34,7 @@ class BiquadCascade:
 
     @staticmethod
     def from_svf_coeffs(svf_coeffs: List[SVF]):
-        """Get the biquad cascade from SVF coefficients"""
+        """Get the biquad cascade from a list of SVF coefficients"""
         num_sos = len(svf_coeffs)
         num_coeffs = torch.zeros((num_sos, 3))
         den_coeffs = torch.zeros_like(num_coeffs)
@@ -221,9 +221,13 @@ class OneHotEncoding(nn.Module):
 
 class MLP(nn.Module):
 
-    def __init__(self, num_pos_features: int, num_hidden_layers: int,
-                 num_neurons: int, num_biquads_in_cascade: int,
-                 num_delay_lines: int):
+    def __init__(self,
+                 num_pos_features: int,
+                 num_hidden_layers: int,
+                 num_neurons: int,
+                 num_biquads_in_cascade: int,
+                 num_delay_lines: int,
+                 apply_pooling: bool = False):
         """
         Initialize the MLP.
 
@@ -233,6 +237,8 @@ class MLP(nn.Module):
             num_neurons (int): Number of neurons in each hidden layer.
             num_biquads_in_cascaed (int): Number of biquads in cascade
             num_delay_lines (int): number of delay lines in FDN
+            apply_pooling (bool): whether to pool the output to be of size (num_delay_lines x num_biquads x 5), 
+                                  or (B, num_delay_lies x num_biquads x 5)
         """
         super().__init__()
 
@@ -242,6 +248,7 @@ class MLP(nn.Module):
         self.num_delay_lines = num_delay_lines
         # Output layer has (num_del * 5 SVF params * num_biquads) features
         output_size = self.num_delay_lines * 5 * self.num_biquads
+        self.apply_pooling = apply_pooling
 
         # Create a list of layers for the MLP
         layers = []
@@ -264,29 +271,32 @@ class MLP(nn.Module):
         # Combine layers into a Sequential model
         self.model = nn.Sequential(*layers)
 
-        # Add an adaptive average pooling layer to pool over the batch dimension
-        self.pooling = nn.AdaptiveAvgPool1d(
-            1)  # Pool down to 1 value along the batch dimension
+        if self.apply_pooling:
+            # Add an adaptive average pooling layer to pool over the batch dimension
+            self.pooling = nn.AdaptiveAvgPool1d(
+                1)  # Pool down to 1 value along the batch dimension
 
     def forward(self, x: torch.tensor):
         """
         Args:
         x (torch.tensor): input feature vector
         """
+        batch_size = 1 if self.apply_pooling else x.shape[0]
         x = self.model(x)
-        # pool the output layer to ensure that size is 5 x num_delay_lines x num_biquads
-        # Reshape x to [batch_size, 5 * N * K, 1] so we can apply 1D pooling
-        x = x.unsqueeze(-1)
 
-        # Apply adaptive average pooling to reduce the batch dimension
-        x = self.pooling(x.permute(
-            1, 2, 0))  # batch along the last axis, shape[5*K*N, 1, B]
+        if self.apply_pooling:
+            # pool the output layer to ensure that size is 5 x num_delay_lines x num_biquads
+            # Reshape x to [batch_size, 5 * N * K, 1] so we can apply 1D pooling
+            x = x.unsqueeze(-1)
 
-        # Remove the last dimension (size 1)
-        x = x.squeeze(-1)
-        # Average across the batch dimension and reshape to [5, N, K]
-        x = x.view(self.num_delay_lines, self.num_biquads, 5)
+            # Apply adaptive average pooling to reduce the batch dimension
+            x = self.pooling(x.permute(
+                1, 2, 0))  # batch along the last axis, shape[5*K*N, 1, B]
 
+            # Remove the last dimension (size 1)
+            x = x.squeeze(-1)
+
+        x = x.view(batch_size, self.num_delay_lines, self.num_biquads, 5)
         return x
 
 
@@ -300,6 +310,7 @@ class SVF_from_MLP(nn.Module):
         num_hidden_layers: int,
         num_neurons: int,
         encoding_type: FeatureEncodingType,
+        apply_pooling: bool = False,
         position_type: str = "output_gains",
     ):
         """
@@ -314,12 +325,15 @@ class SVF_from_MLP(nn.Module):
             encoding_type (str): whether to use one-hot encoding with the grid geometry information, 
                                  or directly use the sinusoidal encodings of the position 
                                  coordinates of the receiversas inputs to the MLP
+            apply_pooling (bool): whether to apply pooling to the final layer of the MLP to get the 
+                                  same filter coefficients for all batches
         """
         super().__init__()
         self.num_biquads = num_biquads
         self.num_delay_lines = num_delay_lines
         self.position_type = position_type
         self.encoding_type = encoding_type
+        self.apply_pooling = apply_pooling
 
         if self.encoding_type == FeatureEncodingType.SINE:
             # if we were feeding the spatial coordinates directly, then the
@@ -336,13 +350,8 @@ class SVF_from_MLP(nn.Module):
             self.encoder = OneHotEncoding()
 
         self.mlp = MLP(num_input_features, num_hidden_layers, num_neurons,
-                       self.num_biquads, self.num_delay_lines)
-
-        self.biquad_cascade = [
-            BiquadCascade(self.num_biquads, torch.zeros((self.num_biquads, 3)),
-                          torch.zeros((self.num_biquads, 3)))
-            for k in range(self.num_delay_lines)
-        ]
+                       self.num_biquads, self.num_delay_lines,
+                       self.apply_pooling)
 
         self.sos_filter = SOSFilter(self.num_biquads)
         self.soft_plus = SoftPlus()
@@ -357,10 +366,11 @@ class SVF_from_MLP(nn.Module):
         position = x[
             'listener_position'] if self.position_type == "output_gains" else x[
                 'source_position']
+        batch_size = 1 if self.apply_pooling else position.shape[0]
         mesh_3D = x['mesh_3D']
 
         # this will be the output tensor
-        H = torch.zeros((self.num_delay_lines, len(z_values)),
+        H = torch.zeros((batch_size, self.num_delay_lines, len(z_values)),
                         dtype=torch.complex64)
 
         # encode the position coordinates only
@@ -373,22 +383,33 @@ class SVF_from_MLP(nn.Module):
         self.svf_params = self.mlp(encoded_position)
 
         # always ensure that the filter cutoff frequency and resonance are positive
+        reshape_size = (batch_size, self.num_delay_lines, self.num_biquads)
         self.svf_params[..., 0] = self.tan_sigmoid(
-            self.svf_params[..., 0].view(-1)).reshape(self.num_delay_lines,
-                                                      self.num_biquads)
+            self.svf_params[..., 0].view(-1)).view(reshape_size)
         self.svf_params[..., 1] = self.soft_plus(
-            self.svf_params[..., 1].view(-1)).reshape(self.num_delay_lines,
-                                                      self.num_biquads)
+            self.svf_params[..., 1].view(-1)).view(reshape_size)
 
-        for i in range(self.num_delay_lines):
-            svf_params_del_line = self.svf_params[i, ...]
-            svf_cascade = [
-                SVF(svf_params_del_line[k, 0], svf_params_del_line[k, 1],
-                    svf_params_del_line[k, 2], svf_params_del_line[k, 3],
-                    svf_params_del_line[k, 4]) for k in range(self.num_biquads)
-            ]
-            self.biquad_cascade[i] = BiquadCascade.from_svf_coeffs(svf_cascade)
-            H[i, :] = self.sos_filter(z_values, self.biquad_cascade[i])
+        # initialise empty filters
+        self.biquad_cascade = [[
+            BiquadCascade(self.num_biquads, torch.zeros((self.num_biquads, 3)),
+                          torch.zeros((self.num_biquads, 3)))
+            for i in range(self.num_delay_lines)
+        ] for b in range(batch_size)]
+
+        # fill the empty filters
+        for b in range(batch_size):
+            for i in range(self.num_delay_lines):
+                svf_params_del_line = self.svf_params[b, i, :]
+                svf_cascade = [
+                    SVF(svf_params_del_line[k, 0], svf_params_del_line[k, 1],
+                        svf_params_del_line[k, 2], svf_params_del_line[k, 3],
+                        svf_params_del_line[k, 4])
+                    for k in range(self.num_biquads)
+                ]
+                self.biquad_cascade[b][i] = BiquadCascade.from_svf_coeffs(
+                    svf_cascade)
+                H[b, i, :] = self.sos_filter(z_values,
+                                             self.biquad_cascade[b][i])
 
         return H
 

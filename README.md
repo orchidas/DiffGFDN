@@ -14,7 +14,7 @@ reduces memory requirements of storing measured RIRs, but is also faster than co
 
 - The network is trained with the frequency-sampling method to make it differentiable.
 - We use an MLP to train the input and output filters of the DiffGFDN. The inputs into the MLP are either 1) $(x,y,z)$ spatial coordinates encoded with Fourier transformations OR 2) a 3D meshgrid of the space's geometry with a 4th dimension (one-hot vector) denoting where the source/receivers are located in the space. The input tensor size is $(B, L)$
-- The output of the MLP are state-variable filter (SVF) coefficients which are then converted into a cascade of biquad IIR filters. For a model with $N$ delay lines and $K_{\text{biquad}}$ cascaded biquads, the MLP should output a tensor of size $(N, K_{\text{biquad}}, 5)$, regardless of the batch size. For this we  need to use pooling.  We add an adaptive average pooling in the output layer for dimensionality reduction.
+- The output of the MLP are state-variable filter (SVF) coefficients which are then converted into a cascade of biquad IIR filters. For a model with $N$ delay lines and $K_{\text{biquad}}$ cascaded biquads, the MLP should output a tensor of size $(B, N, K_{\text{biquad}}, 5)$.
 - The feedback matrix, $A(z)$ has a unique structure that is given by
 ``` math
 \begin{align*}
