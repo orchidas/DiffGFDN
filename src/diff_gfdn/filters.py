@@ -1,11 +1,12 @@
 from typing import List, Optional, Tuple
 
+import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.fft import fft, fftfreq, ifft, irfft, rfftfreq
 from scipy.interpolate import interp1d, splev, splrep
 from scipy.linalg import toeplitz
-from scipy.signal import hilbert, tf2zpk, zpk2tf
+from scipy.signal import freqz, hilbert, tf2zpk, zpk2tf
 
 from .utils import db, db2lin
 
@@ -293,7 +294,8 @@ def decay_times_to_gain_filters(band_centre_hz: List,
                                 delay_length_samp: List[int],
                                 fs: float,
                                 filter_order: int = 12,
-                                num_freq_bins: int = 2**10):
+                                num_freq_bins: int = 2**10,
+                                plot_response: bool = False):
     """Fit filters to the common decay times in octave bands"""
     # the T60s for each delay line need to be attenuated
     num_delay_lines = len(delay_length_samp)
@@ -324,4 +326,40 @@ def decay_times_to_gain_filters(band_centre_hz: List,
         num_coeffs[i, :], den_coeffs[i, :] = prony_warped(
             interp_min_phase_ir, fs, filter_order, filter_order)
 
+    if plot_response:
+        plot_t60_filter_response(band_centre_hz, delay_line_filters,
+                                 num_coeffs, den_coeffs, fs,
+                                 interp_delay_line_filter, num_freq_bins)
     return np.stack((num_coeffs, den_coeffs), axis=-1)
+
+
+def plot_t60_filter_response(
+        freqs: List,
+        desired_filter_mag: NDArray,
+        num_coeffs: NDArray,
+        den_coeffs: NDArray,
+        sample_rate: float,
+        interp_delay_line_filter: Optional[NDArray] = None,
+        num_freq_bins: int = 2**12):
+    """Plot the fitted T60 filters to see how well they match to the specified spectrum"""
+    num_delay_lines = desired_filter_mag.shape[0]
+    total_response = np.zeros((num_delay_lines, num_freq_bins), dtype=complex)
+    freq_axis_one_sided = rfftfreq(num_freq_bins, d=1.0 / sample_rate)
+
+    for k in range(num_delay_lines):
+        freq_axis, total_response[k, :] = freqz(num_coeffs[k, :],
+                                                den_coeffs[k, :],
+                                                worN=num_freq_bins,
+                                                fs=sample_rate)
+
+    plt.figure()
+    line0 = plt.semilogx(freqs, db(desired_filter_mag.T), marker="o")
+    line1 = plt.semilogx(freq_axis_one_sided,
+                         db(np.abs(interp_delay_line_filter.T)),
+                         linestyle='--')
+    line2 = plt.semilogx(freq_axis, db(np.abs(total_response.T)))
+    plt.legend([line0[0], line1[0], line2[0]],
+               ["Measured", "Interpolated", "Warped prony fit"])
+    plt.xlabel('Frequency(Hz)')
+    plt.ylabel('Magnitude (dB)')
+    plt.tight_layout()

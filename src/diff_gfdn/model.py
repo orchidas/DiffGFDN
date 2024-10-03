@@ -83,7 +83,7 @@ class DiffGFDN(nn.Module):
                         for i in range(self.num_groups)
                     ])))
 
-        logger.info(f'Gains for delay lines are {self.gain_per_sample}')
+        # logger.info(f'Gains for delay lines are {self.gain_per_sample}')
 
         # here are the different operating blocks
         self.input_gains = nn.Parameter(
@@ -148,8 +148,9 @@ class DiffGFDN(nn.Module):
         param_np['individual_mixing_matrix'] = self.feedback_loop.M.squeeze(
         ).cpu().numpy()
         try:
-            param_np['coupling_matrix'] = self.feedback_loop.nd_rotation(
-                self.feedback_loop.alpha).squeeze().cpu().numpy()
+            param_np['coupling_matrix'] = self.feedback_loop.nd_unitary(
+                self.feedback_loop.alpha,
+                self.num_groups).squeeze().cpu().numpy()
             param_np[
                 'coupled_feedback_matrix'] = self.feedback_loop.get_coupled_feedback_matrix(
                 ).squeeze().cpu().numpy()
