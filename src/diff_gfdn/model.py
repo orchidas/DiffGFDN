@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -7,6 +7,7 @@ from torch import nn
 
 from .config.config import FeedbackLoopConfig, OutputFilterConfig
 from .feedback_loop import FeedbackLoop
+from .filters import decay_times_to_gain_filters
 from .gain_filters import SVF_from_MLP
 from .utils import absorption_to_gain_per_sample, to_complex
 
@@ -15,48 +16,73 @@ from .utils import absorption_to_gain_per_sample, to_complex
 
 class DiffGFDN(nn.Module):
 
-    def __init__(self, sample_rate: int, num_groups: int, delays: List[int],
-                 absorption_coeffs: List[float], room_dims: List[Tuple],
+    def __init__(self,
+                 sample_rate: int,
+                 num_groups: int,
+                 delays: List[int],
+                 room_dims: List[Tuple],
                  device: torch.device,
                  feedback_loop_config: FeedbackLoopConfig,
-                 output_filter_config: OutputFilterConfig):
+                 output_filter_config: OutputFilterConfig,
+                 use_absorption_filters: bool,
+                 absorption_coeffs: Optional[List] = None,
+                 common_decay_times: Optional[List] = None,
+                 band_centre_hz: Optional[List] = None):
         """
         Differentiable GFDN module.
         Args:
             sample_rate (int): sampling rate of the FDN
             num_groups (int): number of rooms in coupled space
             delays (list): list of delay line lengths (integer)
-            absorption_coeffs (list): uniform absorption coefficients (one for each room)
             room_dims (list): dimensions of each room as a tuple
             device: GPU or CPU for training
             feedback_loop_config (FeedbackLoopConfig): config file for training the feedback loop
             output_filter_config (OutputFilterConfig): config file for training the output SVF filters
-
+            use_absorption_filters (bool): whether to use scalar absorption gains or filters
+            absorption_coeffs (optional, list): uniform absorption coefficients (one for each room)
+            common_decay_times (optional, list): list of common decay times (one for each room)
+            band_centre_hz (optional, list): frequencies where common decay times are measured
         """
         super().__init__()
         self.sample_rate = sample_rate
         self.device = device
         # input parameters
         self.num_groups = num_groups
-        assert len(absorption_coeffs) == self.num_groups
         self.absorption_coeffs = absorption_coeffs
         self.delays = torch.tensor(delays, dtype=torch.int32)
         self.num_delay_lines = len(delays)
         self.num_delay_lines_per_group = int(self.num_delay_lines /
                                              self.num_groups)
+        self.use_absorption_filters = use_absorption_filters
         self.delays_by_group = np.array([
             self.delays[i:i + self.num_delay_lines_per_group] for i in range(
                 0, self.num_delay_lines, self.num_delay_lines_per_group)
         ])
-        self.gain_per_sample = torch.flatten(
-            torch.from_numpy(
+        if self.use_absorption_filters:
+            # this will be of size (num_groups, num_del_per_group, numerator (filter_order), denominator(filter_order))
+            self.gain_per_sample = torch.from_numpy(
                 np.array([
-                    absorption_to_gain_per_sample(room_dims[i],
-                                                  absorption_coeffs[i],
-                                                  self.delays_by_group[i],
-                                                  self.sample_rate)[1]
+                    decay_times_to_gain_filters(band_centre_hz,
+                                                common_decay_times[:, i],
+                                                self.delays_by_group[i],
+                                                self.sample_rate)
                     for i in range(self.num_groups)
-                ])))
+                ]))
+            self.filter_order = self.gain_per_sample.shape[-2]
+            self.gain_per_sample = self.gain_per_sample.view(
+                self.num_delay_lines, self.filter_order, 2)
+
+        else:
+            self.gain_per_sample = torch.flatten(
+                torch.from_numpy(
+                    np.array([
+                        absorption_to_gain_per_sample(room_dims[i],
+                                                      absorption_coeffs[i],
+                                                      self.delays_by_group[i],
+                                                      self.sample_rate)[1]
+                        for i in range(self.num_groups)
+                    ])))
+
         logger.info(f'Gains for delay lines are {self.gain_per_sample}')
 
         # here are the different operating blocks
@@ -64,7 +90,8 @@ class DiffGFDN(nn.Module):
             torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
         self.feedback_loop = FeedbackLoop(
             self.num_groups, self.num_delay_lines_per_group, self.delays,
-            self.gain_per_sample, feedback_loop_config.coupling_matrix_type,
+            self.gain_per_sample, self.use_absorption_filters,
+            feedback_loop_config.coupling_matrix_type,
             feedback_loop_config.pu_matrix_order)
         self.output_filters = SVF_from_MLP(
             output_filter_config.num_biquads_svf, self.num_delay_lines,
@@ -129,8 +156,9 @@ class DiffGFDN(nn.Module):
         except Exception:
             logger.warning('Parameter not initialised yet in FeedbackLoop!')
         try:
-            param_np['output_svf_params'] = self.svf_params.squeeze().cpu(
-            ).numpy()
+            param_np[
+                'output_svf_params'] = self.output_filters.svf_params.squeeze(
+                ).cpu().numpy()
             param_np['output_biquad_coeffs'] = [[
                 torch.cat(
                     (self.output_filters.biquad_cascade[b][n].num_coeffs,
@@ -138,7 +166,7 @@ class DiffGFDN(nn.Module):
                     dim=-1).squeeze().cpu().numpy()
                 for n in range(self.num_delay_lines)
             ] for b in range(self.batch_size)]
-        except Exception:
-            logger.warning("Parameter not initialised yet in OutputFilters!")
+        except Exception as e:
+            logger.warning(e)
 
         return param_np

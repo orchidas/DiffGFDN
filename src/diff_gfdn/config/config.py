@@ -78,6 +78,8 @@ class DiffGFDNConfig(BaseModel):
     num_delay_lines: int = 12
     # delay range in ms - first delay should be after the mixing time
     delay_range_ms: List[float] = [20.0, 50.0]
+    # whether to use scalar or frequency-dependent gains in delay lines
+    use_absorption_filters: bool = True
     # config for the feedback loop
     feedback_loop_config: FeedbackLoopConfig = FeedbackLoopConfig()
     # number of biquads in SVF

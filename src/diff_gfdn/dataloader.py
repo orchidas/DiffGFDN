@@ -10,7 +10,7 @@ import numpy as np
 import soundfile as sf
 import torch
 from loguru import logger
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
 from scipy.fft import rfft, rfftfreq
 from torch.utils import data
 
@@ -73,6 +73,8 @@ class RoomDataset(ABC):
                  source_position: NDArray,
                  receiver_position: NDArray,
                  rirs: NDArray,
+                 band_centre_hz: ArrayLike,
+                 common_decay_times: List,
                  room_dims: List,
                  room_start_coord: List,
                  absorption_coeffs: List,
@@ -84,6 +86,8 @@ class RoomDataset(ABC):
             source_position (NDArray): position of sources in cartesian coordinate
             receiver_position (NDArray): position of receivers in cartesian coordinate
             rirs (NDArray): omni-rirs at all source and receiver positions
+            band_centre_hz (ArrayLike): octave band centres where common T60s are calculated
+            common_decay_times (List[ArrayLike]): common decay times for the different rooms
             room_dims (List): l,w,h for each room in coupled space
             room_start_coord (List): coordinates of the room's starting vertex (first room starts at origin)
             absorption_coeffs (List): uniform absorption coefficients for each room
@@ -94,6 +98,8 @@ class RoomDataset(ABC):
         self.source_position = source_position
         self.receiver_position = receiver_position
         self.rirs = rirs
+        self.band_centre_hz = band_centre_hz
+        self.common_decay_times = common_decay_times
         self.num_rec = self.receiver_position.shape[0]
         self.num_src = self.source_position.shape[0]
         self.rir_length = self.rirs.shape[-1]
@@ -246,10 +252,14 @@ class ThreeRoomDataset(RoomDataset):
                 # these are second order ambisonic signals
                 # I am guessing the first channel contains the W component
                 rirs = np.squeeze(srir_mat['srirs'][0, ...]).T
+                band_centre_hz = srir_mat['band_centre_hz']
+                common_decay_times = np.asarray(
+                    np.squeeze(srir_mat['common_decay_times'], axis=1))
 
         except Exception as exc:
             raise FileNotFoundError(
                 f"File was not found at {str(filepath)}") from exc
+
         logger.info("Done reading pkl file")
         # uniform absorption coefficients of the three rooms
         absorption_coeffs = np.array([0.2, 0.01, 0.1])
@@ -258,7 +268,8 @@ class ThreeRoomDataset(RoomDataset):
         # this denotes the 3D position of the first vertex of the floor
         room_start_coord = [(0, 0, 0), (4.0, 2.0, 0), (6.0, 5.0, 0)]
         super().__init__(num_rooms, sample_rate, source_position,
-                         receiver_position, rirs, room_dims, room_start_coord,
+                         receiver_position, rirs, band_centre_hz,
+                         common_decay_times, room_dims, room_start_coord,
                          absorption_coeffs)
         # how far apart the receivers are placed
         mic_spacing_m = 0.3

@@ -6,9 +6,9 @@ from numpy.typing import ArrayLike
 from torch import nn
 
 
-def db(x: torch.tensor,
+def db(x: Union[ArrayLike, torch.tensor],
        is_squared: bool = False,
-       min_value: float = -200) -> torch.tensor:
+       min_value: float = -200) -> Union[ArrayLike, torch.tensor]:
     """Convert values to decibels.
 
     Args:
@@ -22,9 +22,14 @@ def db(x: torch.tensor,
     Returns:
         An array with the converted values, in dB.
     """
-    x = torch.abs(x)
     factor = 10.0 if is_squared else 20.0
-    y = factor * torch.log10(x + torch.finfo(torch.float32).eps)
+    if torch.is_tensor(x):
+        x = torch.abs(x)
+        y = factor * torch.log10(x + torch.finfo(torch.float32).eps)
+    else:
+        x = np.abs(x)
+        y = factor * np.log10(x + np.finfo(np.float32).eps)
+
     return y.clip(min=min_value)
 
 

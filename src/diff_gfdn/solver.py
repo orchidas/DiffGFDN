@@ -110,11 +110,19 @@ def run_training(config_dict: DiffGFDNConfig):
         trainer_config.batch_size)
 
     # initialise the model
-    model = DiffGFDN(room_data.sample_rate, room_data.num_rooms,
-                     config_dict.delay_length_samps,
-                     room_data.absorption_coeffs, room_data.room_dims,
-                     trainer_config.device, config_dict.feedback_loop_config,
-                     config_dict.output_filter_config)
+    model = DiffGFDN(
+        room_data.sample_rate,
+        room_data.num_rooms,
+        config_dict.delay_length_samps,
+        room_data.room_dims,
+        trainer_config.device,
+        config_dict.feedback_loop_config,
+        config_dict.output_filter_config,
+        config_dict.use_absorption_filters,
+        room_data.absorption_coeffs,
+        room_data.common_decay_times,
+        room_data.band_centre_hz,
+    )
 
     # create the trainer object
     trainer = Trainer(model, trainer_config)
