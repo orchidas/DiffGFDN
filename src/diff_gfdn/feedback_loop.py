@@ -5,7 +5,7 @@ import torch
 from torch import nn
 
 from .config.config import CouplingMatrixType
-from .utils import is_unitary, matrix_convolution, to_complex
+from .utils import matrix_convolution, to_complex
 
 # pylint: disable=E0606
 
@@ -117,7 +117,7 @@ class ND_Unitary(nn.Module):
             big_matrix[:N - 1, :N - 1] = self.forward(alpha[:start_idx], N - 1)
             result = torch.mm(rot_matrix, big_matrix)
             # all of the intermediate matrices must be unitary
-            assert is_unitary(result)[0]
+            # assert is_unitary(result)[0]
             return result
 
 

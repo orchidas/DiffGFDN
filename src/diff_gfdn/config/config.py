@@ -43,8 +43,8 @@ class OutputFilterConfig(BaseModel):
     num_neurons_per_layer: int = 2**7
     num_fourier_features: int = 10
     encoding_type: FeatureEncodingType = FeatureEncodingType.SINE
-    # whether to pool all the batches together after the final layer
-    apply_pooling: bool = False
+    # by how much to constrain the pole radii when calculating output filter coeffs
+    reduced_pole_radii: float = 1.0
 
 
 class TrainerConfig(BaseModel):
@@ -59,6 +59,10 @@ class TrainerConfig(BaseModel):
     max_epochs: int = 5
     # learning rate for Adam optimiser
     lr: float = 0.01
+    # length of IR filters (needed for calculating reguralisation loss)
+    output_filt_ir_len_ms: float = 500
+    # whether to use regularisation loss to reduce time domain aliasing
+    use_reg_loss: bool = False
     # directory to save results
     train_dir: str = "../output"
     # where to save the IRs

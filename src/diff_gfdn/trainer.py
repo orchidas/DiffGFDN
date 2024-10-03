@@ -10,9 +10,9 @@ from torch.utils.data import DataLoader
 from tqdm import trange
 
 from .config.config import TrainerConfig
-from .losses import edr_loss
+from .losses import edr_loss, reg_loss
 from .model import DiffGFDN
-from .utils import get_response, get_str_results
+from .utils import get_response, get_str_results, ms_to_samps
 
 
 # flake8: noqa: E231
@@ -27,12 +27,28 @@ class Trainer:
         self.early_stop = 0
         self.train_dir = Path(trainer_config.train_dir).resolve()
         self.ir_dir = Path(trainer_config.ir_dir).resolve()
+        self.use_reg_loss = trainer_config.use_reg_loss
+
         if not os.path.exists(self.ir_dir):
             os.makedirs(self.ir_dir)
 
         self.optimizer = torch.optim.Adam(net.parameters(),
                                           lr=trainer_config.lr)
-        self.criterion = edr_loss(self.net.sample_rate)
+
+        if trainer_config.use_reg_loss:
+            logger.info(
+                'Using regularisation loss to reduce time domain aliasing in output filters'
+            )
+            self.criterion = [
+                edr_loss(self.net.sample_rate),
+                reg_loss(
+                    ms_to_samps(trainer_config.output_filt_ir_len_ms,
+                                self.net.sample_rate),
+                    self.net.num_delay_lines,
+                    self.net.output_filters.num_biquads)
+            ]
+        else:
+            self.criterion = edr_loss(self.net.sample_rate)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=10,
                                                          gamma=0.1)
@@ -83,7 +99,12 @@ class Trainer:
         """Single step of training"""
         self.optimizer.zero_grad()
         H = self.net(data)
-        loss = self.criterion(data['target_rir_response'], H)
+        if self.use_reg_loss:
+            loss = self.criterion[0](
+                data['target_rir_response'], H) + self.criterion[1](
+                    self.net.output_filters.biquad_cascade)
+        else:
+            loss = self.criterion(data['target_rir_response'], H)
 
         loss.backward()
         self.optimizer.step()
@@ -97,8 +118,18 @@ class Trainer:
         for data in valid_dataset:
             position = data['listener_position']
             logger.info("Running the network for new batch of positiions")
-            H = self.save_ir(data, directory=self.ir_dir, pos_list=position)
-            loss = self.criterion(data['target_rir_response'], H)
+            H = self.save_ir(data,
+                             directory=self.ir_dir,
+                             pos_list=position,
+                             filename_prefix="valid_ir")
+
+            if self.use_reg_loss:
+                loss = self.criterion[0](
+                    data['target_rir_response'], H) + self.criterion[1](
+                        self.net.output_filters.biquad_cascade)
+            else:
+                loss = self.criterion(data['target_rir_response'], H)
+
             cur_loss = loss.item()
             total_loss += cur_loss
             self.valid_loss.append(cur_loss)

@@ -1,11 +1,76 @@
-from typing import Optional
+from typing import List, Optional
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
 
+from .gain_filters import SOSFilter
 from .utils import db
+
+
+class reg_loss(nn.Module):
+    """
+    Penalises the rate of decay of the output filters (pole radius) to reduce time aliasing 
+    caused by frequency sampling. See Lee et al, Differentiable artificial reverberation, 
+    IEEE TASLP 2022
+    """
+
+    def __init__(self, num_time_samps: int, num_delay_lines: int,
+                 num_biquads: int):
+        """
+        Args:
+            num_time_samps (int): length of the IR of each output filter
+            num_delay_lines (int): number of delay lines in the GFDN
+            num_biquads (int): number of biquads in each output filter
+        """
+        super().__init__()
+        self.num_delay_lines = num_delay_lines
+        self.num_biquads = num_biquads
+        # length of impulse response
+        self.num_time_samps = num_time_samps
+        self.N0 = int(np.round(num_time_samps / 8))
+        self.sos_filter = SOSFilter(self.num_biquads)
+        # create an impulse
+        self.input_signal = torch.zeros(num_time_samps)
+        self.input_signal[0] = 1.0
+
+    def forward(self, output_biquad_cascade: List):
+        """
+        Apply softmax to the rate of decrease of the filter
+        Args:
+            output_biquad_cascade (List): B x Ndel biquad cascade filters
+        """
+        with torch.autograd.set_detect_anomaly(True):
+            batch_size = len(output_biquad_cascade)
+            gamma_list = []
+
+            for b in range(batch_size):
+                for n in range(self.num_delay_lines):
+                    cur_biquad_cascade = output_biquad_cascade[b][n]
+
+                    cur_output_signal = self.sos_filter.filter(
+                        self.input_signal, cur_biquad_cascade)
+
+                    # ratio of the late energy to the early energy
+                    # if gamma is large, then IR is decaying slowly
+                    # if gamma is small, then IR is decaying fast
+                    gamma_list.append(
+                        torch.div(
+                            torch.sum(
+                                torch.abs(
+                                    cur_output_signal[self.num_time_samps -
+                                                      self.N0:])),
+                            torch.sum(torch.abs(cur_output_signal[:self.N0]))))
+
+            # penalise long decay times more (reduce pole radii)
+            # sum along delay lines
+            gamma = torch.stack(gamma_list).view(batch_size,
+                                                 self.num_delay_lines)
+            loss = torch.div(torch.sum(gamma * torch.exp(gamma), 1),
+                             torch.sum(torch.exp(gamma), 1))
+            # sum along batch size
+            return torch.sum(loss)
 
 
 class edr_loss(nn.Module):
