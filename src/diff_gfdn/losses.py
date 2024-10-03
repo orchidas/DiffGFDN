@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from .filters import calc_erb_filters
 from .gain_filters import SOSFilter
 from .utils import db
 
@@ -79,17 +80,24 @@ class edr_loss(nn.Module):
     def __init__(self,
                  sample_rate: float,
                  win_size: int = 2**9,
-                 hop_size: int = 2**8):
+                 hop_size: int = 2**8,
+                 use_erb_grouping: bool = False):
         """
         Args:
             sample_rate: sampling rate of the RIRs
             win_size (int): window size for the STFT (also the FFT size)
             hop_size (int): hop size for the STFT (must give COLA)
+            erb_grouping (bool): whether to group in ERB bands
         """
         super().__init__()
         self.sample_rate = sample_rate
         self.win_size = win_size
         self.hop_size = hop_size
+        self.use_erb_grouping = use_erb_grouping
+        if self.use_erb_grouping:
+            self.erb_filters = calc_erb_filters(sample_rate,
+                                                nfft=win_size,
+                                                num_bands=50)
 
     def forward(self, target_response: torch.tensor,
                 achieved_response: torch.tensor) -> torch.tensor:
@@ -108,11 +116,19 @@ class edr_loss(nn.Module):
         achieved_rir = torch.fft.irfft(achieved_response,
                                        achieved_response.shape[-1])
 
-        S_target, _, _ = get_stft_torch(target_rir, self.sample_rate,
-                                        self.win_size, self.hop_size, nfft)
+        S_target, _, _ = get_stft_torch(target_rir,
+                                        self.sample_rate,
+                                        self.win_size,
+                                        self.hop_size,
+                                        nfft,
+                                        erb_filters=self.erb_filters)
 
-        S_ach, _, _ = get_stft_torch(achieved_rir, self.sample_rate,
-                                     self.win_size, self.hop_size, nfft)
+        S_ach, _, _ = get_stft_torch(achieved_rir,
+                                     self.sample_rate,
+                                     self.win_size,
+                                     self.hop_size,
+                                     nfft,
+                                     erb_filters=self.erb_filters)
 
         target_edr = get_edr_from_stft(S_target)
         ach_edr = get_edr_from_stft(S_ach)
@@ -128,7 +144,8 @@ def get_stft_torch(rir: torch.tensor,
                    nfft: int = 2**10,
                    window: Optional[torch.tensor] = None,
                    freq_axis: int = 1,
-                   time_axis: int = -1):
+                   time_axis: int = -1,
+                   erb_filters: Optional[torch.tensor] = None):
     """Get STFT from a time domain signal"""
     time_samps = rir.shape[time_axis]
     if time_samps % hop_size != 0:
@@ -156,12 +173,19 @@ def get_stft_torch(rir: torch.tensor,
                    onesided=True,
                    return_complex=True)
 
-    freqs = torch.fft.rfftfreq(nfft, d=1.0 / sample_rate)
     time_frames = torch.arange(0, rir.shape[time_axis] - hop_size,
                                hop_size) / sample_rate
+    freqs = torch.fft.rfftfreq(nfft, d=1.0 / sample_rate)
 
     assert len(freqs) == S.shape[freq_axis]
     assert len(time_frames) == S.shape[time_axis]
+
+    if erb_filters is not None:
+        if S.ndim == 2:
+            S = torch.matmul(erb_filters, torch.abs(S))
+        else:
+            S = torch.einsum('nk, bkt -> bnt', erb_filters, torch.abs(S))
+
     return S, freqs, time_frames
 
 

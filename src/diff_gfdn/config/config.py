@@ -63,6 +63,8 @@ class TrainerConfig(BaseModel):
     output_filt_ir_len_ms: float = 500
     # whether to use regularisation loss to reduce time domain aliasing
     use_reg_loss: bool = False
+    # whether to use perceptual ERB loss
+    use_erb_edr_loss: bool = False
     # directory to save results
     train_dir: str = "../output"
     # where to save the IRs

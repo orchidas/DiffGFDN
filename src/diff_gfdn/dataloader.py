@@ -112,7 +112,8 @@ class RoomDataset(ABC):
     @property
     def num_freq_bins(self):
         """Number of frequency bins in the magnitude response"""
-        return int(np.pow(2, np.ceil(np.log2(self.rir_length))))
+        max_rt60_samps = self.common_decay_times.max() * self.sample_rate
+        return int(np.pow(2, np.ceil(np.log2(max_rt60_samps))))
 
     @property
     def freq_bins_rad(self):

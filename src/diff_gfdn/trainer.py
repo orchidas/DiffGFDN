@@ -40,7 +40,8 @@ class Trainer:
                 'Using regularisation loss to reduce time domain aliasing in output filters'
             )
             self.criterion = [
-                edr_loss(self.net.sample_rate),
+                edr_loss(self.net.sample_rate,
+                         use_erb_grouping=trainer_config.use_erb_edr_loss),
                 reg_loss(
                     ms_to_samps(trainer_config.output_filt_ir_len_ms,
                                 self.net.sample_rate),
