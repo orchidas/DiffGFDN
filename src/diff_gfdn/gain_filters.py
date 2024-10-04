@@ -282,6 +282,10 @@ class MLP(nn.Module):
         x (torch.tensor): input feature vector
         """
         batch_size = 1 if self.apply_pooling else x.shape[0]
+        device_x = x.device
+        device_model = self.model[0].weight.device
+        print("Device of x:", device_x)
+        print("Device of self.model:", device_model)
         x = self.model(x)
 
         if self.apply_pooling:
