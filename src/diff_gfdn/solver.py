@@ -106,8 +106,11 @@ def run_training(config_dict: DiffGFDNConfig):
 
     # prepare the training and validation data for DiffGFDN
     train_dataset, valid_dataset = load_dataset(
-        room_data, trainer_config.device, trainer_config.train_valid_split,
-        trainer_config.batch_size)
+        room_data,
+        trainer_config.device,
+        trainer_config.train_valid_split,
+        trainer_config.batch_size,
+        new_sampling_radius=trainer_config.new_sampling_radius)
 
     # initialise the model
     model = DiffGFDN(

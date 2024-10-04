@@ -99,8 +99,7 @@ class DiffGFDN(nn.Module):
             output_filter_config.num_fourier_features,
             output_filter_config.num_hidden_layers,
             output_filter_config.num_neurons_per_layer,
-            output_filter_config.encoding_type,
-            output_filter_config.reduced_pole_radii)
+            output_filter_config.encoding_type)
 
         # add a lowpass filter at the end to remove high frequency artifacts
         self.design_lowpass_filter()

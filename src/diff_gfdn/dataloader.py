@@ -298,7 +298,10 @@ class ThreeRoomDataset(RoomDataset):
 
 class RIRDataset(data.Dataset):
 
-    def __init__(self, device: torch.device, room_data: RoomDataset):
+    def __init__(self,
+                 device: torch.device,
+                 room_data: RoomDataset,
+                 new_sampling_radius: Optional[float] = None):
         """
         RIR dataset containing magnitude response of RIRs around the unit circle,
         for different receiver positions.
@@ -308,6 +311,9 @@ class RIRDataset(data.Dataset):
             device (str): cuda or cpu
             room_data (RoomDataset): object of the room dataset class
                         containing information about the RIRs and source and listener positions
+            new_sampling_radius (float): to reduce time aliasing artifacts due to insufficient sampling
+                                     in the frequency domain, sample points on a circle whose radius
+                                     is larger than 1 
 
         """
         # spatial data
@@ -318,9 +324,21 @@ class RIRDataset(data.Dataset):
 
         # frequency-domain data
         freq_bins_rad = torch.from_numpy(room_data.freq_bins_rad)
-        # this ensures that we cover half the unit circle (other half is symmetric)
-        self.z_values = torch.polar(torch.ones_like(freq_bins_rad),
-                                    freq_bins_rad * 2 * np.pi)
+
+        if new_sampling_radius is None:
+            # this ensures that we cover half the unit circle (other half is symmetric)
+            self.z_values = torch.polar(torch.ones_like(freq_bins_rad),
+                                        freq_bins_rad * 2 * np.pi)
+        else:
+            assert new_sampling_radius > 1.0
+            logger.info(
+                f"Sampling outside the unit circle at a radius {new_sampling_radius}"
+            )
+            # sample outside the unit circle
+            self.z_values = torch.polar(
+                new_sampling_radius * torch.ones_like(freq_bins_rad),
+                freq_bins_rad * 2 * np.pi)
+
         self.rir_mag_response = torch.from_numpy(room_data.rir_mag_response)
         self.late_rir_mag_response = torch.from_numpy(
             room_data.late_rir_mag_response)
@@ -427,7 +445,8 @@ def load_dataset(room_data: RoomDataset,
                  device: torch.device,
                  train_valid_split_ratio: float = 0.8,
                  batch_size: int = 32,
-                 shuffle: bool = True):
+                 shuffle: bool = True,
+                 new_sampling_radius: Optional[float] = None):
     """
     Get training and validation dataset
     Args:
@@ -436,8 +455,11 @@ def load_dataset(room_data: RoomDataset,
         train_valid_split_ratio (float): ratio between training and validation set
         batch_size (int): number of samples in each batch size
         shuffle (bool): whether to randomly shuffle data during training
+        new_sampling_radius (float): to reduce time aliasing artifacts due to insufficient sampling
+                                     in the frequency domain, sample points on a circle whose radius
+                                     is larger than 1 
     """
-    dataset = RIRDataset(device, room_data)
+    dataset = RIRDataset(device, room_data, new_sampling_radius)
     # split data into training and validation set
     train_set, valid_set = split_dataset(dataset, train_valid_split_ratio)
 

@@ -77,23 +77,29 @@ class reg_loss(nn.Module):
 class edr_loss(nn.Module):
     """Loss function that returns the difference between the EDRs of two RIRs in dB"""
 
-    def __init__(self,
-                 sample_rate: float,
-                 win_size: int = 2**9,
-                 hop_size: int = 2**8,
-                 use_erb_grouping: bool = False):
+    def __init__(
+        self,
+        sample_rate: float,
+        win_size: int = 2**9,
+        hop_size: int = 2**8,
+        reduced_pole_radius: Optional[float] = None,
+        use_erb_grouping: bool = False,
+    ):
         """
         Args:
             sample_rate: sampling rate of the RIRs
             win_size (int): window size for the STFT (also the FFT size)
             hop_size (int): hop size for the STFT (must give COLA)
             erb_grouping (bool): whether to group in ERB bands
+            reduced_pole_radius (optional, float): if the sampling was done on a radius larger than the unit circle,
+                                                   we need to apply an exponential envelope to the resulting IR
         """
         super().__init__()
         self.sample_rate = sample_rate
         self.win_size = win_size
         self.hop_size = hop_size
         self.use_erb_grouping = use_erb_grouping
+        self.reduced_pole_radius = reduced_pole_radius
         if self.use_erb_grouping:
             self.erb_filters = calc_erb_filters(sample_rate,
                                                 nfft=win_size,
@@ -117,6 +123,12 @@ class edr_loss(nn.Module):
                                      target_response.shape[-1])
         achieved_rir = torch.fft.irfft(achieved_response,
                                        achieved_response.shape[-1])
+
+        if self.reduced_pole_radius is not None:
+            # undo sampling on a larger circle in the
+            # z domain by multiplying with an increasing exponent in the time domain
+            achieved_rir *= torch.pow(1.0 / self.reduced_pole_radius,
+                                      torch.arange(0, achieved_rir.shape[-1]))
 
         S_target, _, _ = get_stft_torch(target_rir,
                                         self.sample_rate,
