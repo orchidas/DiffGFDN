@@ -3,3 +3,4 @@ __pycache__
 DiffGFDN.egg-info
 .DS_Store
 
+src/diff_gfdn/config/config.py
