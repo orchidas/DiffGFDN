@@ -123,7 +123,9 @@ def run_training(config_dict: DiffGFDNConfig):
         room_data.common_decay_times,
         room_data.band_centre_hz,
     )
-
+    # move model to device (cuda or cpu)
+    model = model.to(trainer_config.device)
+    
     # create the trainer object
     trainer = Trainer(model, trainer_config)
 

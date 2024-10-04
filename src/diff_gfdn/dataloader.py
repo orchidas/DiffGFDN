@@ -339,7 +339,9 @@ class RIRDataset(data.Dataset):
         target_labels = Target(self.early_rir_mag_response[idx, :],
                                self.late_rir_mag_response[idx, :],
                                self.rir_mag_response[idx, :])
-
+        # Move data to device (cuda or cpu)
+        input_features = input_features.to(self.device)
+        target_labels = target_labels.to(self.device)
         return {'input': input_features, 'target': target_labels}
 
 
