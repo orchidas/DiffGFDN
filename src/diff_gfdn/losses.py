@@ -98,6 +98,8 @@ class edr_loss(nn.Module):
             self.erb_filters = calc_erb_filters(sample_rate,
                                                 nfft=win_size,
                                                 num_bands=50)
+        else:
+            self.erb_filters = None
 
     def forward(self, target_response: torch.tensor,
                 achieved_response: torch.tensor) -> torch.tensor:

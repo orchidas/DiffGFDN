@@ -3,12 +3,13 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 from loguru import logger
+from scipy.signal import butter
 from torch import nn
 
 from .config.config import FeedbackLoopConfig, OutputFilterConfig
 from .feedback_loop import FeedbackLoop
 from .filters import decay_times_to_gain_filters
-from .gain_filters import SVF_from_MLP
+from .gain_filters import BiquadCascade, SOSFilter, SVF_from_MLP
 from .utils import absorption_to_gain_per_sample, to_complex
 
 # pylint: disable=W0718
@@ -101,6 +102,29 @@ class DiffGFDN(nn.Module):
             output_filter_config.encoding_type,
             output_filter_config.reduced_pole_radii)
 
+        # add a lowpass filter at the end to remove high frequency artifacts
+        self.design_lowpass_filter()
+
+    def design_lowpass_filter(self,
+                              filter_order: int = 16,
+                              cutoff_hz: float = 12e3):
+        """
+        Add a lowpass filter in the end to prevent spurius high frequency artifacts
+        Args:
+            filter_order (int): IIR filter order
+            cutoff_hz (float): cutoff frequency of the lowpass (12k by default)
+        """
+        sos_filter_coeffs = torch.from_numpy(
+            butter(filter_order,
+                   cutoff_hz / (self.sample_rate / 2.0),
+                   btype='lowpass',
+                   output='sos'))
+        self.lowpass_biquad = BiquadCascade(
+            num_sos=sos_filter_coeffs.shape[0],
+            num_coeffs=sos_filter_coeffs[:, :3],
+            den_coeffs=sos_filter_coeffs[:, 3:])
+        self.lowpass_filter = SOSFilter(sos_filter_coeffs.shape[0])
+
     def forward(self, x: Dict) -> torch.tensor:
         """
         Compute H(z) = c(z)^T (D - A(z)Gamma(z))^{-1} b(z) + d(z)
@@ -124,7 +148,11 @@ class DiffGFDN(nn.Module):
         # C.T @ P @ B + d(z)
         direct_filter = x['target_early_response']
         H = torch.einsum('bmk, bmk -> bk', Htemp, B) + direct_filter
-        return H
+
+        # pass through a lowpass filter
+        lowpass_response = self.lowpass_filter(z, self.lowpass_biquad)
+        H_lp = H * lowpass_response
+        return H_lp
 
     def get_parameters(self) -> Tuple:
         """Return the parameters as a tuple"""

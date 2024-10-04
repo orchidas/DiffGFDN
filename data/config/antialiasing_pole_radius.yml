@@ -4,4 +4,4 @@ trainer_config:
     train_dir: '../output/pole_reduce/'
     ir_dir: '../audio/pole_reduce/'
 output_filter_config:
-    reduce_pole_radii: 0.99
+    reduce_pole_radii: 0.95

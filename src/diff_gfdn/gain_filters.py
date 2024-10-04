@@ -40,7 +40,7 @@ class BiquadCascade:
         Get the biquad cascade from a list of SVF coefficients
         Args:
             reduced_pole_radii: number between 0 and 1 that reduces the pole radii of the biquads and
-                                    prevents time domain aliasing
+                                prevents time domain aliasing
         """
         num_sos = len(svf_coeffs)
         num_coeffs = torch.zeros((num_sos, 3))
@@ -396,7 +396,7 @@ class SVF_from_MLP(nn.Module):
                     for k in range(self.num_biquads)
                 ]
                 self.biquad_cascade[b][i] = BiquadCascade.from_svf_coeffs(
-                    svf_cascade)
+                    svf_cascade, self.reduced_pole_radii)
                 H[b, i, :] = self.sos_filter(z_values,
                                              self.biquad_cascade[b][i])
 
