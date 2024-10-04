@@ -340,11 +340,17 @@ class RIRDataset(data.Dataset):
                                self.late_rir_mag_response[idx, :],
                                self.rir_mag_response[idx, :])
         # Move data to device (cuda or cpu)
-        input_features = input_features.to(self.device)
-        target_labels = target_labels.to(self.device)
+        input_features = self.to_device(input_features)
+        target_labels = self.to_device(target_labels)
         return {'input': input_features, 'target': target_labels}
 
-
+    def to_device(self, dataclass):
+        """Move all tensor attributes to self.device."""
+        for field_name, field_value in dataclass.__dict__.items():
+            if isinstance(field_value, torch.Tensor):
+                setattr(dataclass, field_name, field_value.to(self.device))
+        return dataclass
+    
 def custom_collate(batch: data.Dataset):
     """
     Collate datapoints in the dataloader.
