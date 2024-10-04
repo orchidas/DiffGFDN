@@ -108,6 +108,8 @@ class DiffGFDN(nn.Module):
             x(dict) : input feature dict
         """
         z = x['z_values']
+        # print device where z is stored
+        print(f'z is stored on {z.device}')
         num_freq_pts = len(z)
         # this is of size B x Ndel x num_freq_points
         C = self.output_filters(x)
