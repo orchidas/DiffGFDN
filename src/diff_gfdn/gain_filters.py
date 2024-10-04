@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -34,11 +34,14 @@ class BiquadCascade:
     den_coeffs: torch.tensor
 
     @staticmethod
-    def from_svf_coeffs(svf_coeffs: List[SVF]):
+    def from_svf_coeffs(svf_coeffs: List[SVF],
+                        compress_pole_factor: float = 1.0):
         """
         Get the biquad cascade from a list of SVF coefficients
         Args:
             svf_coefs (list): list of SVF objects, each representing a filter in the casacade
+            compress_pole_factor: number between 0 and 1 that reduces the pole radii of the biquads and
+                                prevents time domain aliasing
         """
         num_sos = len(svf_coeffs)
         num_coeffs = torch.zeros((num_sos, 3))
@@ -50,19 +53,20 @@ class BiquadCascade:
                 0] = cur_svf.cutoff_frequency**2 * cur_svf.m_LP + cur_svf.cutoff_frequency * cur_svf.m_BP + cur_svf.m_HP
             num_coeffs[i,
                        1] = (2 * cur_svf.cutoff_frequency**2 * cur_svf.m_LP -
-                             2 * cur_svf.m_HP)
+                             2 * cur_svf.m_HP) * compress_pole_factor
             num_coeffs[i, 2] = (cur_svf.cutoff_frequency**2 * cur_svf.m_LP -
                                 cur_svf.cutoff_frequency * cur_svf.m_BP +
-                                cur_svf.m_HP)
+                                cur_svf.m_HP) * compress_pole_factor**2
 
             den_coeffs[
                 i,
                 0] = cur_svf.cutoff_frequency**2 + 2 * cur_svf.resonance * cur_svf.cutoff_frequency + 1
-            den_coeffs[i, 1] = 2 * cur_svf.cutoff_frequency**2 - 2
+            den_coeffs[i, 1] = (2 * cur_svf.cutoff_frequency**2 -
+                                2) * compress_pole_factor
             den_coeffs[i,
                        2] = (cur_svf.cutoff_frequency**2 -
                              2 * cur_svf.resonance * cur_svf.cutoff_frequency +
-                             1)
+                             1) * compress_pole_factor**2
 
         return BiquadCascade(num_sos, num_coeffs, den_coeffs)
 
@@ -296,6 +300,7 @@ class SVF_from_MLP(nn.Module):
         num_hidden_layers: int,
         num_neurons: int,
         encoding_type: FeatureEncodingType,
+        compress_pole_factor: Optional[float] = 1.0,
         position_type: str = "output_gains",
     ):
         """
@@ -310,12 +315,15 @@ class SVF_from_MLP(nn.Module):
             encoding_type (str): whether to use one-hot encoding with the grid geometry information, 
                                  or directly use the sinusoidal encodings of the position 
                                  coordinates of the receiversas inputs to the MLP
+            compress_pole_factor (float): number between 0 and 1 that reduces the pole radii of the biquads and
+                                    prevents time domain aliasing
         """
         super().__init__()
         self.num_biquads = num_biquads
         self.num_delay_lines = num_delay_lines
         self.position_type = position_type
         self.encoding_type = encoding_type
+        self.compress_pole_factor = compress_pole_factor
 
         if self.encoding_type == FeatureEncodingType.SINE:
             # if we were feeding the spatial coordinates directly, then the
@@ -389,7 +397,7 @@ class SVF_from_MLP(nn.Module):
                     for k in range(self.num_biquads)
                 ]
                 self.biquad_cascade[b][i] = BiquadCascade.from_svf_coeffs(
-                    svf_cascade)
+                    svf_cascade, self.compress_pole_factor)
                 H[b, i, :] = self.sos_filter(z_values,
                                              self.biquad_cascade[b][i])
 

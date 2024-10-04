@@ -43,6 +43,8 @@ class OutputFilterConfig(BaseModel):
     num_neurons_per_layer: int = 2**7
     num_fourier_features: int = 10
     encoding_type: FeatureEncodingType = FeatureEncodingType.SINE
+    # by how much to constrain the pole radii when calculating output filter coeffs
+    compress_pole_factor: float = 1.0
 
 
 class TrainerConfig(BaseModel):

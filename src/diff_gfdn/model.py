@@ -95,11 +95,14 @@ class DiffGFDN(nn.Module):
             feedback_loop_config.coupling_matrix_type,
             feedback_loop_config.pu_matrix_order)
         self.output_filters = SVF_from_MLP(
-            output_filter_config.num_biquads_svf, self.num_delay_lines,
+            output_filter_config.num_biquads_svf,
+            self.num_delay_lines,
             output_filter_config.num_fourier_features,
             output_filter_config.num_hidden_layers,
             output_filter_config.num_neurons_per_layer,
-            output_filter_config.encoding_type)
+            output_filter_config.encoding_type,
+            output_filter_config.compress_pole_factor,
+        )
 
         # add a lowpass filter at the end to remove high frequency artifacts
         self.design_lowpass_filter()
