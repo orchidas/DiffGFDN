@@ -1,4 +1,5 @@
 .diff-gfdn
+.diff-gfdn-win
 __pycache__
 DiffGFDN.egg-info
 .DS_Store
