@@ -66,7 +66,7 @@ class DiffGFDN(nn.Module):
                                                 self.delays_by_group[i],
                                                 self.sample_rate)
                     for i in range(self.num_groups)
-                ])
+                ], device=self.device)
             self.filter_order = self.gain_per_sample.shape[-2]
             self.gain_per_sample = self.gain_per_sample.view(
                 self.num_delay_lines, self.filter_order, 2)
@@ -79,11 +79,12 @@ class DiffGFDN(nn.Module):
                                                       self.delays_by_group[i],
                                                       self.sample_rate)[1]
                         for i in range(self.num_groups)
-                    ]))
+                    ], device=self.device))
 
         logger.info(f'Gains for delay lines are {self.gain_per_sample}')
 
         # here are the different operating blocks
+        self.delays = self.delays.to(self.device)
         self.input_gains = nn.Parameter(
             torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
         self.feedback_loop = FeedbackLoop(
