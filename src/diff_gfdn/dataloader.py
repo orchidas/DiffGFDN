@@ -1,5 +1,6 @@
 import os
 import pickle
+import inspect
 from abc import ABC
 from dataclasses import dataclass
 from pathlib import Path
@@ -310,20 +311,20 @@ class RIRDataset(data.Dataset):
 
         """
         # spatial data
-        self.source_position = torch.from_numpy(room_data.source_position)
-        self.listener_positions = torch.from_numpy(room_data.receiver_position)
+        self.source_position = torch.tensor(room_data.source_position)
+        self.listener_positions = torch.tensor(room_data.receiver_position)
         self.mesh_3D = room_data.mesh_3D
         self.device = device
 
         # frequency-domain data
-        freq_bins_rad = torch.from_numpy(room_data.freq_bins_rad)
+        freq_bins_rad = torch.tensor(room_data.freq_bins_rad)
         # this ensures that we cover half the unit circle (other half is symmetric)
         self.z_values = torch.polar(torch.ones_like(freq_bins_rad),
                                     freq_bins_rad * 2 * np.pi)
-        self.rir_mag_response = torch.from_numpy(room_data.rir_mag_response)
-        self.late_rir_mag_response = torch.from_numpy(
+        self.rir_mag_response = torch.tensor(room_data.rir_mag_response)
+        self.late_rir_mag_response = torch.tensor(
             room_data.late_rir_mag_response)
-        self.early_rir_mag_response = torch.from_numpy(
+        self.early_rir_mag_response = torch.tensor(
             room_data.early_rir_mag_response)
 
     def __len__(self):
@@ -339,17 +340,18 @@ class RIRDataset(data.Dataset):
         target_labels = Target(self.early_rir_mag_response[idx, :],
                                self.late_rir_mag_response[idx, :],
                                self.rir_mag_response[idx, :])
-        # Move data to device (cuda or cpu)
-        input_features = self.to_device(input_features)
-        target_labels = self.to_device(target_labels)
         return {'input': input_features, 'target': target_labels}
 
-    def to_device(self, dataclass):
-        """Move all tensor attributes to self.device."""
-        for field_name, field_value in dataclass.__dict__.items():
-            if isinstance(field_value, torch.Tensor):
-                setattr(dataclass, field_name, field_value.to(self.device))
-        return dataclass
+def to_device(data_class, device):
+    """Move all tensor attributes to self.device."""
+    for field_name, field_value in data_class.__dict__.items():
+        if isinstance(field_value, torch.Tensor):
+            setattr(data_class, field_name, field_value.to(device))
+        elif isinstance(field_value, Meshgrid):
+            setattr(data_class, field_name, to_device(field_value, device))
+        elif isinstance(field_value, np.ndarray):
+            setattr(data_class, field_name, torch.tensor(field_value, device=device))
+    return data_class
     
 def custom_collate(batch: data.Dataset):
     """
@@ -390,7 +392,7 @@ def custom_collate(batch: data.Dataset):
     }
 
 
-def split_dataset(dataset: data.Dataset, split: float):
+def split_dataset(dataset: data.Dataset, split: float, device: torch.device):
     """
     Randomly split a dataset into non-overlapping new datasets of 
     sizes given in 'split' argument
@@ -401,9 +403,8 @@ def split_dataset(dataset: data.Dataset, split: float):
     train_set_size = int(len(dataset) * split)
     valid_set_size = len(dataset) - train_set_size
 
-    seed = torch.Generator().manual_seed(42)
     train_set, valid_set = torch.utils.data.random_split(
-        dataset, [train_set_size, valid_set_size], generator=seed)
+        dataset, [train_set_size, valid_set_size])
 
     logger.info(
         f'The size of the training set is {len(train_set)} and the size of the validation set is {len(valid_set)}'
@@ -413,13 +414,14 @@ def split_dataset(dataset: data.Dataset, split: float):
 
 def get_dataloader(dataset: data.Dataset,
                    batch_size: int,
-                   shuffle: bool = True) -> data.DataLoader:
+                   shuffle: bool = True,
+                   device='cpu') -> data.DataLoader:
     """Create torch dataloader form given dataset"""
     dataloader = data.DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        generator=torch.Generator(),
+        generator=torch.Generator(device=device),
         drop_last=True,
         collate_fn=custom_collate)
     return dataloader
@@ -445,19 +447,23 @@ def load_dataset(room_data: RoomDataset,
         shuffle (bool): whether to randomly shuffle data during training
     """
     dataset = RIRDataset(device, room_data)
+    
+    dataset = to_device(dataset, device)
     # split data into training and validation set
-    train_set, valid_set = split_dataset(dataset, train_valid_split_ratio)
+    train_set, valid_set = split_dataset(dataset, train_valid_split_ratio, device=device)
 
     # dataloaders
     train_loader = get_dataloader(
         train_set,
         batch_size=batch_size,
         shuffle=shuffle,
+        device=device
     )
 
     valid_loader = get_dataloader(
         valid_set,
         batch_size=batch_size,
         shuffle=shuffle,
+        device=device
     )
     return train_loader, valid_loader

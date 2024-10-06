@@ -284,8 +284,6 @@ class MLP(nn.Module):
         batch_size = 1 if self.apply_pooling else x.shape[0]
         device_x = x.device
         device_model = self.model[0].weight.device
-        print("Device of x:", device_x)
-        print("Device of self.model:", device_model)
         x = self.model(x)
 
         if self.apply_pooling:
@@ -372,8 +370,6 @@ class SVF_from_MLP(nn.Module):
                 'source_position']
         self.batch_size = 1 if self.apply_pooling else position.shape[0]
         mesh_3D = x['mesh_3D']
-        # print device where the features are stored
-        print("Device of position:", position.device)
         
         # this will be the output tensor
         H = torch.zeros((self.batch_size, self.num_delay_lines, len(z_values)),
