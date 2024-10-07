@@ -1,4 +1,5 @@
 import os
+import torch
 from pathlib import Path
 from typing import List, Optional
 
@@ -7,7 +8,7 @@ from loguru import logger
 from scipy.io import savemat
 
 from .config.config import DiffGFDNConfig
-from .dataloader import ThreeRoomDataset, load_dataset
+from .dataloader import ThreeRoomDataset, load_dataset, to_device
 from .model import DiffGFDN
 from .trainer import Trainer
 
@@ -43,12 +44,15 @@ def gfdn2dir(net: DiffGFDN):
     Args    net (nn.Module): trained FDN() network
     Output  d (dictionary of tensors): FDN() net parameters 
     """
-    d = {}  # enpty dictionary
+    d = {}  # empty dictionary
+    # from parameter dictionary of model
+    d = net.get_param_dict()
+
+    # MLP learned weights and biases
     for name, param in net.named_parameters():
-        if param.requires_grad:
+        if param.requires_grad and name not in d.keys():
             d[name] = param.data
-    d['gain_per_sample'] = net.absorption_coeffs
-    d['delays'] = net.delays
+
     return d
 
 
@@ -88,7 +92,6 @@ def run_training(config_dict: DiffGFDNConfig):
     """
     # read the coupled room dataset
     room_data = ThreeRoomDataset(Path(config_dict.room_dataset_path).resolve())
-
     # add number of groups to the config dictionary
     config_dict = config_dict.copy(update={"num_groups": room_data.num_rooms})
     assert config_dict.num_delay_lines % config_dict.num_groups == 0, "Delay lines must be \
@@ -103,16 +106,30 @@ def run_training(config_dict: DiffGFDNConfig):
 
     # prepare the training and validation data for DiffGFDN
     train_dataset, valid_dataset = load_dataset(
-        room_data, trainer_config.device, trainer_config.train_valid_split,
-        trainer_config.batch_size)
+        room_data,
+        trainer_config.device,
+        trainer_config.train_valid_split,
+        trainer_config.batch_size,
+        new_sampling_radius=trainer_config.new_sampling_radius)
 
     # initialise the model
-    model = DiffGFDN(room_data.sample_rate, room_data.num_rooms,
-                     config_dict.delay_length_samps,
-                     room_data.absorption_coeffs, room_data.room_dims,
-                     trainer_config.device, config_dict.feedback_loop_config,
-                     config_dict.output_filter_config)
-
+    model = DiffGFDN(
+        room_data.sample_rate,
+        room_data.num_rooms,
+        config_dict.delay_length_samps,
+        room_data.room_dims,
+        trainer_config.device,
+        config_dict.feedback_loop_config,
+        config_dict.output_filter_config,
+        config_dict.use_absorption_filters,
+        room_data.absorption_coeffs,
+        room_data.common_decay_times,
+        room_data.band_centre_hz,
+    )
+    # set default device
+    torch.set_default_device(trainer_config.device)
+    # move model to device (cuda or cpu)
+    model = model.to(trainer_config.device)
     # create the trainer object
     trainer = Trainer(model, trainer_config)
 

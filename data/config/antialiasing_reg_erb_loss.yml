@@ -1,0 +1,7 @@
+trainer_config:
+    device: 'mps'
+    max_epochs: 5
+    train_dir: '../output/erb_edr_reg_loss/'
+    ir_dir: '../audio/erb_edr_reg_loss/'
+    use_reg_loss: True
+    use_erb_edr_loss: True

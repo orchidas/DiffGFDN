@@ -2,13 +2,14 @@ from typing import Dict, List, Tuple, Union
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from numpy.typing import ArrayLike
 from torch import nn
 
 
-def db(x: torch.tensor,
+def db(x: Union[ArrayLike, torch.tensor],
        is_squared: bool = False,
-       min_value: float = -200) -> torch.tensor:
+       min_value: float = -200) -> Union[ArrayLike, torch.tensor]:
     """Convert values to decibels.
 
     Args:
@@ -22,9 +23,14 @@ def db(x: torch.tensor,
     Returns:
         An array with the converted values, in dB.
     """
-    x = torch.abs(x)
     factor = 10.0 if is_squared else 20.0
-    y = factor * torch.log10(x + torch.finfo(torch.float32).eps)
+    if torch.is_tensor(x):
+        x = torch.abs(x)
+        y = factor * torch.log10(x + torch.finfo(torch.float32).eps)
+    else:
+        x = np.abs(x)
+        y = factor * np.log10(x + np.finfo(np.float32).eps)
+
     return y.clip(min=min_value)
 
 
@@ -59,6 +65,24 @@ def ms_to_samps(ms: Union[float, ArrayLike],
         return int(samp)
     else:
         return samp.astype(np.int32)
+
+
+def convolve_1d_full(x: torch.tensor, h: torch.tensor):
+    """Perform 1d convolution=, like in numpy"""
+    # Convert 1D tensors to the required 3D shape: (batch_size, channels, length)
+    x = x.view(1, 1, -1)  # Shape: (1, 1, len(x))
+    h = h.view(1, 1, -1)  # Shape: (1, 1, len(h))
+
+    # Calculate padding size for 'full' convolution
+    padding = h.shape[-1] - 1  # Full convolution padding: kernel_size - 1
+
+    # Apply symmetric padding
+    x_padded = F.pad(x, (padding, padding))
+
+    # Perform 1D convolution
+    output = F.conv1d(x_padded, h)
+
+    return output.view(-1)  # Flatten to 1D tensor
 
 
 @torch.no_grad()
@@ -140,7 +164,7 @@ def to_complex(X: torch.Tensor):
     return torch.complex(X, torch.zeros_like(X))
 
 
-def is_paraunitary(A: torch.tensor, max_tol: float = 1e-9) -> bool:
+def is_paraunitary(A: torch.tensor, max_tol: float = 1e-6) -> bool:
     """
     Check if a polynomial matrix A of size NxNxP is paraunitary by ensuring
     A(z) A(z^{-1})^H = I
@@ -161,17 +185,17 @@ def is_paraunitary(A: torch.tensor, max_tol: float = 1e-9) -> bool:
     # must be close to 0
     T[:, :, p - 1] = T[:, :, p - 1] - torch.eye(N)
     max_off_diag_value = torch.max(np.torch(T))
-    return max_off_diag_value < max_tol
+    return max_off_diag_value < max_tol, max_off_diag_value
 
 
-def is_unitary(A: torch.tensor, max_tol: float = 1e-9) -> bool:
+def is_unitary(A: torch.tensor, max_tol: float = 1e-6) -> bool:
     """Check if a square matrix A is unitary"""
     N = A.shape[0]
     Aconj = torch.conj(A.T)
     T = torch.mm(A, Aconj)
     T -= torch.eye(N)
     max_off_diag_value = torch.max(torch.abs(T))
-    return max_off_diag_value < max_tol
+    return max_off_diag_value < max_tol, max_off_diag_value
 
 
 def absorption_to_gain_per_sample(room_dims: Tuple, absorption_coeff: float,

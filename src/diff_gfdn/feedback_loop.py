@@ -10,6 +10,43 @@ from .utils import matrix_convolution, to_complex
 # pylint: disable=E0606
 
 
+class IIRFilter(nn.Module):
+
+    def __init__(self, filt_order: int, num_filters: int,
+                 filter_numerator: torch.tensor,
+                 filter_denominator: torch.tensor):
+        """
+        Filter input with an IIR filter of order filt_order
+        Args:
+            filt_order (int): order of the IIR fulter
+        """
+        super().__init__()
+        self.filt_order = filt_order
+        self.num_filters = num_filters
+        self.filter_numerator = filter_numerator
+        self.filter_denominator = filter_denominator
+
+        assert self.filter_numerator.shape == (self.num_filters,
+                                               self.filt_order)
+
+    def forward(self, z: torch.tensor):
+        """
+        Calculate 
+        Here, z represents the input frequency sampling points
+        """
+        H = torch.ones((self.num_filters, len(z)), dtype=torch.complex64)
+        Hnum = torch.zeros_like(H)
+        Hden = torch.zeros_like(H)
+        for k in range(self.filt_order):
+            Hnum += torch.einsum('n, k -> nk', self.filter_numerator[:, k],
+                                 torch.pow(z, -k))
+            Hden += torch.einsum('n, k -> nk', self.filter_denominator[:, k],
+                                 torch.pow(z, -k))
+
+        H = torch.div(Hnum, Hden + 1e-9)
+        return H
+
+
 class Skew(nn.Module):
     """Return a skew symmetric matrix from matrix X"""
 
@@ -33,32 +70,55 @@ class MatrixExponential(nn.Module):
         return torch.matrix_exp(X)
 
 
-class ND_Rotation(nn.Module):
-    """Givens rotation matrix for N-D rotations, each parameterised by a rotation angle"""
+class ND_Unitary(nn.Module):
+    """An N-D unitary matrix constructed with Givens' rotations"""
 
-    def givens_rotation_2D(self, angle: float) -> torch.tensor:
+    def construct_planar_rotation_matrix(self, alpha: float, N: int,
+                                         i: int) -> torch.tensor:
         """
-        Given an angle in radians,
-        return the 2x2 Givens rotation matrix
+        Planar rotation matrix derivative in rows i and N-1
+        Args:
+            alpha (float) : angle of rotation
+            N (int) : order of matrix
+            i (int) : position of planar rotation
+        Returns:
+            NDArray: N x N matrix R_i
         """
-        return torch.tensor([[torch.cos(angle), -torch.sin(angle)],
-                             [torch.sin(angle),
-                              torch.cos(angle)]])
+        R = torch.eye(N)
+        R[i, i] = torch.cos(alpha)
+        R[i, -1] = -torch.sin(alpha)
+        R[-1, i] = torch.sin(alpha)
+        R[-1, -1] = torch.cos(alpha)
+        return R
 
-    def forward(self, alpha: torch.tensor) -> torch.tensor:
+    def forward(self, alpha: torch.tensor, N: int) -> torch.tensor:
         """
-        Args
-            alpha (torch.tensor): N-1 rotation angles
+        Construct any NxN unitary matrix using,
+        U_n = R_{n-2}...R_0 [[U_{n-1}, 0], [0, pm 1]]
+        Args:
+            alpha (tensor): list of N*(N-1) / 2 rotation angles
+            N (int): size of matrix
+        Returns:
+            tensor : unitary matrix of size NxN
         """
-        N = len(alpha) + 1
-        givens_matrix = torch.eye(N)
-
-        for i in range(N - 1):
-            sub_matrix = self.givens_rotation_2D(alpha[i])
-            cur_matrix = torch.eye(N)
-            cur_matrix[i:i + 2, i:i + 2] = sub_matrix
-            givens_matrix = torch.mm(givens_matrix, cur_matrix)
-        return givens_matrix
+        assert len(alpha) == N * (N - 1) // 2
+        rot_matrix = torch.eye(N)
+        if N == 1:
+            return 1
+        else:
+            start_idx = (N - 1) * (N - 2) // 2
+            cur_alpha = alpha[start_idx:]
+            for i in range(N - 1):
+                rot_matrix = torch.mm(
+                    self.construct_planar_rotation_matrix(cur_alpha[i], N, i),
+                    rot_matrix)
+            # this is the matrix [[U_n-1, 0], [0, 1]]
+            big_matrix = torch.eye(N)
+            big_matrix[:N - 1, :N - 1] = self.forward(alpha[:start_idx], N - 1)
+            result = torch.mm(rot_matrix, big_matrix)
+            # all of the intermediate matrices must be unitary
+            # assert is_unitary(result)[0]
+            return result
 
 
 class FIRParaunitary(nn.Module):
@@ -121,6 +181,7 @@ class FeedbackLoop(nn.Module):
                  num_delay_lines_per_group: int,
                  delays: torch.tensor,
                  gains: torch.tensor,
+                 use_absorption_filters: bool,
                  coupling_matrix_type: CouplingMatrixType,
                  coupling_matrix_order: Optional[int] = None):
         """
@@ -130,14 +191,25 @@ class FeedbackLoop(nn.Module):
             num_delay_lines_per_group (int): number of delay lines in each group
             delays (List): delay line lengths in samples
             gains (List): delay line absorption gains
+            use_absorption_filters (bool): whether the delay line gains are gains or filters
             coupling_matrix_type (CouplingMatrixType): scalar or filter coupling
+            coupling_matrix_order (optional, int): order of the PU filter coupling matrix
         """
         super().__init__()
         self.num_groups = num_groups
         self.num_delay_lines_per_group = num_delay_lines_per_group
         self.delays = delays
         self.num_delays = len(self.delays)
-        self.delay_line_gains = gains
+        self.use_absorption_filters = use_absorption_filters
+
+        # whether to use absorption filters or scalar gains in delay lines
+        if self.use_absorption_filters:
+            filter_order = gains.shape[1]
+            self.delay_line_gains = IIRFilter(filter_order, self.num_delays,
+                                              gains[..., 0], gains[..., 1])
+        else:
+            self.delay_line_gains = gains
+
         self._eps = 1e-9
         self.coupling_matrix_type = coupling_matrix_type
         self.coupling_matrix_order = coupling_matrix_order
@@ -155,10 +227,11 @@ class FeedbackLoop(nn.Module):
         self.ortho_param = nn.Sequential(Skew(), MatrixExponential())
 
         if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
-            # Nroom - 1 rotation angles for getting an Nroom x Nroom unitary coupling matrix
-            self.alpha = nn.Parameter(
-                (2 * torch.rand(self.num_groups - 1) - 1) / (0.25 * np.pi))
-            self.nd_rotation = ND_Rotation()
+            # Nroom choose 2 rotation angles for getting an Nroom x Nroom unitary coupling matrix
+            self.alpha = nn.Parameter((2 * torch.rand(
+                (self.num_groups * (self.num_groups - 1)) // 2) - 1) / np.pi)
+
+            self.nd_unitary = ND_Unitary()
 
         elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
             self.coupling_matrix_order = coupling_matrix_order
@@ -176,18 +249,26 @@ class FeedbackLoop(nn.Module):
 
     def forward(self, z: torch.tensor) -> torch.tensor:
         """Compute (D_m(z^{-1}) - A(z)Gamma(z))^{-1}"""
+        num_freq_points = len(z)
         # this will be of size num_freq_points x Ndel x Ndel
         D = torch.diag_embed(torch.unsqueeze(z, dim=-1)**self.delays)
 
         # this is of size Ndel x Ndel
-        Gamma = to_complex(torch.diag(self.delay_line_gains**self.delays))
+        if self.use_absorption_filters:
+            # this is of size Ndel x Ndel x num_freq_points
+            Gamma = torch.einsum('ij,jk->ijk', torch.eye(self.num_delays),
+                                 self.delay_line_gains(z))
+        else:
+            # this is of size Ndel x Ndel
+            Gamma = to_complex(torch.diag(self.delay_line_gains))
 
         # get coupled feedback matrix of size Ndel x Ndel x num_freq_points
         self.coupled_feedback_matrix = self.get_coupled_feedback_matrix()
 
         # this should be of size num_freq_pts x Ndel x Ndel
         if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
-            A = torch.einsum('k, mn -> kmn', z, self.coupled_feedback_matrix)
+            A = self.coupled_feedback_matrix.unsqueeze(0).repeat(
+                num_freq_points, 1, 1)
         else:
             # view converts z into a 2D matrix of size num_freq_pts x 1,
             # but it does not copy the data, hence z ultimately remains unaffected.
@@ -202,7 +283,11 @@ class FeedbackLoop(nn.Module):
             A = torch.sum(A, dim=2).permute(2, 0, 1)
 
         # A(z) Gamma(z)
-        Adecay = torch.einsum('kmn, np -> kmp', A, Gamma)
+        if self.use_absorption_filters:
+            Adecay = torch.einsum('kmn, knp -> kmp', A,
+                                  Gamma.permute(-1, 0, 1))
+        else:
+            Adecay = torch.einsum('kmn, np -> kmp', A, Gamma)
         # the inverse will be taken along the last 2 dimensions
         # the size is num_freq_pts x Ndel x Ndel
         # this is a complex double, but einsum can only handle complex float
@@ -226,8 +311,8 @@ class FeedbackLoop(nn.Module):
         """Construct the Nroom x Nroom coupling matrix"""
         if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
             # N-D rotation matrix that is parameterised by rotation angles
-            alpha = self.alpha.clamp(min=-0.25 * np.pi, max=0.25 * np.pi)
-            phi = self.nd_rotation(alpha)
+            alpha = self.alpha.clamp(min=-np.pi, max=np.pi)
+            phi = self.nd_unitary(alpha, self.num_groups)
 
         elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
             # generate householder matrix from unitary vector

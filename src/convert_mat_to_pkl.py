@@ -20,12 +20,27 @@ with h5py.File(file_path, 'r') as mat_file:
     # I am guessing the first channel contains the W component
     srirs = srir_mat['srirs'][:]
 
+# load the common slopes from the other mat files
+file_path = Path(
+    "../resources/Georg_3room_FDTD/Common_Slope_Analysis_Results/")
+filename = 'cs_analysis_results_omni'
+freqs = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
+common_t60 = []
+
+for i in range(len(freqs)):
+    full_path = file_path / f'{filename}_{freqs[i]}.mat'
+    with h5py.File(full_path.resolve(), 'r') as mat_file:
+        data = mat_file['analysisResults']
+        common_t60.append(data['commonDecayTimes'][:])
+
 # Convert the list to a NumPy array if needed
 data_dict = {
     'fs': sample_rate,
     'srcPos': source_position,
     'rcvPos': receiver_position,
-    'srirs': srirs
+    'srirs': srirs,
+    'band_centre_hz': freqs,
+    'common_decay_times': common_t60,
 }
 
 # Specify the output pickle file path
