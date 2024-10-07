@@ -1,7 +1,10 @@
 trainer_config:
     device: 'mps'
-    num_epochs: 5
+    max_epochs: 3
     train_dir: '../output/mesh_encoding/'
     ir_dir: '../audio/mesh_encoding/'
 output_filter_config:
-	encoding_type: 'meshgrid'
+    encoding_type: 'meshgrid'
+    num_hidden_layers: 3
+    num_neurons_per_layer: 32
+    compress_pole_factor: 0.95 

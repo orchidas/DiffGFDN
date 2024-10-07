@@ -179,9 +179,9 @@ class OneHotEncoding(nn.Module):
     """
 
     def pos_in_meshgrid(
-            self, X_flat: torch.tensor, Y_flat: torch.Tensor,
-            Z_flat: torch.tensor,
-            receiver_pos: torch.tensor) -> Tuple[torch.tensor, torch.tensor]:
+        self, X_flat: torch.tensor, Y_flat: torch.Tensor, Z_flat: torch.tensor,
+        receiver_pos: torch.tensor
+    ) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
         """
         Return a tensor of the same size as meshgrid, with the position
         containing the receiver denoted as 1. This is one-hot encoding
@@ -191,11 +191,13 @@ class OneHotEncoding(nn.Module):
         Returns:
             Tuple: one hot encoded vector of size Lx1, containing 1s in all 
                    positions where receivers were found in the meshgrid,
-                   and the closest corresponding points in the meshgrid
+                   and the closest corresponding points in the meshgrid,
+                   and the indices of the receiver positions in the meshgrid
         """
         one_hot_encoding = torch.zeros_like(X_flat)
         num_pos_pts = len(receiver_pos)
         closest_points = torch.zeros_like(receiver_pos)
+        min_index = torch.zeros(num_pos_pts, dtype=torch.int32)
 
         for k in range(num_pos_pts):
             # Calculate the distance from the target point to each point in the meshgrid
@@ -204,15 +206,15 @@ class OneHotEncoding(nn.Module):
                                    (Z_flat[:, 0] - receiver_pos[k, 2])**2)
 
             # Find the index of the minimum distance
-            min_index = torch.argmin(distances)
+            min_index[k] = torch.argmin(distances)
             one_hot_encoding[min_index, 0] = 1.0
 
             # find the closest point in the meshgrid
-            closest_points[k, 0] = X_flat[min_index]
-            closest_points[k, 1] = Y_flat[min_index]
-            closest_points[k, 2] = Z_flat[min_index]
+            closest_points[k, 0] = X_flat[min_index[k]]
+            closest_points[k, 1] = Y_flat[min_index[k]]
+            closest_points[k, 2] = Z_flat[min_index[k]]
 
-        return one_hot_encoding, closest_points
+        return one_hot_encoding, closest_points, min_index
 
     def forward(self, mesh_3D: torch.tensor, receiver_pos: torch.tensor):
         """
@@ -225,13 +227,13 @@ class OneHotEncoding(nn.Module):
         Y_flat = mesh_3D[..., 1].view(-1, 1)  # Shape (L_x * L_y, * L_z, 1)
         Z_flat = mesh_3D[..., 2].view(-1, 1)  # Shape (L_x * L_y * L_z, 1)
 
-        one_hot_vector, closest_points = self.pos_in_meshgrid(
+        one_hot_vector, closest_points, rec_idx = self.pos_in_meshgrid(
             X_flat, Y_flat, Z_flat, receiver_pos)
 
         # Shape (L_x * L_y * L_z, 4)
         input_tensor = torch.cat((X_flat, Y_flat, Z_flat, one_hot_vector),
-                                 dim=1)
-        return input_tensor, closest_points
+                                 dim=1).to(torch.float32)
+        return input_tensor, closest_points, rec_idx
 
 
 class MLP(nn.Module):
@@ -366,10 +368,17 @@ class SVF_from_MLP(nn.Module):
         if self.encoding_type == FeatureEncodingType.SINE:
             encoded_position = self.encoder(position)
         elif self.encoding_type == FeatureEncodingType.MESHGRID:
-            encoded_position, _ = self.encoder(mesh_3D, position)
+            encoded_position, _, rec_idx = self.encoder(mesh_3D, position)
 
         # run the MLP, output of the MLP are the state variable filter coefficients
         self.svf_params = self.mlp(encoded_position)
+
+        # if meshgrid encoding is used, the size of svf_params is (Lx*Ly*Lz, N, K, 5).
+        # instead, we want the size to be (B, N, K, 5). So, we only take the filters
+        # corresponding to the position of the receivers in the meshgrid
+        if self.encoding_type == FeatureEncodingType.MESHGRID:
+            self.svf_params = self.svf_params[rec_idx, ...]  # pylint: disable=E0601
+            assert self.svf_params.shape[0] == self.batch_size
 
         # always ensure that the filter cutoff frequency and resonance are positive
         reshape_size = (self.batch_size, self.num_delay_lines,
