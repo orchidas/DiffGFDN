@@ -56,38 +56,37 @@ class DiffGFDN(nn.Module):
         self.num_delay_lines_per_group = int(self.num_delay_lines /
                                              self.num_groups)
         self.use_absorption_filters = use_absorption_filters
-        self.delays_by_group = np.array([
+        self.delays_by_group = [
             self.delays[i:i + self.num_delay_lines_per_group] for i in range(
                 0, self.num_delay_lines, self.num_delay_lines_per_group)
-        ])
+        ]
         if self.use_absorption_filters:
             # this will be of size (num_groups, num_del_per_group, numerator (filter_order), denominator(filter_order))
-            self.gain_per_sample = torch.from_numpy(
-                np.array([
+            self.gain_per_sample = torch.tensor([
                     decay_times_to_gain_filters(band_centre_hz,
                                                 common_decay_times[:, i],
                                                 self.delays_by_group[i],
                                                 self.sample_rate)
                     for i in range(self.num_groups)
-                ]))
+                ], device=self.device)
             self.filter_order = self.gain_per_sample.shape[-2]
             self.gain_per_sample = self.gain_per_sample.view(
                 self.num_delay_lines, self.filter_order, 2)
 
         else:
             self.gain_per_sample = torch.flatten(
-                torch.from_numpy(
-                    np.array([
+                torch.tensor([
                         absorption_to_gain_per_sample(room_dims[i],
                                                       absorption_coeffs[i],
                                                       self.delays_by_group[i],
                                                       self.sample_rate)[1]
                         for i in range(self.num_groups)
-                    ])))
+                    ], device=self.device))
 
         # logger.info(f'Gains for delay lines are {self.gain_per_sample}')
 
         # here are the different operating blocks
+        self.delays = self.delays.to(self.device)
         self.input_gains = nn.Parameter(
             torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
         self.feedback_loop = FeedbackLoop(
@@ -135,6 +134,7 @@ class DiffGFDN(nn.Module):
             x(dict) : input feature dict
         """
         z = x['z_values']
+
         num_freq_pts = len(z)
         # this is of size B x Ndel x num_freq_points
         C = self.output_filters(x)

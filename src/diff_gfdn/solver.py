@@ -1,4 +1,5 @@
 import os
+import torch
 from pathlib import Path
 from typing import List, Optional
 
@@ -7,7 +8,7 @@ from loguru import logger
 from scipy.io import savemat
 
 from .config.config import DiffGFDNConfig
-from .dataloader import ThreeRoomDataset, load_dataset
+from .dataloader import ThreeRoomDataset, load_dataset, to_device
 from .model import DiffGFDN
 from .trainer import Trainer
 
@@ -91,7 +92,6 @@ def run_training(config_dict: DiffGFDNConfig):
     """
     # read the coupled room dataset
     room_data = ThreeRoomDataset(Path(config_dict.room_dataset_path).resolve())
-
     # add number of groups to the config dictionary
     config_dict = config_dict.copy(update={"num_groups": room_data.num_rooms})
     assert config_dict.num_delay_lines % config_dict.num_groups == 0, "Delay lines must be \
@@ -126,7 +126,10 @@ def run_training(config_dict: DiffGFDNConfig):
         room_data.common_decay_times,
         room_data.band_centre_hz,
     )
-
+    # set default device
+    torch.set_default_device(trainer_config.device)
+    # move model to device (cuda or cpu)
+    model = model.to(trainer_config.device)
     # create the trainer object
     trainer = Trainer(model, trainer_config)
 

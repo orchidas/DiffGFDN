@@ -359,7 +359,7 @@ class SVF_from_MLP(nn.Module):
                 'source_position']
         self.batch_size = position.shape[0]
         mesh_3D = x['mesh_3D']
-
+        
         # this will be the output tensor
         H = torch.zeros((self.batch_size, self.num_delay_lines, len(z_values)),
                         dtype=torch.complex64)
