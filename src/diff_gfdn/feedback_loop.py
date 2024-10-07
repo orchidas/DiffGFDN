@@ -70,32 +70,55 @@ class MatrixExponential(nn.Module):
         return torch.matrix_exp(X)
 
 
-class ND_Rotation(nn.Module):
-    """Givens rotation matrix for N-D rotations, each parameterised by a rotation angle"""
+class ND_Unitary(nn.Module):
+    """An N-D unitary matrix constructed with Givens' rotations"""
 
-    def givens_rotation_2D(self, angle: float) -> torch.tensor:
+    def construct_planar_rotation_matrix(self, alpha: float, N: int,
+                                         i: int) -> torch.tensor:
         """
-        Given an angle in radians,
-        return the 2x2 Givens rotation matrix
+        Planar rotation matrix derivative in rows i and N-1
+        Args:
+            alpha (float) : angle of rotation
+            N (int) : order of matrix
+            i (int) : position of planar rotation
+        Returns:
+            NDArray: N x N matrix R_i
         """
-        return torch.tensor([[torch.cos(angle), -torch.sin(angle)],
-                             [torch.sin(angle),
-                              torch.cos(angle)]])
+        R = torch.eye(N)
+        R[i, i] = torch.cos(alpha)
+        R[i, -1] = -torch.sin(alpha)
+        R[-1, i] = torch.sin(alpha)
+        R[-1, -1] = torch.cos(alpha)
+        return R
 
-    def forward(self, alpha: torch.tensor) -> torch.tensor:
+    def forward(self, alpha: torch.tensor, N: int) -> torch.tensor:
         """
-        Args
-            alpha (torch.tensor): N-1 rotation angles
+        Construct any NxN unitary matrix using,
+        U_n = R_{n-2}...R_0 [[U_{n-1}, 0], [0, pm 1]]
+        Args:
+            alpha (tensor): list of N*(N-1) / 2 rotation angles
+            N (int): size of matrix
+        Returns:
+            tensor : unitary matrix of size NxN
         """
-        N = len(alpha) + 1
-        givens_matrix = torch.eye(N)
-
-        for i in range(N - 1):
-            sub_matrix = self.givens_rotation_2D(alpha[i])
-            cur_matrix = torch.eye(N)
-            cur_matrix[i:i + 2, i:i + 2] = sub_matrix
-            givens_matrix = torch.mm(givens_matrix, cur_matrix)
-        return givens_matrix
+        assert len(alpha) == N * (N - 1) // 2
+        rot_matrix = torch.eye(N)
+        if N == 1:
+            return 1
+        else:
+            start_idx = (N - 1) * (N - 2) // 2
+            cur_alpha = alpha[start_idx:]
+            for i in range(N - 1):
+                rot_matrix = torch.mm(
+                    self.construct_planar_rotation_matrix(cur_alpha[i], N, i),
+                    rot_matrix)
+            # this is the matrix [[U_n-1, 0], [0, 1]]
+            big_matrix = torch.eye(N)
+            big_matrix[:N - 1, :N - 1] = self.forward(alpha[:start_idx], N - 1)
+            result = torch.mm(rot_matrix, big_matrix)
+            # all of the intermediate matrices must be unitary
+            # assert is_unitary(result)[0]
+            return result
 
 
 class FIRParaunitary(nn.Module):
@@ -204,10 +227,11 @@ class FeedbackLoop(nn.Module):
         self.ortho_param = nn.Sequential(Skew(), MatrixExponential())
 
         if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
-            # Nroom - 1 rotation angles for getting an Nroom x Nroom unitary coupling matrix
-            self.alpha = nn.Parameter(
-                (2 * torch.rand(self.num_groups - 1) - 1) / (0.25 * np.pi))
-            self.nd_rotation = ND_Rotation()
+            # Nroom choose 2 rotation angles for getting an Nroom x Nroom unitary coupling matrix
+            self.alpha = nn.Parameter((2 * torch.rand(
+                (self.num_groups * (self.num_groups - 1)) // 2) - 1) / np.pi)
+
+            self.nd_unitary = ND_Unitary()
 
         elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
             self.coupling_matrix_order = coupling_matrix_order
@@ -287,8 +311,8 @@ class FeedbackLoop(nn.Module):
         """Construct the Nroom x Nroom coupling matrix"""
         if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
             # N-D rotation matrix that is parameterised by rotation angles
-            alpha = self.alpha.clamp(min=-0.25 * np.pi, max=0.25 * np.pi)
-            phi = self.nd_rotation(alpha)
+            alpha = self.alpha.clamp(min=-np.pi, max=np.pi)
+            phi = self.nd_unitary(alpha, self.num_groups)
 
         elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
             # generate householder matrix from unitary vector

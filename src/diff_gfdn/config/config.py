@@ -1,9 +1,9 @@
 from enum import Enum
-from typing import List
+from typing import Dict, List, Optional
 
 import numpy as np
 import sympy as sp
-from pydantic import BaseModel, computed_field
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 from ..utils import ms_to_samps
 
@@ -43,8 +43,8 @@ class OutputFilterConfig(BaseModel):
     num_neurons_per_layer: int = 2**7
     num_fourier_features: int = 10
     encoding_type: FeatureEncodingType = FeatureEncodingType.SINE
-    # whether to pool all the batches together after the final layer
-    apply_pooling: bool = False
+    # by how much to constrain the pole radii when calculating output filter coeffs
+    compress_pole_factor: float = 1.0
 
 
 class TrainerConfig(BaseModel):
@@ -59,10 +59,30 @@ class TrainerConfig(BaseModel):
     max_epochs: int = 5
     # learning rate for Adam optimiser
     lr: float = 0.01
+    # length of IR filters (needed for calculating reguralisation loss)
+    output_filt_ir_len_ms: float = 500
+    # whether to use regularisation loss to reduce time domain aliasing
+    use_reg_loss: bool = False
+    # whether to use perceptual ERB loss
+    use_erb_edr_loss: bool = False
     # directory to save results
     train_dir: str = "../output"
     # where to save the IRs
     ir_dir: str = "../audio"
+    # by how much to reduce the radius of each pole during frequency sampling
+    reduced_pole_radius: Optional[float] = None
+    new_sampling_radius: float = Field(
+        default=None)  # Default value, to be set dynamically
+
+    # Validator for the 'new_sampling_radius' field
+    @model_validator(mode='before')
+    @classmethod
+    def calculate_new_sampling_radius(cls, values: Dict):
+        """Set sampling radius outside the unit circle based on reduced pole radius"""
+        reduced_pole_radius = values.get('reduced_pole_radius')
+        if reduced_pole_radius is not None:
+            values['new_sampling_radius'] = 1.0 / reduced_pole_radius
+        return values
 
 
 class DiffGFDNConfig(BaseModel):
@@ -84,6 +104,18 @@ class DiffGFDNConfig(BaseModel):
     feedback_loop_config: FeedbackLoopConfig = FeedbackLoopConfig()
     # number of biquads in SVF
     output_filter_config: OutputFilterConfig = OutputFilterConfig()
+
+    # Validator to ensure the nested TrainerConfig is validated,
+    # otherwise new sampling radius won't be set
+    @model_validator(mode='before')
+    @classmethod
+    def validate_trainer_config(cls, values: Dict):
+        """Make sure all fields of TrainerConfig are validated"""
+        trainer_config = values.get('trainer_config')
+        # Explicitly convert to TrainerConfig
+        if isinstance(trainer_config, dict):
+            values['trainer_config'] = TrainerConfig(**trainer_config)
+        return values
 
     @computed_field
     @property

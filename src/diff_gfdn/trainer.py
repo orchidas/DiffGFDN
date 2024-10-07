@@ -1,7 +1,7 @@
 import os
 import time
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 import torch
 import torchaudio
@@ -10,9 +10,9 @@ from torch.utils.data import DataLoader
 from tqdm import trange
 
 from .config.config import TrainerConfig
-from .losses import edr_loss
+from .losses import edr_loss, reg_loss
 from .model import DiffGFDN
-from .utils import get_response, get_str_results
+from .utils import get_response, get_str_results, ms_to_samps
 
 
 # flake8: noqa: E231
@@ -27,12 +27,32 @@ class Trainer:
         self.early_stop = 0
         self.train_dir = Path(trainer_config.train_dir).resolve()
         self.ir_dir = Path(trainer_config.ir_dir).resolve()
+        self.use_reg_loss = trainer_config.use_reg_loss
+        # if the sampling was done outside the unit circle, we need to compensate for that
+        self.reduced_pole_radius = trainer_config.reduced_pole_radius
+
         if not os.path.exists(self.ir_dir):
             os.makedirs(self.ir_dir)
 
         self.optimizer = torch.optim.Adam(net.parameters(),
                                           lr=trainer_config.lr)
-        self.criterion = edr_loss(self.net.sample_rate)
+
+        if trainer_config.use_reg_loss:
+            logger.info(
+                'Using regularisation loss to reduce time domain aliasing in output filters'
+            )
+            self.criterion = [
+                edr_loss(self.net.sample_rate,
+                         reduced_pole_radius=self.reduced_pole_radius,
+                         use_erb_grouping=trainer_config.use_erb_edr_loss),
+                reg_loss(
+                    ms_to_samps(trainer_config.output_filt_ir_len_ms,
+                                self.net.sample_rate),
+                    self.net.num_delay_lines,
+                    self.net.output_filters.num_biquads)
+            ]
+        else:
+            self.criterion = edr_loss(self.net.sample_rate)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=10,
                                                          gamma=0.1)
@@ -77,13 +97,21 @@ class Trainer:
         logger.info("Saving the trained IRs...")
         for data in train_dataset:
             position = data['listener_position']
-            self.save_ir(data, directory=self.ir_dir, pos_list=position)
+            self.save_ir(data,
+                         directory=self.ir_dir,
+                         pos_list=position,
+                         reduced_pole_radius=self.reduced_pole_radius)
 
     def train_step(self, data):
         """Single step of training"""
         self.optimizer.zero_grad()
         H = self.net(data)
-        loss = self.criterion(data['target_rir_response'], H)
+        if self.use_reg_loss:
+            loss = self.criterion[0](
+                data['target_rir_response'], H) + self.criterion[1](
+                    self.net.output_filters.biquad_cascade)
+        else:
+            loss = self.criterion(data['target_rir_response'], H)
 
         loss.backward()
         self.optimizer.step()
@@ -97,8 +125,19 @@ class Trainer:
         for data in valid_dataset:
             position = data['listener_position']
             logger.info("Running the network for new batch of positiions")
-            H = self.save_ir(data, directory=self.ir_dir, pos_list=position)
-            loss = self.criterion(data['target_rir_response'], H)
+            H = self.save_ir(data,
+                             directory=self.ir_dir,
+                             pos_list=position,
+                             filename_prefix="valid_ir",
+                             reduced_pole_radius=self.reduced_pole_radius)
+
+            if self.use_reg_loss:
+                loss = self.criterion[0](
+                    data['target_rir_response'], H) + self.criterion[1](
+                        self.net.output_filters.biquad_cascade)
+            else:
+                loss = self.criterion(data['target_rir_response'], H)
+
             cur_loss = loss.item()
             total_loss += cur_loss
             self.valid_loss.append(cur_loss)
@@ -125,12 +164,15 @@ class Trainer:
                    os.path.join(dir_path, 'model_e' + str(e) + '.pt'))
 
     @torch.no_grad()
-    def save_ir(self,
-                input_features: Dict,
-                directory: str,
-                pos_list: torch.tensor,
-                filename_prefix: str = "ir",
-                norm=True) -> torch.tensor:
+    def save_ir(
+        self,
+        input_features: Dict,
+        directory: str,
+        pos_list: torch.tensor,
+        filename_prefix: str = "ir",
+        norm: bool = True,
+        reduced_pole_radius: Optional[float] = None,
+    ) -> torch.tensor:
         """
         Save the impulse response generated from the model
         Args:
@@ -138,10 +180,16 @@ class Trainer:
             directory (str): where to save the audio
             pos_list (torch.tensor): B x 3 position coordinates
             norm (bool): whether to normalise the RIR
+            reduced_pole_radius (optional, float): undo sampling outside the unit circle after taking an IFFT
         Returns:
             torch.tensor - the frequency response at the given input features
         """
         H, h = get_response(input_features, self.net)
+
+        # undo sampling outside the unit circle by multiplying IR with an exponentiated envelope
+        if reduced_pole_radius is not None:
+            h *= torch.pow(reduced_pole_radius, torch.arange(0, h.shape[-1]))
+
         if norm:
             h = torch.div(h, torch.max(torch.abs(h)))
 

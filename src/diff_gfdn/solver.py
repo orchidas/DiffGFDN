@@ -106,13 +106,12 @@ def run_training(config_dict: DiffGFDNConfig):
 
     # prepare the training and validation data for DiffGFDN
     train_dataset, valid_dataset = load_dataset(
-        room_data, 
-        trainer_config.device, 
+        room_data,
+        trainer_config.device,
         trainer_config.train_valid_split,
-        trainer_config.batch_size)
+        trainer_config.batch_size,
+        new_sampling_radius=trainer_config.new_sampling_radius)
 
-
-    # room_data = to_device(room_data, config_dict.trainer_config.device)
     # initialise the model
     model = DiffGFDN(
         room_data.sample_rate,
