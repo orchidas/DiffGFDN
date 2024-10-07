@@ -2,6 +2,7 @@ trainer_config:
     device: 'mps'
     max_epochs: 3
     train_dir: '../output/ffm/'
+    ir_dir: '../audio/ffm/'
 feedback_loop_config:
     coupling_matrix_type: 'filter_matrix'
     pu_matrix_order: 32

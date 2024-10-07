@@ -146,7 +146,7 @@ def matrix_convolution(A: torch.tensor, B: torch.tensor) -> torch.tensor:
     P, Q, R = B.shape
     assert N == P, "matrices must be commutable"
 
-    C = torch.zeros((M, Q, K + R - 1))
+    C = torch.zeros((M, Q, K + R - 1), dtype=A.dtype)
     A = A.permute(2, 0, 1)
     B = B.permute(2, 0, 1)
     C = C.permute(2, 0, 1)

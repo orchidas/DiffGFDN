@@ -6,7 +6,8 @@ from loguru import logger
 from scipy.signal import butter
 from torch import nn
 
-from .config.config import FeedbackLoopConfig, OutputFilterConfig
+from .config.config import (CouplingMatrixType, FeedbackLoopConfig,
+                            OutputFilterConfig)
 from .feedback_loop import FeedbackLoop
 from .filters import decay_times_to_gain_filters
 from .gain_filters import BiquadCascade, SOSFilter, SVF_from_MLP
@@ -177,15 +178,27 @@ class DiffGFDN(nn.Module):
         param_np['input_gains'] = self.input_gains.squeeze().cpu().numpy()
         param_np['individual_mixing_matrix'] = self.feedback_loop.M.squeeze(
         ).cpu().numpy()
+
         try:
-            param_np['coupling_matrix'] = self.feedback_loop.nd_unitary(
-                self.feedback_loop.alpha,
-                self.num_groups).squeeze().cpu().numpy()
             param_np[
                 'coupled_feedback_matrix'] = self.feedback_loop.get_coupled_feedback_matrix(
                 ).squeeze().cpu().numpy()
+            if self.feedback_loop.coupling_matrix_type == CouplingMatrixType.SCALAR:
+                param_np['coupling_matrix'] = self.feedback_loop.nd_unitary(
+                    self.feedback_loop.alpha,
+                    self.num_groups).squeeze().cpu().numpy()
+            else:
+                unitary_matrix = self.feedback_loop.ortho_param(
+                    self.feedback_loop.unitary_matrix)
+                unit_vectors = self.feedback_loop.unit_vectors / torch.norm(
+                    self.feedback_loop.unit_vectors, dim=0, keepdim=True)
+                param_np[
+                    'coupling_matrix'] = self.feedback_loop.fir_paraunitary(
+                        unitary_matrix, unit_vectors).squeeze().cpu().numpy()
+
         except Exception:
             logger.warning('Parameter not initialised yet in FeedbackLoop!')
+
         try:
             param_np[
                 'output_svf_params'] = self.output_filters.svf_params.squeeze(
