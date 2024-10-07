@@ -361,7 +361,7 @@ class RIRDataset(data.Dataset):
                                self.rir_mag_response[idx, :])
         return {'input': input_features, 'target': target_labels}
 
-def to_device(data_class, device):
+def to_device(data_class : data.Dataset, device: torch.device):
     """Move all tensor attributes to self.device."""
     for field_name, field_value in data_class.__dict__.items():
         if isinstance(field_value, torch.Tensor):
