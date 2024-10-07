@@ -4,4 +4,8 @@ trainer_config:
     train_dir: '../output/ffm/'
 feedback_loop_config:
     coupling_matrix_type: 'filter_matrix'
-    pu_matrix_order: 64
+    pu_matrix_order: 32
+output_filter_config:
+    num_hidden_layers: 3
+    num_neurons_per_layer: 32
+    compress_pole_factor: 0.95

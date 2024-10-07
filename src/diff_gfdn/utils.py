@@ -3,6 +3,7 @@ from typing import Dict, List, Tuple, Union
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torchaudio.functional as Faudio
 from numpy.typing import ArrayLike
 from torch import nn
 
@@ -68,7 +69,7 @@ def ms_to_samps(ms: Union[float, ArrayLike],
 
 
 def convolve_1d_full(x: torch.tensor, h: torch.tensor):
-    """Perform 1d convolution=, like in numpy"""
+    """Perform 1d convolution, like in numpy"""
     # Convert 1D tensors to the required 3D shape: (batch_size, channels, length)
     x = x.view(1, 1, -1)  # Shape: (1, 1, len(x))
     h = h.view(1, 1, -1)  # Shape: (1, 1, len(h))
@@ -131,7 +132,7 @@ def hermitian_conjugate_polynomial_matrix(A: torch.tensor) -> torch.tensor:
     For a polynomail matrix A(z), calculate A(z^{-1})^H
     Size of the matix is N x N x p, with polynomials along the last axis
     """
-    Aconj = torch.conj(torch.flip(A, -1))
+    Aconj = torch.conj(torch.flip(A, dims=[-1]))
     Aconj = Aconj.permute(1, 0, 2)
     return Aconj
 
@@ -153,7 +154,10 @@ def matrix_convolution(A: torch.tensor, B: torch.tensor) -> torch.tensor:
     for row in range(M):
         for col in range(Q):
             for it in range(N):
-                C[:, row, col] += torch.conv1d(A[:, row, it], B[:, it, col])
+                # the unsqueeze operation is required because conv1d works with 3D tensors
+                C[:, row, col] += Faudio.convolve(A[:, row, it],
+                                                  B[:, it, col],
+                                                  mode='full')
 
     C = C.permute(1, 2, 0)
     return C
@@ -184,7 +188,7 @@ def is_paraunitary(A: torch.tensor, max_tol: float = 1e-6) -> bool:
 
     # must be close to 0
     T[:, :, p - 1] = T[:, :, p - 1] - torch.eye(N)
-    max_off_diag_value = torch.max(np.torch(T))
+    max_off_diag_value = torch.max(torch.abs(T))
     return max_off_diag_value < max_tol, max_off_diag_value
 
 

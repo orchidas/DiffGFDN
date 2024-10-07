@@ -163,13 +163,16 @@ class FIRParaunitary(nn.Module):
 
         # this is going to be the polynomial matrix we construct
         # add a dimension after the last axis
-        poly_matrix = unitary_matrix[..., None]
+        poly_matrix = torch.eye(self.N)[..., None]
 
         for k in range(self.order - 1):
             cur_householder_matrix = self.construct_elementary_householder_matrix(
                 unit_vectors[:, k])
             poly_matrix = matrix_convolution(cur_householder_matrix,
                                              poly_matrix)
+
+        poly_matrix = matrix_convolution(
+            poly_matrix, unitary_matrix.view(self.N, self.N, 1))
 
         return poly_matrix
 
@@ -237,8 +240,7 @@ class FeedbackLoop(nn.Module):
             self.coupling_matrix_order = coupling_matrix_order
             # order - 1 unit norm householder vectors
             self.unit_vectors = nn.Parameter(
-                torch.randn(self.num_groups, self.num_groups,
-                            self.coupling_matrix_order - 1))
+                torch.randn(self.num_groups, self.coupling_matrix_order - 1))
 
             self.unitary_matrix = nn.Parameter(
                 (2 * torch.rand(self.num_groups, self.num_groups) - 1) /
@@ -276,11 +278,11 @@ class FeedbackLoop(nn.Module):
             # and permute converts it to order x num_freq_pts
 
             A = torch.einsum(
-                'jim, mn -> jimn', self.coupling_feedback_matrix, (z.view(
+                'jim, mn -> jimn', self.coupled_feedback_matrix, (z.view(
                     -1,
                     1)**-torch.arange(0, self.coupling_matrix_order)).permute(
                         1, 0))
-            A = torch.sum(A, dim=2).permute(2, 0, 1)
+            A = torch.sum(A, dim=2).permute(2, 0, 1).to(torch.complex64)
 
         # A(z) Gamma(z)
         if self.use_absorption_filters:
@@ -313,6 +315,7 @@ class FeedbackLoop(nn.Module):
             # N-D rotation matrix that is parameterised by rotation angles
             alpha = self.alpha.clamp(min=-np.pi, max=np.pi)
             phi = self.nd_unitary(alpha, self.num_groups)
+            # assert is_unitary(phi)[0]
 
         elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
             # generate householder matrix from unitary vector
@@ -321,7 +324,7 @@ class FeedbackLoop(nn.Module):
                 torch.norm(self.unit_vectors, dim=0, keepdim=True) + self._eps)
             phi = self.fir_paraunitary(self.ortho_param(self.unitary_matrix),
                                        unit_vectors)
-        # assert is_paraunitary(phi)
+            # assert is_paraunitary(phi)[0]
         return phi
 
     def get_coupled_feedback_matrix(self) -> torch.tensor:
@@ -352,7 +355,7 @@ class FeedbackLoop(nn.Module):
                 coupled_feedback_matrix[..., k] += block_M * torch.kron(
                     self.phi[..., k], ones_matrix)
 
-        # assert is_paraunitary(coupled_feedback_matrix)
+            # assert is_paraunitary(coupled_feedback_matrix)
         return to_complex(coupled_feedback_matrix)
 
     def print(self):
