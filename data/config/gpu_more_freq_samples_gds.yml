@@ -1,5 +1,5 @@
 trainer_config:
-    device: 'ms'
+    device: 'cuda'
     num_epochs: 10
     train_dir: '../output/'
     ir_dir: '../audio/'

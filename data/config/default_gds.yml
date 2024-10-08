@@ -1,4 +1,5 @@
 trainer_config:
+    device: 'mps'
     train_dir: '/Users/dalsag1/Documents/aalto/projects/diff-gfdn/output'
     ir_dir: '/Users/dalsag1/Documents/aalto/projects/diff-gfdn/audio'
 

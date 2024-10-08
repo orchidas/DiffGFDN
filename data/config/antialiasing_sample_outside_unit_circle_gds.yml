@@ -1,0 +1,9 @@
+trainer_config:
+    device: 'cpu'
+    max_epochs: 2
+    batch_size: 1
+    train_dir: '../output/sample_outside_unit_circle/'
+    ir_dir: '../audio/sample_outside_unit_circle/'
+    alias_attenuation_db: 60
+    save_irs: True
+room_dataset_path: '/Users/dalsag1/Documents/datasets/Georg_3room_FDTD/srirs.pkl'
