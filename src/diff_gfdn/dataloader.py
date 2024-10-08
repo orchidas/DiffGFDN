@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
+from .config.config import DiffGFDNConfig
+
 import matplotlib.pyplot as plt
 import numpy as np
 import soundfile as sf
@@ -79,7 +81,8 @@ class RoomDataset(ABC):
                  room_dims: List,
                  room_start_coord: List,
                  absorption_coeffs: List,
-                 mixing_time_ms: float = 20.0):
+                 mixing_time_ms: float = 20.0, 
+                 nfft: Optional[int] = None):
         """
         Args:
             num_rooms (int): number of rooms in coupled space
@@ -93,6 +96,7 @@ class RoomDataset(ABC):
             room_start_coord (List): coordinates of the room's starting vertex (first room starts at origin)
             absorption_coeffs (List): uniform absorption coefficients for each room
             mixing_time_ms (float): mixing time of the RIR for early-late split
+            nfft (int): number of frequency bins
         """
         self.sample_rate = sample_rate
         self.num_rooms = num_rooms
@@ -108,13 +112,17 @@ class RoomDataset(ABC):
         self.room_dims = room_dims
         self.room_start_coord = room_start_coord
         self.mixing_time_ms = mixing_time_ms
+        self.nfft = nfft
         self.early_late_split()
 
     @property
     def num_freq_bins(self):
         """Number of frequency bins in the magnitude response"""
-        max_rt60_samps = self.common_decay_times.max() * self.sample_rate
-        return int(np.pow(2, np.ceil(np.log2(max_rt60_samps))))
+        if self.nfft is not None:
+            return self.nfft
+        else:
+            max_rt60_samps = self.common_decay_times.max() * self.sample_rate
+            return int(np.pow(2, np.ceil(np.log2(max_rt60_samps))))
 
     @property
     def freq_bins_rad(self):
@@ -238,7 +246,7 @@ class ThreeRoomDataset(RoomDataset):
     in Proc. of AES International Conference on Audio for Gaming, 2024.
     """
 
-    def __init__(self, filepath: Path, save_irs: Optional[bool] = False):
+    def __init__(self, filepath: Path, config_dict: DiffGFDNConfig, save_irs: Optional[bool] = False):
         """Read the data from the filepath"""
         num_rooms = 3
         assert str(filepath).endswith(
@@ -257,7 +265,7 @@ class ThreeRoomDataset(RoomDataset):
                 band_centre_hz = srir_mat['band_centre_hz']
                 common_decay_times = np.asarray(
                     np.squeeze(srir_mat['common_decay_times'], axis=1))
-
+                nfft = config_dict.num_freq_bins
         except Exception as exc:
             raise FileNotFoundError(
                 f"File was not found at {str(filepath)}") from exc
@@ -272,7 +280,7 @@ class ThreeRoomDataset(RoomDataset):
         super().__init__(num_rooms, sample_rate, source_position,
                          receiver_position, rirs, band_centre_hz,
                          common_decay_times, room_dims, room_start_coord,
-                         absorption_coeffs)
+                         absorption_coeffs, nfft=nfft)
         # how far apart the receivers are placed
         mic_spacing_m = 0.3
         self.mesh_3D = super().get_3D_meshgrid(mic_spacing_m)

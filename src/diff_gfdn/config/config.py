@@ -104,7 +104,8 @@ class DiffGFDNConfig(BaseModel):
     feedback_loop_config: FeedbackLoopConfig = FeedbackLoopConfig()
     # number of biquads in SVF
     output_filter_config: OutputFilterConfig = OutputFilterConfig()
-
+    # Number of frequency bins in the magnitude response
+    num_freq_bins: Optional[int] = None
     # Validator to ensure the nested TrainerConfig is validated,
     # otherwise new sampling radius won't be set
     @model_validator(mode='before')

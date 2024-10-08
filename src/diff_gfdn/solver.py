@@ -91,7 +91,7 @@ def run_training(config_dict: DiffGFDNConfig):
         config_dict (DiffGFDNTrainConfig): configuration parameters for training
     """
     # read the coupled room dataset
-    room_data = ThreeRoomDataset(Path(config_dict.room_dataset_path).resolve())
+    room_data = ThreeRoomDataset(Path(config_dict.room_dataset_path).resolve(), config_dict=config_dict)
     # add number of groups to the config dictionary
     config_dict = config_dict.copy(update={"num_groups": room_data.num_rooms})
     assert config_dict.num_delay_lines % config_dict.num_groups == 0, "Delay lines must be \
