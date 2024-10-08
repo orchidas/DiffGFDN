@@ -17,7 +17,7 @@ from .utils import get_response, get_str_results, ms_to_samps
 
 # flake8: noqa: E231
 class Trainer:
-    """Parent class for training DiffGFDN for varying source-listener positions and static position"""
+    """Parent class for training DiffGFDN for a grid of source-listener positions and for one static position"""
 
     def __init__(self, net: DiffGFDN, trainer_config: TrainerConfig):
         """Class to train the DiffGFDN"""
@@ -67,7 +67,7 @@ class Trainer:
 
 
 class VarReceiverPosTrainer(Trainer):
-    """Class for training Diff GFDN for a grid of receiver positions"""
+    """Class for training DiffGFDN for a grid of receiver positions"""
 
     def __init__(self, net: DiffGFDNVarReceiverPos,
                  trainer_config: TrainerConfig):

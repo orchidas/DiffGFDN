@@ -85,7 +85,7 @@ def save_loss(train_loss: List,
 
 def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
     """
-    Run the training for the differentiable GFDN for different receiver positions, and save
+    Run the training for the differentiable GFDN for a grid of different receiver positions, and save
     its parameters
     Args:
         config_dict (DiffGFDNTrainConfig): configuration parameters for training
@@ -118,11 +118,11 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
         room_data.sample_rate,
         room_data.num_rooms,
         config_dict.delay_length_samps,
-        room_data.room_dims,
         trainer_config.device,
         config_dict.feedback_loop_config,
         config_dict.output_filter_config,
         config_dict.use_absorption_filters,
+        room_data.room_dims,
         room_data.absorption_coeffs,
         room_data.common_decay_times,
         room_data.band_centre_hz,

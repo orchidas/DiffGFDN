@@ -24,10 +24,10 @@ class DiffGFDN(nn.Module):
         sample_rate: int,
         num_groups: int,
         delays: List[int],
-        room_dims: List[Tuple],
         device: torch.device,
         feedback_loop_config: FeedbackLoopConfig,
         use_absorption_filters: bool,
+        room_dims: Optional[List[Tuple]] = None,
         absorption_coeffs: Optional[List] = None,
         common_decay_times: Optional[List] = None,
         band_centre_hz: Optional[List] = None,
@@ -37,10 +37,10 @@ class DiffGFDN(nn.Module):
             sample_rate (int): sampling rate of the FDN
             num_groups (int): number of rooms in coupled space
             delays (list): list of delay line lengths (integer)
-            room_dims (list): dimensions of each room as a tuple
             device: GPU or CPU for training
             feedback_loop_config (FeedbackLoopConfig): config file for training the feedback loop
             use_absorption_filters (bool): whether to use scalar absorption gains or filters
+            room_dims (optional, list): dimensions of each room as a tuple
             absorption_coeffs (optional, list): uniform absorption coefficients (one for each room)
             common_decay_times (optional, list): list of common decay times (one for each room)
             band_centre_hz (optional, list): frequencies where common decay times are measured
@@ -121,16 +121,16 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
                  sample_rate: int,
                  num_groups: int,
                  delays: List[int],
-                 room_dims: List[Tuple],
                  device: torch.device,
                  feedback_loop_config: FeedbackLoopConfig,
                  output_filter_config: OutputFilterConfig,
                  use_absorption_filters: bool,
+                 room_dims: Optional[List[Tuple]] = None,
                  absorption_coeffs: Optional[List] = None,
                  common_decay_times: Optional[List] = None,
                  band_centre_hz: Optional[List] = None):
         """
-        Differentiable GFDN module for varying listener location.
+        Differentiable GFDN module for a grid of listener locations.
         Args:
             sample_rate (int): sampling rate of the FDN
             num_groups (int): number of rooms in coupled space
@@ -144,9 +144,10 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
             common_decay_times (optional, list): list of common decay times (one for each room)
             band_centre_hz (optional, list): frequencies where common decay times are measured
         """
-        super().__init__(sample_rate, num_groups, delays, room_dims, device,
+        super().__init__(sample_rate, num_groups, delays, device,
                          feedback_loop_config, use_absorption_filters,
-                         absorption_coeffs, common_decay_times, band_centre_hz)
+                         room_dims, absorption_coeffs, common_decay_times,
+                         band_centre_hz)
 
         # unique to the network
         self.input_gains = nn.Parameter(
@@ -259,11 +260,11 @@ class DiffGFDNSinglePos(DiffGFDN):
                  sample_rate: int,
                  num_groups: int,
                  delays: List[int],
-                 room_dims: List[Tuple],
                  device: torch.device,
                  feedback_loop_config: FeedbackLoopConfig,
                  output_filter_config: OutputFilterConfig,
                  use_absorption_filters: bool,
+                 room_dims: Optional[List[Tuple]] = None,
                  absorption_coeffs: Optional[List] = None,
                  common_decay_times: Optional[List] = None,
                  band_centre_hz: Optional[List] = None):
@@ -272,18 +273,19 @@ class DiffGFDNSinglePos(DiffGFDN):
             sample_rate (int): sampling rate of the FDN
             num_groups (int): number of rooms in coupled space
             delays (list): list of delay line lengths (integer)
-            room_dims (list): dimensions of each room as a tuple
             device: GPU or CPU for training
             feedback_loop_config (FeedbackLoopConfig): config file for training the feedback loop
             output_filter_config (OutputFilterConfig): config file for training the output SVF filters
             use_absorption_filters (bool): whether to use scalar absorption gains or filters
+            room_dims (optional, list): dimensions of each room as a tuple
             absorption_coeffs (optional, list): uniform absorption coefficients (one for each room)
             common_decay_times (optional, list): list of common decay times (one for each room)
             band_centre_hz (optional, list): frequencies where common decay times are measured
         """
-        super().__init__(sample_rate, num_groups, delays, room_dims, device,
+        super().__init__(sample_rate, num_groups, delays, device,
                          feedback_loop_config, use_absorption_filters,
-                         absorption_coeffs, common_decay_times, band_centre_hz)
+                         room_dims, absorption_coeffs, common_decay_times,
+                         band_centre_hz)
 
         # unique to the network
         self.input_gains = nn.Parameter(
