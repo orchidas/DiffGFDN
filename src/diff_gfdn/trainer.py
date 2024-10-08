@@ -190,7 +190,8 @@ class Trainer:
 
         # undo sampling outside the unit circle by multiplying IR with an exponentiated envelope
         if reduced_pole_radius is not None:
-            h *= torch.pow(reduced_pole_radius, torch.arange(0, h.shape[-1]))
+            h *= torch.pow(1.0 / reduced_pole_radius,
+                           torch.arange(0, h.shape[-1]))
 
         if norm:
             h = torch.div(h, torch.max(torch.abs(h)))
