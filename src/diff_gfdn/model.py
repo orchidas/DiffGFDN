@@ -50,7 +50,7 @@ class DiffGFDN(nn.Module):
         # input parameters
         self.num_groups = num_groups
         self.absorption_coeffs = absorption_coeffs
-        self.delays = torch.tensor(delays, dtype=torch.int32)
+        self.delays = delays
         self.num_delay_lines = len(delays)
         self.num_delay_lines_per_group = int(self.num_delay_lines /
                                              self.num_groups)
@@ -65,7 +65,7 @@ class DiffGFDN(nn.Module):
                     decay_times_to_gain_filters(band_centre_hz,
                                                 common_decay_times[:, i],
                                                 self.delays_by_group[i],
-                                                self.sample_rate)
+                                                self.sample_rate).tolist()
                     for i in range(self.num_groups)
                 ], device=self.device)
             self.filter_order = self.gain_per_sample.shape[-2]
@@ -85,7 +85,7 @@ class DiffGFDN(nn.Module):
         # logger.info(f'Gains for delay lines are {self.gain_per_sample}')
 
         # here are the different operating blocks
-        self.delays = self.delays.to(self.device)
+        self.delays = torch.tensor(delays, dtype=torch.float32, device=self.device)
         self.input_gains = nn.Parameter(
             torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
         self.feedback_loop = FeedbackLoop(
