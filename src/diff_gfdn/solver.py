@@ -103,14 +103,20 @@ def run_training(config_dict: DiffGFDNConfig):
 
     # get the training config
     trainer_config = config_dict.trainer_config
-
+    # if num_freq_bins was given in the config file, the following line won't cahnge anything
+    trainer_config.num_freq_bins = room_data.num_freq_bins 
+    # update the new reduced pole radius # TODO this is very ugly and probebly can be done in the 
+    if trainer_config.reduced_pole_radius is None and trainer_config.alias_attenuation_db is not None:
+        trainer_config.reduced_pole_radius = 10 ** (- abs(trainer_config.alias_attenuation_db) / trainer_config.num_freq_bins / 20 )
+    elif trainer_config.reduced_pole_radius is None:
+        trainer_config.reduced_pole_radius = 1
     # prepare the training and validation data for DiffGFDN
     train_dataset, valid_dataset = load_dataset(
         room_data,
         trainer_config.device,
         trainer_config.train_valid_split,
         trainer_config.batch_size,
-        new_sampling_radius=trainer_config.new_sampling_radius)
+        new_sampling_radius=1.0/trainer_config.reduced_pole_radius,)
 
     # initialise the model
     model = DiffGFDN(

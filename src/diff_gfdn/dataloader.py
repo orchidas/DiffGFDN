@@ -265,7 +265,7 @@ class ThreeRoomDataset(RoomDataset):
                 band_centre_hz = srir_mat['band_centre_hz']
                 common_decay_times = np.asarray(
                     np.squeeze(srir_mat['common_decay_times'], axis=1))
-                nfft = config_dict.num_freq_bins
+                nfft = config_dict.trainer_config.num_freq_bins
         except Exception as exc:
             raise FileNotFoundError(
                 f"File was not found at {str(filepath)}") from exc
@@ -477,7 +477,7 @@ def load_dataset(room_data: RoomDataset,
                                      in the frequency domain, sample points on a circle whose radius
                                      is larger than 1 
     """
-    dataset = RIRDataset(device, room_data)
+    dataset = RIRDataset(device, room_data, new_sampling_radius)
     
     dataset = to_device(dataset, device)
     # split data into training and validation set

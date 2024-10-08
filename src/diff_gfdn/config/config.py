@@ -51,6 +51,8 @@ class TrainerConfig(BaseModel):
     # config file with training parameters
     # number of receivers in each training batch
     batch_size: int = 32
+    # Number of frequency bins in the magnitude response
+    num_freq_bins: Optional[int] = None
     # torch device - cuda or cpu or mps (for apple silicon)
     device: str = 'cpu'
     # split between traning and validation
@@ -71,18 +73,8 @@ class TrainerConfig(BaseModel):
     ir_dir: str = "../audio"
     # by how much to reduce the radius of each pole during frequency sampling
     reduced_pole_radius: Optional[float] = None
-    new_sampling_radius: float = Field(
-        default=None)  # Default value, to be set dynamically
-
-    # Validator for the 'new_sampling_radius' field
-    @model_validator(mode='before')
-    @classmethod
-    def calculate_new_sampling_radius(cls, values: Dict):
-        """Set sampling radius outside the unit circle based on reduced pole radius"""
-        reduced_pole_radius = values.get('reduced_pole_radius')
-        if reduced_pole_radius is not None:
-            values['new_sampling_radius'] = 1.0 / reduced_pole_radius
-        return values
+    # attenuation in dB that the anti aliasing envelope should be reduced by
+    alias_attenuation_db: Optional[int] = None 
 
 
 class DiffGFDNConfig(BaseModel):
@@ -104,8 +96,6 @@ class DiffGFDNConfig(BaseModel):
     feedback_loop_config: FeedbackLoopConfig = FeedbackLoopConfig()
     # number of biquads in SVF
     output_filter_config: OutputFilterConfig = OutputFilterConfig()
-    # Number of frequency bins in the magnitude response
-    num_freq_bins: Optional[int] = None
     # Validator to ensure the nested TrainerConfig is validated,
     # otherwise new sampling radius won't be set
     @model_validator(mode='before')
