@@ -1,5 +1,5 @@
 trainer_config:
-    device: 'mps'
+    device: 'cpu'
     max_epochs: 3
     train_dir: '../output/mesh_encoding/'
     ir_dir: '../audio/mesh_encoding/'

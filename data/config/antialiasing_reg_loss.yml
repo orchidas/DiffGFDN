@@ -1,5 +1,5 @@
 trainer_config:
-    device: 'mps'
+    device: 'cpu'
     max_epochs: 3
     train_dir: '../output/reg_loss/'
     ir_dir: '../audio/reg_loss/'

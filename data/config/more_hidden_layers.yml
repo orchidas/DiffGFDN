@@ -1,5 +1,5 @@
 trainer_config:
-    device: 'mps'
+    device: 'cpu'
     train_dir: '../output/more_hidden_layers/'
     ir_dir: '../audio/more_hidden_layers/'
 output_filter_config:

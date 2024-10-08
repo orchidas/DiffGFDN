@@ -2,7 +2,6 @@ import argparse
 import os
 import pickle
 import time
-import torch 
 from pathlib import Path
 from typing import Dict
 

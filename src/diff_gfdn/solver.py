@@ -1,14 +1,14 @@
 import os
-import torch
 from pathlib import Path
 from typing import List, Optional
 
 import matplotlib.pyplot as plt
+import torch
 from loguru import logger
 from scipy.io import savemat
 
 from .config.config import DiffGFDNConfig
-from .dataloader import ThreeRoomDataset, load_dataset, to_device
+from .dataloader import ThreeRoomDataset, load_dataset
 from .model import DiffGFDN
 from .trainer import Trainer
 

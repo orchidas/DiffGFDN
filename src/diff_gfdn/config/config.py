@@ -66,9 +66,9 @@ class TrainerConfig(BaseModel):
     # whether to use perceptual ERB loss
     use_erb_edr_loss: bool = False
     # directory to save results
-    train_dir: str = "../output"
+    train_dir: str = "../output/cpu/"
     # where to save the IRs
-    ir_dir: str = "../audio"
+    ir_dir: str = "../audio/cpu/"
     # by how much to reduce the radius of each pole during frequency sampling
     reduced_pole_radius: Optional[float] = None
     new_sampling_radius: float = Field(

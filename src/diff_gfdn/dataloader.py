@@ -1,6 +1,5 @@
 import os
 import pickle
-import inspect
 from abc import ABC
 from dataclasses import dataclass
 from pathlib import Path
@@ -361,7 +360,8 @@ class RIRDataset(data.Dataset):
                                self.rir_mag_response[idx, :])
         return {'input': input_features, 'target': target_labels}
 
-def to_device(data_class : data.Dataset, device: torch.device):
+
+def to_device(data_class: data.Dataset, device: torch.device):
     """Move all tensor attributes to self.device."""
     for field_name, field_value in data_class.__dict__.items():
         if isinstance(field_value, torch.Tensor):
@@ -369,9 +369,11 @@ def to_device(data_class : data.Dataset, device: torch.device):
         elif isinstance(field_value, Meshgrid):
             setattr(data_class, field_name, to_device(field_value, device))
         elif isinstance(field_value, np.ndarray):
-            setattr(data_class, field_name, torch.tensor(field_value, device=device))
+            setattr(data_class, field_name,
+                    torch.tensor(field_value, device=device))
     return data_class
-    
+
+
 def custom_collate(batch: data.Dataset):
     """
     Collate datapoints in the dataloader.
@@ -411,7 +413,7 @@ def custom_collate(batch: data.Dataset):
     }
 
 
-def split_dataset(dataset: data.Dataset, split: float, device: torch.device):
+def split_dataset(dataset: data.Dataset, split: float):
     """
     Randomly split a dataset into non-overlapping new datasets of 
     sizes given in 'split' argument
@@ -436,13 +438,12 @@ def get_dataloader(dataset: data.Dataset,
                    shuffle: bool = True,
                    device='cpu') -> data.DataLoader:
     """Create torch dataloader form given dataset"""
-    dataloader = data.DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        generator=torch.Generator(device=device),
-        drop_last=True,
-        collate_fn=custom_collate)
+    dataloader = data.DataLoader(dataset,
+                                 batch_size=batch_size,
+                                 shuffle=shuffle,
+                                 generator=torch.Generator(device=device),
+                                 drop_last=True,
+                                 collate_fn=custom_collate)
     return dataloader
 
 
@@ -469,24 +470,22 @@ def load_dataset(room_data: RoomDataset,
                                      in the frequency domain, sample points on a circle whose radius
                                      is larger than 1 
     """
-    dataset = RIRDataset(device, room_data)
-    
+    dataset = RIRDataset(device,
+                         room_data,
+                         new_sampling_radius=new_sampling_radius)
+
     dataset = to_device(dataset, device)
     # split data into training and validation set
-    train_set, valid_set = split_dataset(dataset, train_valid_split_ratio, device=device)
+    train_set, valid_set = split_dataset(dataset, train_valid_split_ratio)
 
     # dataloaders
-    train_loader = get_dataloader(
-        train_set,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        device=device
-    )
+    train_loader = get_dataloader(train_set,
+                                  batch_size=batch_size,
+                                  shuffle=shuffle,
+                                  device=device)
 
-    valid_loader = get_dataloader(
-        valid_set,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        device=device
-    )
+    valid_loader = get_dataloader(valid_set,
+                                  batch_size=batch_size,
+                                  shuffle=shuffle,
+                                  device=device)
     return train_loader, valid_loader

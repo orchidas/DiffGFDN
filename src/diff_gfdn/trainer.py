@@ -52,7 +52,9 @@ class Trainer:
                     self.net.output_filters.num_biquads)
             ]
         else:
-            self.criterion = edr_loss(self.net.sample_rate)
+            self.criterion = edr_loss(
+                self.net.sample_rate,
+                reduced_pole_radius=self.reduced_pole_radius)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=10,
                                                          gamma=0.1)
