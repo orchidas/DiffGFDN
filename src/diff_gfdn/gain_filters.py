@@ -240,7 +240,7 @@ class MLP(nn.Module):
 
     def __init__(self, num_pos_features: int, num_hidden_layers: int,
                  num_neurons: int, num_biquads_in_cascade: int,
-                 num_delay_lines: int):
+                 num_groups: int):
         """
         Initialize the MLP.
 
@@ -249,16 +249,16 @@ class MLP(nn.Module):
             num_hidden_layers (int): Number of hidden layers.
             num_neurons (int): Number of neurons in each hidden layer.
             num_biquads_in_cascaed (int): Number of biquads in cascade
-            num_delay_lines (int): number of delay lines in FDN
+            num_groups (int): number of groups in GFDN
         """
         super().__init__()
 
         # input is only position dependent.
         input_size = num_pos_features
         self.num_biquads = num_biquads_in_cascade
-        self.num_delay_lines = num_delay_lines
+        self.num_groups = num_groups
         # Output layer has (num_del * 5 SVF params * num_biquads) features
-        output_size = self.num_delay_lines * 5 * self.num_biquads
+        output_size = self.num_groups * 5 * self.num_biquads
 
         # Create a list of layers for the MLP
         layers = []
@@ -288,7 +288,7 @@ class MLP(nn.Module):
         """
         batch_size = x.shape[0]
         x = self.model(x)
-        x = x.view(batch_size, self.num_delay_lines, self.num_biquads, 5)
+        x = x.view(batch_size, self.num_groups, self.num_biquads, 5)
         return x
 
 
@@ -296,8 +296,9 @@ class SVF_from_MLP(nn.Module):
 
     def __init__(
         self,
+        num_groups: int,
+        num_delay_lines_per_group: int,
         num_biquads: int,
-        num_delay_lines: int,
         num_fourier_features: int,
         num_hidden_layers: int,
         num_neurons: int,
@@ -308,11 +309,12 @@ class SVF_from_MLP(nn.Module):
         """
         Train the MLP to get SVF coefficients for a biquad cascade
         Args:
+            num_groups (int): number of groups in the GFDN
+            num_delay_lines_per_group: number of delay lines in each group in the GFDN
+            num_biquads (int): Number of biquads in cascade
             num_fourier_features (int): how much will the spatial locations expand as a feature
             num_hidden_layers (int): Number of hidden layers.
             num_neurons (int): Number of neurons in each hidden layer.
-            num_biquads (int): Number of biquads in cascade
-            num_delay_lines (int): number of delay lines in FDN
             position_type (str): whether the SVF is driving the input or output gains
             encoding_type (str): whether to use one-hot encoding with the grid geometry information, 
                                  or directly use the sinusoidal encodings of the position 
@@ -322,7 +324,9 @@ class SVF_from_MLP(nn.Module):
         """
         super().__init__()
         self.num_biquads = num_biquads
-        self.num_delay_lines = num_delay_lines
+        self.num_groups = num_groups
+        self.num_delay_lines_per_group = num_delay_lines_per_group
+        self.num_delay_lines = self.num_groups * self.num_delay_lines_per_group
         self.position_type = position_type
         self.encoding_type = encoding_type
         self.compress_pole_factor = compress_pole_factor
@@ -342,7 +346,7 @@ class SVF_from_MLP(nn.Module):
             self.encoder = OneHotEncoding()
 
         self.mlp = MLP(num_input_features, num_hidden_layers, num_neurons,
-                       self.num_biquads, self.num_delay_lines)
+                       self.num_biquads, self.num_groups)
 
         self.sos_filter = SOSFilter(self.num_biquads)
         self.soft_plus = SoftPlus()
@@ -381,8 +385,7 @@ class SVF_from_MLP(nn.Module):
             assert self.svf_params.shape[0] == self.batch_size
 
         # always ensure that the filter cutoff frequency and resonance are positive
-        reshape_size = (self.batch_size, self.num_delay_lines,
-                        self.num_biquads)
+        reshape_size = (self.batch_size, self.num_groups, self.num_biquads)
         self.svf_params[..., 0] = self.tan_sigmoid(
             self.svf_params[..., 0].view(-1)).view(reshape_size)
         self.svf_params[..., 1] = self.soft_plus(
@@ -392,12 +395,12 @@ class SVF_from_MLP(nn.Module):
         self.biquad_cascade = [[
             BiquadCascade(self.num_biquads, torch.zeros((self.num_biquads, 3)),
                           torch.zeros((self.num_biquads, 3)))
-            for i in range(self.num_delay_lines)
+            for i in range(self.num_groups)
         ] for b in range(self.batch_size)]
 
         # fill the empty filters
         for b in range(self.batch_size):
-            for i in range(self.num_delay_lines):
+            for i in range(self.num_groups):
                 svf_params_del_line = self.svf_params[b, i, :]
                 svf_cascade = [
                     SVF(svf_params_del_line[k, 0], svf_params_del_line[k, 1],
@@ -407,8 +410,12 @@ class SVF_from_MLP(nn.Module):
                 ]
                 self.biquad_cascade[b][i] = BiquadCascade.from_svf_coeffs(
                     svf_cascade, self.compress_pole_factor)
-                H[b, i, :] = self.sos_filter(z_values,
-                                             self.biquad_cascade[b][i])
+
+                # all delay lines in a group have the same output filter
+                H[b, i * self.num_delay_lines_per_group:(i + 1) *
+                  self.num_delay_lines_per_group, :] = torch.tile(
+                      self.sos_filter(z_values, self.biquad_cascade[b][i]),
+                      (self.num_delay_lines_per_group, 1))
 
         return H
 
@@ -425,7 +432,7 @@ class SVF_from_MLP(nn.Module):
             torch.cat((self.biquad_cascade[b][n].num_coeffs,
                        self.biquad_cascade[b][n].den_coeffs),
                       dim=-1).squeeze().cpu().numpy()
-            for n in range(self.num_delay_lines)
+            for n in range(self.num_groups)
         ] for b in range(self.batch_size)]
         return (svf_params, biquad_coeffs)
 
@@ -438,6 +445,6 @@ class SVF_from_MLP(nn.Module):
             torch.cat((self.biquad_cascade[b][n].num_coeffs,
                        self.biquad_cascade[b][n].den_coeffs),
                       dim=-1).squeeze().cpu().numpy()
-            for n in range(self.num_delay_lines)
+            for n in range(self.num_groups)
         ] for b in range(self.batch_size)]
         return param_np

@@ -9,7 +9,7 @@ import yaml
 from pydantic import BaseModel
 
 from diff_gfdn.config.config import DiffGFDNConfig
-from diff_gfdn.solver import run_training
+from diff_gfdn.solver import run_training_var_receiver_pos
 
 # pylint: disable=W1514
 
@@ -95,5 +95,7 @@ if __name__ == '__main__':
                              'config_args.pickle')
     dump_config_to_pickle(config_dict, args_file)
 
-    # run the training module
-    run_training(config_dict)
+    # run the training module either for various source-listener positions
+    # or for a single measurement
+    if config_dict.ir_path is None:
+        run_training_var_receiver_pos(config_dict)

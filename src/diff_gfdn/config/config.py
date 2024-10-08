@@ -11,8 +11,14 @@ from ..utils import ms_to_samps
 class CouplingMatrixType(Enum):
     """Different types of coupling matrix"""
 
+    # scalar, unitary coupling matrix
     SCALAR = "scalar_matrix"
+    # paraunitary FIR coupling matrix
     FILTER = "filter_matrix"
+    # this gets triggered if we want the coupled feedback matrix to be
+    # a random unitary matrix that is optimised, i.e, it has no special
+    # structure representing individual mixing matrix and a coupling matrix
+    RANDOM = "random_matrix"
 
     def __repr__(self) -> str:
         return str(self.value)
@@ -38,6 +44,10 @@ class FeedbackLoopConfig(BaseModel):
 class OutputFilterConfig(BaseModel):
     # config for training the output filters based on listener location
     # number of biquads in each filter
+    # whether to use SVFs or scalar gains
+    use_svfs: bool = True
+    # whether to use MLP to train the SVFs
+    use_mlp_to_train: bool = True
     num_biquads_svf: int = 8
     num_hidden_layers: int = 1
     num_neurons_per_layer: int = 2**7
@@ -90,6 +100,8 @@ class DiffGFDNConfig(BaseModel):
 
     # path to three room dataset
     room_dataset_path: str = '../resources/Georg_3room_FDTD/srirs.pkl'
+    # if a single measurement is being used
+    ir_path: Optional[str] = None
     # sampling rate of the FDN
     sample_rate: float = 32000.0
     # training config

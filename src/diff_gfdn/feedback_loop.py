@@ -217,37 +217,48 @@ class FeedbackLoop(nn.Module):
         self.coupling_matrix_type = coupling_matrix_type
         self.coupling_matrix_order = coupling_matrix_order
 
-        # initialise the feedback matrices, which are learnable
-        # these are individual feedback matrices for each group that
-        # are orthonormal and of size N=Ndel/Ngroups, each distributed
-        # uniformly in (-1/sqrt(N), +1/sqrt(N))
-        self.M = nn.Parameter(
-            (2 * torch.rand(self.num_groups, self.num_delay_lines_per_group,
-                            self.num_delay_lines_per_group) - 1) /
-            np.sqrt(self.num_delay_lines_per_group))
-
         # orthonormal parameterisation of the matrices in M
         self.ortho_param = nn.Sequential(Skew(), MatrixExponential())
 
-        if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
-            # Nroom choose 2 rotation angles for getting an Nroom x Nroom unitary coupling matrix
-            self.alpha = nn.Parameter((2 * torch.rand(
-                (self.num_groups * (self.num_groups - 1)) // 2) - 1) / np.pi)
+        # in this case, the coupled feedback matrix is any unitary matrix. It has no
+        # inherent structure
+        if self.coupling_matrix_type == CouplingMatrixType.RANDOM:
+            self.random_feedback_matrix = nn.Parameter(
+                (2 * torch.rand(self.num_delay_lines, self.num_delay_lines) -
+                 1) / np.sqrt(self.num_delay_lines_per_group))
 
-            self.nd_unitary = ND_Unitary()
+        # otherwise, use coupled matrix structure proposed in GFDN papers
+        # with individual mixing matrices and a coupling matrix connecting them
+        else:
+            # initialise the feedback matrices, which are learnable
+            # these are individual feedback matrices for each group that
+            # are orthonormal and of size N=Ndel/Ngroups, each distributed
+            # uniformly in (-1/sqrt(N), +1/sqrt(N))
+            self.M = nn.Parameter((
+                2 * torch.rand(self.num_groups, self.num_delay_lines_per_group,
+                               self.num_delay_lines_per_group) - 1) /
+                                  np.sqrt(self.num_delay_lines_per_group))
+            if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
+                # Nroom choose 2 rotation angles for getting an Nroom x Nroom unitary coupling matrix
+                self.alpha = nn.Parameter((2 * torch.rand(
+                    (self.num_groups * (self.num_groups - 1)) // 2) - 1) /
+                                          np.pi)
 
-        elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
-            self.coupling_matrix_order = coupling_matrix_order
-            # order - 1 unit norm householder vectors
-            self.unit_vectors = nn.Parameter(
-                torch.randn(self.num_groups, self.coupling_matrix_order - 1))
+                self.nd_unitary = ND_Unitary()
 
-            self.unitary_matrix = nn.Parameter(
-                (2 * torch.rand(self.num_groups, self.num_groups) - 1) /
-                np.sqrt(self.num_groups))
+            elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
+                self.coupling_matrix_order = coupling_matrix_order
+                # order - 1 unit norm householder vectors
+                self.unit_vectors = nn.Parameter(
+                    torch.randn(self.num_groups,
+                                self.coupling_matrix_order - 1))
 
-            self.fir_paraunitary = FIRParaunitary(self.num_groups,
-                                                  self.coupling_matrix_order)
+                self.unitary_matrix = nn.Parameter(
+                    (2 * torch.rand(self.num_groups, self.num_groups) - 1) /
+                    np.sqrt(self.num_groups))
+
+                self.fir_paraunitary = FIRParaunitary(
+                    self.num_groups, self.coupling_matrix_order)
 
     def forward(self, z: torch.tensor) -> torch.tensor:
         """Compute (D_m(z^{-1}) - A(z)Gamma(z))^{-1}"""
@@ -264,14 +275,20 @@ class FeedbackLoop(nn.Module):
             # this is of size Ndel x Ndel
             Gamma = to_complex(torch.diag(self.delay_line_gains))
 
-        # get coupled feedback matrix of size Ndel x Ndel x num_freq_points
-        self.coupled_feedback_matrix = self.get_coupled_feedback_matrix()
+        # get coupled feedback matrix of size Ndel x Ndel
+        if self.coupling_matrix_type == CouplingMatrixType.RANDOM:
+            self.coupled_feedback_matrix = to_complex(
+                self.ortho_param(self.random_feedback_matrix))
+        else:
+            self.coupled_feedback_matrix = self.get_coupled_feedback_matrix()
 
         # this should be of size num_freq_pts x Ndel x Ndel
-        if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
+        if self.coupling_matrix_type in (CouplingMatrixType.SCALAR,
+                                         CouplingMatrixType.RANDOM):
             A = self.coupled_feedback_matrix.unsqueeze(0).repeat(
                 num_freq_points, 1, 1)
-        else:
+
+        elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
             # view converts z into a 2D matrix of size num_freq_pts x 1,
             # but it does not copy the data, hence z ultimately remains unaffected.
             # the exponetiation converts it to order x num_freq_points matrix x order,
@@ -366,25 +383,35 @@ class FeedbackLoop(nn.Module):
 
     def get_parameters(self) -> Tuple:
         """Return the model parameters as a Tuple"""
-        M = [self.ortho_param(self.M[i]) for i in range(self.num_groups)]
-        Phi = self.phi
-        L0 = self.ortho_param(self.unitary_matrix)
-        unit_vectors = self.unit_vectors / (
-            torch.norm(self.unit_vectors, dim=0, keepdim=True) + self._eps)
-        coupled_feedback_matrix = self.get_coupled_feedback_matrix()
+        if self.coupling_matrix_type == CouplingMatrixType.RANDOM:
+            return self.ortho_param(self.random_feedback_matrix)
+        else:
+            M = [self.ortho_param(self.M[i]) for i in range(self.num_groups)]
+            Phi = self.phi
+            L0 = self.ortho_param(self.unitary_matrix)
+            unit_vectors = self.unit_vectors / (
+                torch.norm(self.unit_vectors, dim=0, keepdim=True) + self._eps)
+            coupled_feedback_matrix = self.get_coupled_feedback_matrix()
 
-        return (M, Phi, L0, unit_vectors, coupled_feedback_matrix)
+            return (M, Phi, L0, unit_vectors, coupled_feedback_matrix)
 
     @torch.no_grad()
     def get_param_dict(self) -> Dict:
         """Return the model parameters as a dict"""
         param_np = {}
-        param_np['coupling_matrix'] = self.phi.squeeze().cpu().numpy()
-        param_np['individual_mixing_matrix'] = self.M.squeeze().cpu().numpy()
-        param_np[
-            'coupled_feedback_matrix'] = self.coupled_feedback_matrix.squeeze(
-            ).cpu().numpy()
-        param_np['unitary_matrix'] = self.unitary_matrix.squeeze().cpu().numpy(
-        )
-        param_np['unit_vectors'] = self.unit_vectors.squeeze().cpu().numpy()
+        if self.coupling_matrix_type == CouplingMatrixType.RANDOM:
+            param_np[
+                'coupled_feedback_matrix'] = self.coupled_feedback_matrix.squeeze(
+                ).cpu().numpy()
+        else:
+            param_np['coupling_matrix'] = self.phi.squeeze().cpu().numpy()
+            param_np['individual_mixing_matrix'] = self.M.squeeze().cpu(
+            ).numpy()
+            param_np[
+                'coupled_feedback_matrix'] = self.coupled_feedback_matrix.squeeze(
+                ).cpu().numpy()
+            param_np['unitary_matrix'] = self.unitary_matrix.squeeze().cpu(
+            ).numpy()
+            param_np['unit_vectors'] = self.unit_vectors.squeeze().cpu().numpy(
+            )
         return param_np

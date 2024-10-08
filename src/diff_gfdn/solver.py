@@ -9,8 +9,8 @@ from scipy.io import savemat
 
 from .config.config import DiffGFDNConfig
 from .dataloader import ThreeRoomDataset, load_dataset
-from .model import DiffGFDN
-from .trainer import Trainer
+from .model import DiffGFDN, DiffGFDNVarReceiverPos
+from .trainer import VarReceiverPosTrainer
 
 
 def save_parameters(net: DiffGFDN, dir_path: str, filename: str):
@@ -83,15 +83,16 @@ def save_loss(train_loss: List,
     savemat(os.path.join(output_dir, 'losses_' + filename + '.mat'), losses)
 
 
-def run_training(config_dict: DiffGFDNConfig):
+def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
     """
-    Run the training for the differentiable GFDN, and save
+    Run the training for the differentiable GFDN for different receiver positions, and save
     its parameters
     Args:
         config_dict (DiffGFDNTrainConfig): configuration parameters for training
     """
     # read the coupled room dataset
     room_data = ThreeRoomDataset(Path(config_dict.room_dataset_path).resolve())
+
     # add number of groups to the config dictionary
     config_dict = config_dict.copy(update={"num_groups": room_data.num_rooms})
     assert config_dict.num_delay_lines % config_dict.num_groups == 0, "Delay lines must be \
@@ -113,7 +114,7 @@ def run_training(config_dict: DiffGFDNConfig):
         new_sampling_radius=trainer_config.new_sampling_radius)
 
     # initialise the model
-    model = DiffGFDN(
+    model = DiffGFDNVarReceiverPos(
         room_data.sample_rate,
         room_data.num_rooms,
         config_dict.delay_length_samps,
@@ -131,7 +132,7 @@ def run_training(config_dict: DiffGFDNConfig):
     # move model to device (cuda or cpu)
     model = model.to(trainer_config.device)
     # create the trainer object
-    trainer = Trainer(model, trainer_config)
+    trainer = VarReceiverPosTrainer(model, trainer_config)
 
     # save initial parameters and ir
     save_parameters(trainer.net, trainer_config.train_dir,

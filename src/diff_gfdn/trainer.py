@@ -11,12 +11,13 @@ from tqdm import trange
 
 from .config.config import TrainerConfig
 from .losses import edr_loss, reg_loss
-from .model import DiffGFDN
+from .model import DiffGFDN, DiffGFDNVarReceiverPos
 from .utils import get_response, get_str_results, ms_to_samps
 
 
 # flake8: noqa: E231
 class Trainer:
+    """Parent class for training DiffGFDN for varying source-listener positions and static position"""
 
     def __init__(self, net: DiffGFDN, trainer_config: TrainerConfig):
         """Class to train the DiffGFDN"""
@@ -63,6 +64,14 @@ class Trainer:
         """Return the device to train on - CPU or GPU"""
         for i in range(len(self.criterion)):
             self.criterion[i] = self.criterion[i].to(self.device)
+
+
+class VarReceiverPosTrainer(Trainer):
+    """Class for training Diff GFDN for a grid of receiver positions"""
+
+    def __init__(self, net: DiffGFDNVarReceiverPos,
+                 trainer_config: TrainerConfig):
+        super().__init__(net, trainer_config)
 
     def train(self, train_dataset: DataLoader):
         """Train the network"""

@@ -3,7 +3,7 @@ import pickle
 from abc import ABC
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -62,6 +62,96 @@ class Target():
     early_rir_mag_response: torch.tensor
     late_rir_mag_response: torch.tensor
     rir_mag_response: torch.tensor
+
+
+class RIRData:
+    """Data for a single measured/simulated RIR"""
+
+    def __init__(self,
+                 wav_path: Path,
+                 band_centre_hz: ArrayLike,
+                 common_decay_times: List,
+                 room_dims: Optional[List] = None,
+                 absorption_coeffs: Optional[List] = None,
+                 mixing_time_ms: float = 20.0):
+        """
+        Args:
+            num_rooms (int): number of rooms in coupled space
+            sample_rate (float): sample rate of dataset
+            wav_path (Path): path to the RIR
+            band_centre_hz (ArrayLike): octave band centres where common T60s are calculated
+            common_decay_times (List[ArrayLike]): common decay times for the different rooms
+            room_dims (optional, List): l,w,h for each room in coupled space
+            absorption_coeffs (optional, List): uniform absorption coefficients for each room
+            mixing_time_ms (float): time when early reflections morph into late reverb
+        """
+
+        assert str(wav_path).endswith(
+            '.wav'), "provide the path to the .wav file"
+
+        # read contents from .wav file
+        try:
+            (rir, sample_rate) = sf.read(str(wav_path))
+        except Exception as exc:
+            raise FileNotFoundError(
+                f"File was not found at {str(wav_path)}") from exc
+
+        self.rir = rir
+        self.sample_rate = sample_rate
+        self.common_decay_times = common_decay_times
+        self.band_centre_hz = band_centre_hz
+        self.mixing_time_ms = mixing_time_ms
+        self.room_dims = room_dims
+        self.absorption_coeffs = absorption_coeffs
+
+    @property
+    def num_freq_bins(self):
+        """Number of frequency bins in the magnitude response"""
+        max_rt60_samps = self.common_decay_times.max() * self.sample_rate
+        return int(np.pow(2, np.ceil(np.log2(max_rt60_samps))))
+
+    @property
+    def freq_bins_rad(self):
+        """Frequency bins in radians"""
+        return rfftfreq(self.num_freq_bins)
+
+    @property
+    def freq_bins_hz(self):
+        """Frequency bins in Hz"""
+        return rfftfreq(self.num_freq_bins, d=1.0 / self.sample_rate)
+
+    @property
+    def rir_mag_response(self):
+        """Frequency response of the RIRs, time along last axis"""
+        return rfft(self.rir, n=self.num_freq_bins)
+
+    def early_late_split(self, win_len_ms: float = 5.0):
+        """Split the RIRs into early and late response based on mixing time"""
+        mixing_time_samps = ms_to_samps(self.mixing_time_ms, self.sample_rate)
+        win_len_samps = ms_to_samps(win_len_ms, self.sample_rate)
+        window = np.hanning(win_len_samps)
+
+        # create fade in and fade out windows to avoid discontinuities
+        fade_in_win = window[:win_len_samps // 2]
+        fade_out_win = window[win_len_samps // 2:]
+
+        # truncate rir into early and late parts
+        self.early_rirs = self.rir[:mixing_time_samps]
+        self.late_rirs = self.rirs[mixing_time_samps:]
+
+        # apply fade-in and fade-out windows
+        self.early_rirs[-win_len_samps // 2:] *= fade_out_win
+        self.late_rirs[:win_len_samps // 2] *= fade_in_win
+
+        # get frequency response
+        self.late_rir_mag_response = rfft(
+            self.late_rirs,
+            n=self.num_freq_bins,
+        )
+        self.early_rir_mag_response = rfft(
+            self.early_rirs,
+            n=self.num_freq_bins,
+        )
 
 
 class RoomDataset(ABC):
@@ -296,7 +386,7 @@ class ThreeRoomDataset(RoomDataset):
             sf.write(filepath, self.rirs[num_pos, :], int(self.sample_rate))
 
 
-class RIRDataset(data.Dataset):
+class MultiRIRDataset(data.Dataset):
 
     def __init__(self,
                  device: torch.device,
@@ -359,6 +449,64 @@ class RIRDataset(data.Dataset):
                                self.late_rir_mag_response[idx, :],
                                self.rir_mag_response[idx, :])
         return {'input': input_features, 'target': target_labels}
+
+
+class SingleRIRDataset(data.Dataset):
+
+    def __init__(self,
+                 device: torch.device,
+                 rir_data: RIRData,
+                 new_sampling_radius: Optional[float] = None):
+        """
+        RIR dataset containing magnitude response of RIRs around the unit circle,
+        for different receiver positions.
+        During batch processing, each batch will contain all the frequency bins
+        but different sets of receiver positions
+        Args:
+            device (str): cuda or cpu
+            rir_data (SingleRIRDataset): RIRDataset object containing RIRs and magnitude response
+            new_sampling_radius (float): to reduce time aliasing artifacts due to insufficient sampling
+                                     in the frequency domain, sample points on a circle whose radius
+                                     is larger than 1 
+
+        """
+        self.device = device
+
+        # frequency-domain data
+        freq_bins_rad = torch.tensor(rir_data.freq_bins_rad)
+
+        if new_sampling_radius is None:
+            # this ensures that we cover half the unit circle (other half is symmetric)
+            self.z_values = torch.polar(torch.ones_like(freq_bins_rad),
+                                        freq_bins_rad * 2 * np.pi)
+        else:
+            assert new_sampling_radius > 1.0
+            logger.info(
+                f"Sampling outside the unit circle at a radius {new_sampling_radius}"
+            )
+            # sample outside the unit circle
+            self.z_values = torch.polar(
+                new_sampling_radius * torch.ones_like(freq_bins_rad),
+                freq_bins_rad * 2 * np.pi)
+
+        self.rir_mag_response = torch.tensor(rir_data.rir_mag_response)
+        self.late_rir_mag_response = torch.tensor(
+            rir_data.late_rir_mag_response)
+        self.early_rir_mag_response = torch.tensor(
+            rir_data.early_rir_mag_response)
+
+    def __len__(self):
+        """Get length of dataset (equal to number of receiver positions)"""
+        return len(self.z_values)
+
+    def __getitem__(self, idx: int):
+        """Get data at a particular index"""
+        return {
+            'input': self.z_values[idx],
+            'target_response': self.rir_mag_response[idx],
+            'target_early_response': self.early_rir_mag_response[idx],
+            'target_late_response': self.late_rir_mag_response[idx]
+        }
 
 
 def to_device(data_class: data.Dataset, device: torch.device):
@@ -436,14 +584,25 @@ def split_dataset(dataset: data.Dataset, split: float):
 def get_dataloader(dataset: data.Dataset,
                    batch_size: int,
                    shuffle: bool = True,
-                   device='cpu') -> data.DataLoader:
+                   device='cpu',
+                   collate_fn: Optional = None) -> data.DataLoader:
     """Create torch dataloader form given dataset"""
-    dataloader = data.DataLoader(dataset,
-                                 batch_size=batch_size,
-                                 shuffle=shuffle,
-                                 generator=torch.Generator(device=device),
-                                 drop_last=True,
-                                 collate_fn=custom_collate)
+    if collate_fn is None:
+        dataloader = data.DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            generator=torch.Generator(device=device),
+            drop_last=True,
+        )
+    else:
+        dataloader = data.DataLoader(dataset,
+                                     batch_size=batch_size,
+                                     shuffle=shuffle,
+                                     generator=torch.Generator(device=device),
+                                     drop_last=True,
+                                     collate_fn=custom_collate)
+
     return dataloader
 
 
@@ -452,7 +611,7 @@ def get_device():
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def load_dataset(room_data: RoomDataset,
+def load_dataset(room_data: Union[RoomDataset, RIRData],
                  device: torch.device,
                  train_valid_split_ratio: float = 0.8,
                  batch_size: int = 32,
@@ -470,11 +629,17 @@ def load_dataset(room_data: RoomDataset,
                                      in the frequency domain, sample points on a circle whose radius
                                      is larger than 1 
     """
-    dataset = RIRDataset(device,
-                         room_data,
-                         new_sampling_radius=new_sampling_radius)
+    collate_fn = None
+    if isinstance(room_data, RoomDataset):
+        dataset = MultiRIRDataset(device,
+                                  room_data,
+                                  new_sampling_radius=new_sampling_radius)
+        collate_fn = custom_collate
 
-    dataset = to_device(dataset, device)
+    elif isinstance(room_data, RIRData):
+        dataset = SingleRIRDataset(device, room_data, new_sampling_radius)
+
+    dataset = to_device(dataset, device)  #pylint: disable=E0601
     # split data into training and validation set
     train_set, valid_set = split_dataset(dataset, train_valid_split_ratio)
 
@@ -482,10 +647,12 @@ def load_dataset(room_data: RoomDataset,
     train_loader = get_dataloader(train_set,
                                   batch_size=batch_size,
                                   shuffle=shuffle,
-                                  device=device)
+                                  device=device,
+                                  collate_fn=collate_fn)
 
     valid_loader = get_dataloader(valid_set,
                                   batch_size=batch_size,
                                   shuffle=shuffle,
-                                  device=device)
+                                  device=device,
+                                  collate_fn=collate_fn)
     return train_loader, valid_loader
