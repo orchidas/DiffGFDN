@@ -224,8 +224,8 @@ class FeedbackLoop(nn.Module):
         # inherent structure
         if self.coupling_matrix_type == CouplingMatrixType.RANDOM:
             self.random_feedback_matrix = nn.Parameter(
-                (2 * torch.rand(self.num_delay_lines, self.num_delay_lines) -
-                 1) / np.sqrt(self.num_delay_lines_per_group))
+                (2 * torch.rand(self.num_delays, self.num_delays) - 1) /
+                np.sqrt(self.num_delay_lines_per_group))
 
         # otherwise, use coupled matrix structure proposed in GFDN papers
         # with individual mixing matrices and a coupling matrix connecting them

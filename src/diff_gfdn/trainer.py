@@ -1,7 +1,7 @@
 import os
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict
 
 import torch
 import torchaudio
@@ -11,7 +11,7 @@ from tqdm import trange
 
 from .config.config import TrainerConfig
 from .losses import edr_loss, reg_loss
-from .model import DiffGFDN, DiffGFDNVarReceiverPos
+from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
 from .utils import get_response, get_str_results, ms_to_samps
 
 
@@ -65,6 +65,21 @@ class Trainer:
         for i in range(len(self.criterion)):
             self.criterion[i] = self.criterion[i].to(self.device)
 
+    def print_results(self, e: int, e_time):
+        """Print results of training"""
+        print(get_str_results(epoch=e, train_loss=self.train_loss,
+                              time=e_time))
+
+    def save_model(self, e: int):
+        """Save the model at epoch number e"""
+        dir_path = os.path.join(self.train_dir, 'checkpoints')
+        # create checkpoint folder
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+        # save model
+        torch.save(self.net.state_dict(),
+                   os.path.join(dir_path, 'model_e' + str(e) + '.pt'))
+
 
 class VarReceiverPosTrainer(Trainer):
     """Class for training DiffGFDN for a grid of receiver positions"""
@@ -89,8 +104,8 @@ class VarReceiverPosTrainer(Trainer):
             self.scheduler.step()
             self.train_loss.append(epoch_loss / len(train_dataset))
             et_epoch = time.time()
-            self.save_model(epoch)
-            self.print_results(epoch, et_epoch - st_epoch)
+            super().save_model(epoch)
+            super().print_results(epoch, et_epoch - st_epoch)
 
             # early stopping
             if epoch >= 1:
@@ -108,10 +123,11 @@ class VarReceiverPosTrainer(Trainer):
         logger.info("Saving the trained IRs...")
         for data in train_dataset:
             position = data['listener_position']
-            self.save_ir(data,
-                         directory=self.ir_dir,
-                         pos_list=position,
-                         reduced_pole_radius=self.reduced_pole_radius)
+            self.save_ir(
+                data,
+                directory=self.ir_dir,
+                pos_list=position,
+            )
 
     def train_step(self, data):
         """Single step of training"""
@@ -139,8 +155,7 @@ class VarReceiverPosTrainer(Trainer):
             H = self.save_ir(data,
                              directory=self.ir_dir,
                              pos_list=position,
-                             filename_prefix="valid_ir",
-                             reduced_pole_radius=self.reduced_pole_radius)
+                             filename_prefix="valid_ir")
 
             if self.use_reg_loss:
                 loss = self.criterion[0](
@@ -159,21 +174,6 @@ class VarReceiverPosTrainer(Trainer):
         net_valid_loss = total_loss / len(valid_dataset)
         logger.info(f"The net validation loss is {net_valid_loss:.4f}")
 
-    def print_results(self, e: int, e_time):
-        """Print results of training"""
-        print(get_str_results(epoch=e, train_loss=self.train_loss,
-                              time=e_time))
-
-    def save_model(self, e: int):
-        """Save the model at epoch number e"""
-        dir_path = os.path.join(self.train_dir, 'checkpoints')
-        # create checkpoint folder
-        if not os.path.exists(dir_path):
-            os.makedirs(dir_path)
-        # save model
-        torch.save(self.net.state_dict(),
-                   os.path.join(dir_path, 'model_e' + str(e) + '.pt'))
-
     @torch.no_grad()
     def save_ir(
         self,
@@ -182,7 +182,6 @@ class VarReceiverPosTrainer(Trainer):
         pos_list: torch.tensor,
         filename_prefix: str = "ir",
         norm: bool = True,
-        reduced_pole_radius: Optional[float] = None,
     ) -> torch.tensor:
         """
         Save the impulse response generated from the model
@@ -191,15 +190,14 @@ class VarReceiverPosTrainer(Trainer):
             directory (str): where to save the audio
             pos_list (torch.tensor): B x 3 position coordinates
             norm (bool): whether to normalise the RIR
-            reduced_pole_radius (optional, float): undo sampling outside the unit circle after taking an IFFT
         Returns:
             torch.tensor - the frequency response at the given input features
         """
         H, h = get_response(input_features, self.net)
 
         # undo sampling outside the unit circle by multiplying IR with an exponentiated envelope
-        if reduced_pole_radius is not None:
-            h *= torch.pow(1.0 / reduced_pole_radius,
+        if self.reduced_pole_radius is not None:
+            h *= torch.pow(1.0 / self.reduced_pole_radius,
                            torch.arange(0, h.shape[-1]))
 
         if norm:
@@ -219,3 +217,88 @@ class VarReceiverPosTrainer(Trainer):
                             bits_per_sample=32,
                             channels_first=False)
         return H
+
+
+class SinglePosTrainer(Trainer):
+    """Trainer class for training DiffGFDN on a single measured RIR"""
+
+    def __init__(self, net: DiffGFDNSinglePos, trainer_config: TrainerConfig,
+                 filename: str):
+        super().__init__(net, trainer_config)
+        self.filename = filename
+
+    def train(self, train_dataset: DataLoader):
+        # Training cannot be done batch-wise in this instance, similarly we cannot have
+        # a train-valid split. This is because we need the ENTIRE sampled unit circle
+        # response to calculate the loss function
+
+        self.train_loss = []
+        st = time.time()  # start time
+        for epoch in trange(self.max_epochs, desc='Training'):
+            st_epoch = time.time()
+
+            # training - looping over a single batch
+            for data in train_dataset:
+                epoch_loss = self.train_step(data)
+
+            self.scheduler.step()
+            self.train_loss.append(epoch_loss)
+            et_epoch = time.time()
+
+            super().print_results(epoch, et_epoch - st_epoch)
+            super().save_model(epoch)
+
+            # early stopping
+            if epoch >= 1:
+                if abs(self.train_loss[-2] - self.train_loss[-1]) <= 0.0001:
+                    self.early_stop += 1
+                else:
+                    self.early_stop = 0
+            if self.early_stop == self.patience:
+                break
+
+        et = time.time()  # end time
+        print('Training time: {:.3f}s'.format(et - st))
+
+        # save the trained IRs
+        logger.info("Saving the trained IR...")
+        for data in train_dataset:
+            self.save_ir(
+                data,
+                directory=self.ir_dir,
+                filename_prefix='approx_' + self.filename,
+            )
+
+    def train_step(self, data: Dict):
+        """Single step for training"""
+        self.optimizer.zero_grad()
+        H = self.net(data)
+        if self.use_reg_loss:
+            loss = self.criterion[0](
+                data['target_rir_response'], H) + self.criterion[1](
+                    self.net.output_filters.biquad_cascade)
+        else:
+            loss = self.criterion(data['target_rir_response'], H)
+        loss.backward()
+        self.optimizer.step()
+        return loss.item()
+
+    @torch.no_grad()
+    def save_ir(self,
+                data: Dict,
+                directory: str,
+                filename_prefix: str = 'ir',
+                norm=False):
+        _, h = get_response(data, self.net)
+        # undo sampling outside the unit circle by multiplying IR with an exponentiated envelope
+        if self.reduced_pole_radius is not None:
+            h *= torch.pow(1.0 / self.reduced_pole_radius,
+                           torch.arange(0, h.shape[-1]))
+        if norm:
+            h = torch.div(h, torch.max(torch.abs(h)))
+        filepath = os.path.join(directory, filename_prefix + '.wav')
+        torchaudio.save(filepath,
+                        torch.stack((h, h), dim=1).cpu(),
+                        int(self.net.sample_rate),
+                        bits_per_sample=32,
+                        channels_first=False)

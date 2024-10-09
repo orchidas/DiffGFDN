@@ -1,5 +1,6 @@
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import torch
 from loguru import logger
 from scipy.signal import butter
@@ -63,12 +64,13 @@ class DiffGFDN(nn.Module):
         ]
         if self.use_absorption_filters:
             # this will be of size (num_groups, num_del_per_group, numerator (filter_order), denominator(filter_order))
-            self.gain_per_sample = torch.tensor([
-                decay_times_to_gain_filters(
-                    band_centre_hz, common_decay_times[:, i],
-                    self.delays_by_group[i], self.sample_rate)
+            self.gain_per_sample = torch.tensor(np.array([
+                decay_times_to_gain_filters(band_centre_hz,
+                                            common_decay_times[:, i],
+                                            self.delays_by_group[i],
+                                            self.sample_rate)
                 for i in range(self.num_groups)
-            ],
+            ]),
                                                 device=self.device)
             self.filter_order = self.gain_per_sample.shape[-2]
             self.gain_per_sample = self.gain_per_sample.view(
@@ -139,6 +141,7 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
             device: GPU or CPU for training
             feedback_loop_config (FeedbackLoopConfig): config file for training the feedback loop
             output_filter_config (OutputFilterConfig): config file for training the output SVF filters
+            room_dims (optional, list): dimensions of each room as a tuple
             use_absorption_filters (bool): whether to use scalar absorption gains or filters
             absorption_coeffs (optional, list): uniform absorption coefficients (one for each room)
             common_decay_times (optional, list): list of common decay times (one for each room)
@@ -314,19 +317,22 @@ class DiffGFDNSinglePos(DiffGFDN):
         num_freq_pts = len(z)
         # this is of size Ndel x num_freq_points
         C = self.get_output_filter(
-            z) if self.use_svf_in_output else self.output_gains.tile(
-                1, num_freq_pts)
+            z) if self.use_svf_in_output else to_complex(
+                self.output_gains.expand(self.num_delay_lines, num_freq_pts))
 
-        # this is also of size Ndel x num_freq_points
-        B = to_complex(
-            self.input_gains.expand(self.num_delay_lines, num_freq_pts))
+        # this is also of size Ndel x 1
+        B = to_complex(self.input_gains)
+
         # get the output of the feedback loop, this is of size num_freq_points x Ndel x Ndel
         P = self.feedback_loop(z)
+
         # C.T @ P of size Ndel x num_freq_pts
         Htemp = torch.einsum('kn, knm -> km', C.permute(-1, 0), P)
         # C.T @ P @ B + d(z)
         direct_filter = x['target_early_response']
-        H = torch.mm(Htemp, B) + direct_filter
+
+        H = torch.einsum('ik, kj -> ij', Htemp, B).squeeze()
+        H += direct_filter
 
         # pass through a lowpass filter
         lowpass_response = self.lowpass_filter(z, self.lowpass_biquad)
@@ -416,6 +422,8 @@ class DiffGFDNSinglePos(DiffGFDN):
                           dim=-1).squeeze().cpu().numpy()
                 for n in range(self.num_groups)
             ]
+            param_np['output_gains'] = self.output_gains.squeeze().cpu().numpy(
+            )
         except Exception as e:
             logger.warning(e)
 

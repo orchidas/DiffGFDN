@@ -146,6 +146,7 @@ class edr_loss(nn.Module):
 
         target_edr = get_edr_from_stft(S_target)
         ach_edr = get_edr_from_stft(S_ach)
+
         # sum over all axes to get a scalar error
         return torch.div(torch.sum(torch.abs(target_edr - ach_edr)),
                          torch.sum(torch.abs(target_edr)))
@@ -157,7 +158,7 @@ def get_stft_torch(rir: torch.tensor,
                    hop_size: int,
                    nfft: int = 2**10,
                    window: Optional[torch.tensor] = None,
-                   freq_axis: int = 1,
+                   freq_axis: int = -2,
                    time_axis: int = -1,
                    erb_filters: Optional[torch.tensor] = None):
     """Get STFT from a time domain signal"""

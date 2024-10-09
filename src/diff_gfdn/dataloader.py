@@ -103,6 +103,7 @@ class RIRData:
         self.mixing_time_ms = mixing_time_ms
         self.room_dims = room_dims
         self.absorption_coeffs = absorption_coeffs
+        self.early_late_split()
 
     @property
     def num_freq_bins(self):
@@ -136,26 +137,26 @@ class RIRData:
         fade_out_win = window[win_len_samps // 2:]
 
         # truncate rir into early and late parts
-        self.early_rirs = self.rir[:mixing_time_samps]
-        self.late_rirs = self.rirs[mixing_time_samps:]
+        self.early_rir = self.rir[:mixing_time_samps]
+        self.late_rir = self.rir[mixing_time_samps:]
 
         # apply fade-in and fade-out windows
-        self.early_rirs[-win_len_samps // 2:] *= fade_out_win
-        self.late_rirs[:win_len_samps // 2] *= fade_in_win
+        self.early_rir[-win_len_samps // 2:] *= fade_out_win
+        self.late_rir[:win_len_samps // 2] *= fade_in_win
 
         # get frequency response
         self.late_rir_mag_response = rfft(
-            self.late_rirs,
+            self.late_rir,
             n=self.num_freq_bins,
         )
         self.early_rir_mag_response = rfft(
-            self.early_rirs,
+            self.early_rir,
             n=self.num_freq_bins,
         )
 
 
 class RoomDataset(ABC):
-    """Parent class for any room dataset"""
+    """Parent class for any room's RIR dataset measured over multiple source and receiver positions"""
 
     def __init__(self,
                  num_rooms: int,
@@ -458,13 +459,13 @@ class SingleRIRDataset(data.Dataset):
                  rir_data: RIRData,
                  new_sampling_radius: Optional[float] = None):
         """
-        RIR dataset containing magnitude response of RIRs around the unit circle,
+        RIR dataset containing magnitude response of a single RIR around the unit circle,
         for different receiver positions.
         During batch processing, each batch will contain all the frequency bins
         but different sets of receiver positions
         Args:
             device (str): cuda or cpu
-            rir_data (SingleRIRDataset): RIRDataset object containing RIRs and magnitude response
+            rir_data (SingleRIRDataset): RIRData object containing a single RIR and its magnitude response
             new_sampling_radius (float): to reduce time aliasing artifacts due to insufficient sampling
                                      in the frequency domain, sample points on a circle whose radius
                                      is larger than 1 
@@ -502,8 +503,8 @@ class SingleRIRDataset(data.Dataset):
     def __getitem__(self, idx: int):
         """Get data at a particular index"""
         return {
-            'input': self.z_values[idx],
-            'target_response': self.rir_mag_response[idx],
+            'z_values': self.z_values[idx],
+            'target_rir_response': self.rir_mag_response[idx],
             'target_early_response': self.early_rir_mag_response[idx],
             'target_late_response': self.late_rir_mag_response[idx]
         }
@@ -585,6 +586,7 @@ def get_dataloader(dataset: data.Dataset,
                    batch_size: int,
                    shuffle: bool = True,
                    device='cpu',
+                   drop_last: bool = True,
                    collate_fn: Optional = None) -> data.DataLoader:
     """Create torch dataloader form given dataset"""
     if collate_fn is None:
@@ -593,14 +595,14 @@ def get_dataloader(dataset: data.Dataset,
             batch_size=batch_size,
             shuffle=shuffle,
             generator=torch.Generator(device=device),
-            drop_last=True,
+            drop_last=drop_last,
         )
     else:
         dataloader = data.DataLoader(dataset,
                                      batch_size=batch_size,
                                      shuffle=shuffle,
                                      generator=torch.Generator(device=device),
-                                     drop_last=True,
+                                     drop_last=drop_last,
                                      collate_fn=custom_collate)
 
     return dataloader
@@ -620,7 +622,8 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
     """
     Get training and validation dataset
     Args:
-        room_data (RoomDataset): object of type RoomDataset
+        room_data (RoomDataset/RIRData): object of type RoomDataset (for training with a grid of measurements) or 
+                                         RIRData (for training with a single response)
         device (str): cuda (GPU) or cpu
         train_valid_split_ratio (float): ratio between training and validation set
         batch_size (int): number of samples in each batch size
@@ -629,30 +632,40 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
                                      in the frequency domain, sample points on a circle whose radius
                                      is larger than 1 
     """
-    collate_fn = None
     if isinstance(room_data, RoomDataset):
         dataset = MultiRIRDataset(device,
                                   room_data,
                                   new_sampling_radius=new_sampling_radius)
-        collate_fn = custom_collate
+        dataset = to_device(dataset, device)
+
+        # split data into training and validation set
+        train_set, valid_set = split_dataset(dataset, train_valid_split_ratio)
+
+        # dataloaders
+        train_loader = get_dataloader(train_set,
+                                      batch_size=batch_size,
+                                      shuffle=shuffle,
+                                      device=device,
+                                      drop_last=True,
+                                      collate_fn=custom_collate)
+
+        valid_loader = get_dataloader(valid_set,
+                                      batch_size=batch_size,
+                                      shuffle=shuffle,
+                                      device=device,
+                                      drop_last=True,
+                                      collate_fn=custom_collate)
+        return train_loader, valid_loader
 
     elif isinstance(room_data, RIRData):
-        dataset = SingleRIRDataset(device, room_data, new_sampling_radius)
+        dataset = SingleRIRDataset(device,
+                                   room_data,
+                                   new_sampling_radius=new_sampling_radius)
+        dataset = to_device(dataset, device)
 
-    dataset = to_device(dataset, device)  #pylint: disable=E0601
-    # split data into training and validation set
-    train_set, valid_set = split_dataset(dataset, train_valid_split_ratio)
-
-    # dataloaders
-    train_loader = get_dataloader(train_set,
-                                  batch_size=batch_size,
-                                  shuffle=shuffle,
-                                  device=device,
-                                  collate_fn=collate_fn)
-
-    valid_loader = get_dataloader(valid_set,
-                                  batch_size=batch_size,
-                                  shuffle=shuffle,
-                                  device=device,
-                                  collate_fn=collate_fn)
-    return train_loader, valid_loader
+        train_loader = get_dataloader(dataset,
+                                      batch_size=batch_size,
+                                      shuffle=shuffle,
+                                      device=device,
+                                      drop_last=False)
+        return train_loader

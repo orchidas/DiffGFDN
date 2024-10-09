@@ -9,7 +9,8 @@ import yaml
 from pydantic import BaseModel
 
 from diff_gfdn.config.config import DiffGFDNConfig
-from diff_gfdn.solver import run_training_var_receiver_pos
+from diff_gfdn.solver import (run_training_single_pos,
+                              run_training_var_receiver_pos)
 
 # pylint: disable=W1514
 
@@ -99,3 +100,5 @@ if __name__ == '__main__':
     # or for a single measurement
     if config_dict.ir_path is None:
         run_training_var_receiver_pos(config_dict)
+    else:
+        run_training_single_pos(config_dict)

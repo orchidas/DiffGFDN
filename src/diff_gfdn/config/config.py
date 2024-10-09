@@ -46,15 +46,15 @@ class OutputFilterConfig(BaseModel):
     # number of biquads in each filter
     # whether to use SVFs or scalar gains
     use_svfs: bool = True
-    # whether to use MLP to train the SVFs
-    use_mlp_to_train: bool = True
+    # by how much to constrain the pole radii when calculating output filter coeffs
+    compress_pole_factor: float = 1.0
+    # number of biquads in the cascade
     num_biquads_svf: int = 8
+    # used only if MLP is used for training the SVF filters
     num_hidden_layers: int = 1
     num_neurons_per_layer: int = 2**7
     num_fourier_features: int = 10
     encoding_type: FeatureEncodingType = FeatureEncodingType.SINE
-    # by how much to constrain the pole radii when calculating output filter coeffs
-    compress_pole_factor: float = 1.0
 
 
 class TrainerConfig(BaseModel):

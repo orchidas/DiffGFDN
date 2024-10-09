@@ -2,7 +2,6 @@ from typing import Dict, List, Tuple, Union
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 import torchaudio.functional as Faudio
 from numpy.typing import ArrayLike
 from torch import nn
@@ -66,24 +65,6 @@ def ms_to_samps(ms: Union[float, ArrayLike],
         return int(samp)
     else:
         return samp.astype(np.int32)
-
-
-def convolve_1d_full(x: torch.tensor, h: torch.tensor):
-    """Perform 1d convolution, like in numpy"""
-    # Convert 1D tensors to the required 3D shape: (batch_size, channels, length)
-    x = x.view(1, 1, -1)  # Shape: (1, 1, len(x))
-    h = h.view(1, 1, -1)  # Shape: (1, 1, len(h))
-
-    # Calculate padding size for 'full' convolution
-    padding = h.shape[-1] - 1  # Full convolution padding: kernel_size - 1
-
-    # Apply symmetric padding
-    x_padded = F.pad(x, (padding, padding))
-
-    # Perform 1D convolution
-    output = F.conv1d(x_padded, h)
-
-    return output.view(-1)  # Flatten to 1D tensor
 
 
 @torch.no_grad()

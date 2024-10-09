@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import List, Optional
 
@@ -8,9 +9,9 @@ from loguru import logger
 from scipy.io import savemat
 
 from .config.config import DiffGFDNConfig
-from .dataloader import ThreeRoomDataset, load_dataset
-from .model import DiffGFDN, DiffGFDNVarReceiverPos
-from .trainer import VarReceiverPosTrainer
+from .dataloader import RIRData, ThreeRoomDataset, load_dataset
+from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
+from .trainer import SinglePosTrainer, VarReceiverPosTrainer
 
 
 def save_parameters(net: DiffGFDN, dir_path: str, filename: str):
@@ -90,6 +91,8 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
     Args:
         config_dict (DiffGFDNTrainConfig): configuration parameters for training
     """
+    logger.info("Training over a grid of listener positions")
+
     # read the coupled room dataset
     room_data = ThreeRoomDataset(Path(config_dict.room_dataset_path).resolve())
 
@@ -122,10 +125,10 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
         config_dict.feedback_loop_config,
         config_dict.output_filter_config,
         config_dict.use_absorption_filters,
-        room_data.room_dims,
-        room_data.absorption_coeffs,
-        room_data.common_decay_times,
-        room_data.band_centre_hz,
+        room_dims=room_data.room_dims,
+        absorption_coeffs=room_data.absorption_coeffs,
+        common_decay_times=room_data.common_decay_times,
+        band_centre_hz=room_data.band_centre_hz,
     )
     # set default device
     torch.set_default_device(trainer_config.device)
@@ -157,3 +160,88 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
               save_plot=True,
               filename='test_loss_vs_position',
               xaxis_label='Position #')
+
+
+def run_training_single_pos(config_dict: DiffGFDNConfig):
+    """
+    Run the training for the differentiable GFDN for a single RIR measurement, and save its parameters
+    Args:
+        config_dict (DiffGFDNTrainConfig): configuration parameters for training
+    """
+    logger.info("Training for a single RIR measurement")
+
+    # read the coupled room dataset
+    room_data = ThreeRoomDataset(Path(config_dict.room_dataset_path).resolve())
+
+    # add number of groups to the config dictionary
+    config_dict = config_dict.copy(update={"num_groups": room_data.num_rooms})
+    assert config_dict.num_delay_lines % config_dict.num_groups == 0, "Delay lines must be \
+    divisible by number of groups in network"
+
+    if config_dict.sample_rate != room_data.sample_rate:
+        logger.warn("Config sample rate does not match data, alterning it")
+        config_dict.sample_rate = room_data.sample_rate
+
+    # create a dataset for a single measured IR in the room dataset
+    ir_path = Path(config_dict.ir_path).resolve()
+    match = re.search(r'ir_\([^)]+\)', config_dict.ir_path)
+    ir_name = match.group()
+    rir_data = RIRData(ir_path, room_data.band_centre_hz,
+                       room_data.common_decay_times)
+
+    # get the training config
+    trainer_config = config_dict.trainer_config
+
+    # prepare the training and validation data for DiffGFDN
+    if trainer_config.train_valid_split < 1.0:
+        logger.warning('There can be no data in the validation set!')
+        trainer_config = trainer_config.copy(update={"train_valid_split": 1.0})
+    if trainer_config.batch_size != rir_data.num_freq_bins:
+        logger.warning(
+            "Cannot train in batches here. Training on the full unit circle")
+        trainer_config = trainer_config.copy(
+            update={"batch_size": rir_data.num_freq_bins})
+
+    train_dataset = load_dataset(
+        rir_data,
+        trainer_config.device,
+        trainer_config.train_valid_split,
+        trainer_config.batch_size,
+        shuffle=False,
+        new_sampling_radius=trainer_config.new_sampling_radius)
+
+    # initialise the model
+    model = DiffGFDNSinglePos(
+        room_data.sample_rate,
+        room_data.num_rooms,
+        config_dict.delay_length_samps,
+        trainer_config.device,
+        config_dict.feedback_loop_config,
+        config_dict.output_filter_config,
+        config_dict.use_absorption_filters,
+        room_dims=room_data.room_dims,
+        absorption_coeffs=room_data.absorption_coeffs,
+        common_decay_times=room_data.common_decay_times,
+        band_centre_hz=room_data.band_centre_hz,
+    )
+    # set default device
+    torch.set_default_device(trainer_config.device)
+    # move model to device (cuda or cpu)
+    model = model.to(trainer_config.device)
+    # create the trainer object
+    trainer = SinglePosTrainer(model, trainer_config, filename=ir_name)
+
+    # save initial parameters and ir
+    save_parameters(trainer.net, trainer_config.train_dir,
+                    'parameters_init.mat')
+
+    # train the network
+    trainer.train(train_dataset)
+    # save final trained parameters
+    save_parameters(trainer.net, trainer_config.train_dir,
+                    'parameters_opt.mat')
+    # save loss evolution
+    save_loss(trainer.train_loss,
+              trainer_config.train_dir,
+              save_plot=True,
+              filename='training_loss_vs_epoch')
