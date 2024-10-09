@@ -195,7 +195,6 @@ def run_training_single_pos(config_dict: DiffGFDNConfig):
     # prepare the training and validation data for DiffGFDN
     if trainer_config.train_valid_split < 1.0:
         logger.warning('There can be no data in the validation set!')
-        trainer_config = trainer_config.copy(update={"train_valid_split": 1.0})
     if trainer_config.batch_size != rir_data.num_freq_bins:
         logger.warning(
             "Cannot train in batches here. Training on the full unit circle")

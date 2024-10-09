@@ -3,8 +3,8 @@ trainer_config:
   max_epochs: 10
   train_dir: '../output/single_rir_out_gains_random_coupling/'
   ir_dir: '../audio/single_rir_out_gains_random_coupling/'
+  # use_erb_edr_loss: True
 feedback_loop_config:
   coupling_matrix_type: 'random_matrix'
 output_filter_config:
   use_svfs: False
-  use_erb_edr_loss: True

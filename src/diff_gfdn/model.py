@@ -388,11 +388,11 @@ class DiffGFDNSinglePos(DiffGFDN):
         param_np['input_gains'] = self.input_gains.squeeze().cpu().numpy()
 
         try:
-            param_np[
-                'coupled_feedback_matrix'] = self.feedback_loop.get_coupled_feedback_matrix(
-                ).squeeze().cpu().numpy()
             if self.feedback_loop.coupling_matrix_type in (
                     CouplingMatrixType.SCALAR, CouplingMatrixType.FILTER):
+                param_np[
+                    'coupled_feedback_matrix'] = self.feedback_loop.get_coupled_feedback_matrix(
+                    ).squeeze().cpu().numpy()
                 param_np[
                     'individual_mixing_matrix'] = self.feedback_loop.M.squeeze(
                     ).cpu().numpy()
@@ -410,6 +410,10 @@ class DiffGFDNSinglePos(DiffGFDN):
                         'coupling_matrix'] = self.feedback_loop.fir_paraunitary(
                             unitary_matrix,
                             unit_vectors).squeeze().cpu().numpy()
+            else:
+                # any unitary matrix without any specific coupling structure
+                param_np[
+                    'coupled_feedback_matrix'] = self.feedback_loop.coupled_feedback_matrix
         except Exception:
             logger.warning('Parameter not initialised yet in FeedbackLoop!')
 

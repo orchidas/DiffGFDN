@@ -1,13 +1,46 @@
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
+import librosa
 import numpy as np
 import torch
 import torch.nn.functional as F
+from loguru import logger
+from scipy.fft import rfftfreq
 from torch import nn
 
-from .filters import calc_erb_filters
 from .gain_filters import SOSFilter
 from .utils import db
+
+
+def calc_erb_filters(
+    sample_rate: float,
+    nfft: int,
+    num_bands: int,
+    freq_lims_hz: Tuple = (63, 16e3)
+) -> Tuple[torch.tensor, torch.tensor]:
+    """
+    Calculate ERB filterbanks in the STFT domain
+    Args:
+        sample_rate (float): sampling frequency
+        nfft (int): number of points in 2 sided FFT
+        num_bands (int): number of ERB bands
+        freq_lims_hz (tuple): frequency limits for mel filter calculation
+    Returns:
+        Tuple[tensor, tensor]: The mel filterbank and the corresponding mel frequencies in Hz
+    """
+    erb_filters = librosa.filters.mel(sr=sample_rate,
+                                      n_fft=nfft,
+                                      n_mels=num_bands,
+                                      fmin=freq_lims_hz[0],
+                                      fmax=freq_lims_hz[1])
+    erb_freqs = torch.tensor(librosa.mel_frequencies(n_mels=num_bands,
+                                                     fmin=freq_lims_hz[0],
+                                                     fmax=freq_lims_hz[1]),
+                             dtype=torch.float64)
+
+    # Convert erb_filters to torch tensor
+    erb_filters = torch.tensor(erb_filters, dtype=torch.float64)
+    return erb_filters, erb_freqs
 
 
 class reg_loss(nn.Module):
@@ -80,19 +113,25 @@ class edr_loss(nn.Module):
     def __init__(
         self,
         sample_rate: float,
-        win_size: int = 2**9,
-        hop_size: int = 2**8,
+        win_size: int = 2**10,
+        hop_size: int = 2**9,
         reduced_pole_radius: Optional[float] = None,
         use_erb_grouping: bool = False,
+        use_weight_fn: bool = False,
+        time_axis: int = -1,
+        freq_axis: int = -2,
     ):
         """
         Args:
             sample_rate: sampling rate of the RIRs
             win_size (int): window size for the STFT (also the FFT size)
             hop_size (int): hop size for the STFT (must give COLA)
-            erb_grouping (bool): whether to group in ERB bands
             reduced_pole_radius (optional, float): if the sampling was done on a radius larger than the unit circle,
                                                    we need to apply an exponential envelope to the resulting IR
+            use_erb_grouping (bool): whether to group EDR in ERB bands before calculating loss
+            use_weight_fn (bool): whether to use frequency-dependent weighting function, 
+                                  which weights the lower frequency loss more
+
         """
         super().__init__()
         self.sample_rate = sample_rate
@@ -100,12 +139,15 @@ class edr_loss(nn.Module):
         self.hop_size = hop_size
         self.use_erb_grouping = use_erb_grouping
         self.reduced_pole_radius = reduced_pole_radius
+        self.time_axis = time_axis
+        self.freq_axis = freq_axis
         if self.use_erb_grouping:
-            self.erb_filters = calc_erb_filters(sample_rate,
-                                                nfft=win_size,
-                                                num_bands=50)
+            self.erb_filters, self.freqs_hz = calc_erb_filters(sample_rate,
+                                                               nfft=win_size,
+                                                               num_bands=2**6)
         else:
             self.erb_filters = None
+            self.freqs_hz = rfftfreq(self.win_size, d=1.0 / self.sample_rate)
 
     def forward(self, target_response: torch.tensor,
                 achieved_response: torch.tensor) -> torch.tensor:
@@ -135,6 +177,8 @@ class edr_loss(nn.Module):
                                         self.win_size,
                                         self.hop_size,
                                         nfft,
+                                        freq_axis=self.freq_axis,
+                                        time_axis=self.time_axis,
                                         erb_filters=self.erb_filters)
 
         S_ach, _, _ = get_stft_torch(achieved_rir,
@@ -142,14 +186,32 @@ class edr_loss(nn.Module):
                                      self.win_size,
                                      self.hop_size,
                                      nfft,
+                                     freq_axis=self.freq_axis,
+                                     time_axis=self.time_axis,
                                      erb_filters=self.erb_filters)
 
         target_edr = get_edr_from_stft(S_target)
         ach_edr = get_edr_from_stft(S_ach)
 
-        # sum over all axes to get a scalar error
-        return torch.div(torch.sum(torch.abs(target_edr - ach_edr)),
-                         torch.sum(torch.abs(target_edr)))
+        # according to Mezza et al, DAFx-24
+
+        # frequency-based loss, of size (B, N (num_freq_samples))
+        # sum over time axis
+        freq_loss = torch.sum(torch.abs(target_edr - ach_edr),
+                              dim=self.time_axis)
+        logger.info(f'Frequencies: {self.freqs_hz}, loss value: {freq_loss}')
+
+        # sum over frequency and time axes and normalise to get a scalar error
+        if target_edr.ndim == 3:
+            loss_per_item = torch.div(
+                torch.sum(freq_loss, dim=-1),
+                torch.sum(torch.abs(target_edr),
+                          dim=[self.time_axis, self.freq_axis]))
+            # additionally sum over all items in batch
+            return torch.sum(loss_per_item)
+        else:
+            return torch.div(torch.sum(freq_loss),
+                             torch.sum(torch.abs(target_edr)))
 
 
 def get_stft_torch(rir: torch.tensor,
@@ -195,11 +257,14 @@ def get_stft_torch(rir: torch.tensor,
     assert len(freqs) == S.shape[freq_axis]
     assert len(time_frames) == S.shape[time_axis]
 
+    # apply ERB filters to the STFT
     if erb_filters is not None:
         if S.ndim == 2:
-            S = torch.matmul(erb_filters, torch.abs(S))
+            S = torch.einsum('nk, kt -> nt',
+                             erb_filters.to(torch.abs(S).dtype), torch.abs(S))
         else:
-            S = torch.einsum('nk, bkt -> bnt', erb_filters, torch.abs(S))
+            S = torch.einsum('nk, bkt -> bnt',
+                             erb_filters.to(torch.abs(S).dtype), torch.abs(S))
 
     return S, freqs, time_frames
 

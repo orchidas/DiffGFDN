@@ -1,11 +1,13 @@
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
-from numpy.typing import NDArray
+import torch
+from numpy.typing import ArrayLike, NDArray
 from scipy.fft import rfftfreq
 from scipy.signal import freqz
 
+from .losses import get_edr_from_stft, get_stft_torch
 from .utils import db
 
 
@@ -131,3 +133,66 @@ def plot_polynomial_matrix_magnitude_response(PolyMat: NDArray,
     if title is not None:
         fig.suptitle(title)
     plt.show()
+
+
+def plot_spectrogram(S: torch.tensor,
+                     freqs: ArrayLike,
+                     time_frames: ArrayLike,
+                     title: Optional[str] = None,
+                     save_path: Optional[str] = None):
+    """
+    Plot spectrogram from STFT data
+    Args:
+        S (torch.tensor): STFT data (2D) tensor, of size (N x T)
+        freqs (ArrayLike): frequency bins in Hz of length N
+        time_frames (ArrayLike): time indices in s of length T
+        title (optional, str): title of plot
+        save_path (optional, str): path used for saving file
+    """
+    plt.figure()
+    plt.imshow(db(np.abs(S)).cpu().detach().numpy(),
+               aspect='auto',
+               origin='lower',
+               extent=[
+                   time_frames.min(),
+                   time_frames.max(),
+                   freqs.min(),
+                   freqs.max()
+               ])
+    plt.xlabel('Time (s)')
+    plt.ylabel('Frequency (Hz)')
+    cbar = plt.colorbar()
+    cbar.set_label('dB')
+    if title is not None:
+        plt.title(title)
+    plt.savefig(save_path)
+    plt.show()
+
+
+def plot_edr(
+    h: torch.tensor,
+    fs: float,
+    win_size: int = 2**9,
+    hop_size: int = 2**8,
+    title: Optional[str] = None,
+    save_path: Optional[str] = None
+) -> Tuple[torch.tensor, ArrayLike, ArrayLike]:
+    """
+    Plot EDR of the RIR h
+    Args:
+        h (torch.tensor): time domain RIR
+        fs (float): sampling frequency
+        win_size (int): length of window used for STFT
+        hop_size (int): hop size used for STFT
+        title (optional, str): title of plot
+        save_path (optional, str): path where to save plot
+    """
+    S, freqs, time_frames = get_stft_torch(h,
+                                           fs,
+                                           win_size=win_size,
+                                           hop_size=hop_size,
+                                           nfft=win_size,
+                                           freq_axis=0)
+    edr = get_edr_from_stft(S)
+    plot_spectrogram(edr, freqs, time_frames, title, save_path=save_path)
+    return edr

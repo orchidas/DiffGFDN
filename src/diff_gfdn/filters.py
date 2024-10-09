@@ -1,8 +1,6 @@
 from typing import List, Optional, Tuple
 
-import librosa
 import numpy as np
-import torch
 from numpy.typing import ArrayLike, NDArray
 from scipy.fft import fft, fftfreq, ifft, irfft, rfftfreq
 from scipy.interpolate import interp1d, splev, splrep
@@ -317,7 +315,7 @@ def decay_times_to_gain_filters(band_centre_hz: List,
             band_centre_hz,
             fs,
             n_fft=num_freq_bins,
-            cutoff=(100, 16e3),
+            cutoff=(20, 16e3),
             rolloff_dc_db=-60,
             return_one_sided=True)
 
@@ -333,23 +331,3 @@ def decay_times_to_gain_filters(band_centre_hz: List,
                                  num_coeffs, den_coeffs, fs,
                                  interp_delay_line_filter, num_freq_bins)
     return np.stack((num_coeffs, den_coeffs), axis=-1)
-
-
-def calc_erb_filters(sample_rate: float, nfft: int,
-                     num_bands: int) -> torch.tensor:
-    """
-    Calculate ERB filterbanks in the STFT domain
-    Args:
-        sample_rate (float): sampling frequency
-        nfft (int): number of points in 2 sided FFT
-        num_bands (int): number of ERB bands
-    """
-    erb_filters = librosa.filters.mel(sr=sample_rate,
-                                      n_fft=nfft,
-                                      n_mels=num_bands,
-                                      fmin=63,
-                                      fmax=16000)
-
-    # Convert erb_filters to torch tensor
-    erb_filters = torch.tensor(erb_filters, dtype=torch.float64)
-    return erb_filters

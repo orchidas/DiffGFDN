@@ -3,7 +3,8 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import sympy as sp
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import (BaseModel, ConfigDict, Field, computed_field,
+                      model_validator)
 
 from ..utils import ms_to_samps
 
@@ -146,3 +147,6 @@ class DiffGFDNConfig(BaseModel):
                                        sp.nextprime(delay_range_samps[1])],
                                  dtype=np.int32).tolist()
         return delay_lengths
+
+    # forbid extra fields - adding this to help prevent errors in config file creation
+    model_config = ConfigDict(extra="forbid")
