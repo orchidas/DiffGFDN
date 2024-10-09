@@ -1,0 +1,10 @@
+ir_path: '../audio/true/ir_(0.20, 2.60, 1.50).wav'
+trainer_config:
+  max_epochs: 20
+  train_dir: '../output/single_rir_out_gains_scalar_coupling/'
+  ir_dir: '../audio/single_rir_out_gains_scalar_coupling/'
+feedback_loop_config:
+  coupling_matrix_type: 'scalar_matrix'
+output_filter_config:
+  use_svfs: False
+  use_erb_edr_loss: True
