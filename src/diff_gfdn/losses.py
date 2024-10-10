@@ -8,7 +8,7 @@ from loguru import logger
 from scipy.fft import rfftfreq
 from torch import nn
 
-from .gain_filters import SOSFilter
+from .gain_filters import BiquadCascade, SOSFilter
 from .utils import db
 
 
@@ -50,16 +50,15 @@ class reg_loss(nn.Module):
     IEEE TASLP 2022
     """
 
-    def __init__(self, num_time_samps: int, num_delay_lines: int,
-                 num_biquads: int):
+    def __init__(self, num_time_samps: int, num_groups: int, num_biquads: int):
         """
         Args:
             num_time_samps (int): length of the IR of each output filter
-            num_delay_lines (int): number of delay lines in the GFDN
+            num_groups (int): number of groups in the GFDN
             num_biquads (int): number of biquads in each output filter
         """
         super().__init__()
-        self.num_delay_lines = num_delay_lines
+        self.num_groups = num_groups
         self.num_biquads = num_biquads
         # length of impulse response
         self.num_time_samps = num_time_samps
@@ -69,6 +68,26 @@ class reg_loss(nn.Module):
         self.input_signal = torch.zeros(num_time_samps)
         self.input_signal[0] = 1.0
 
+    @staticmethod
+    def is_list_of_lists(obj: List) -> bool:
+        """Check if object is a list of lists"""
+        if isinstance(obj, list):  # Check if it's a list
+            return all(isinstance(i, list)
+                       for i in obj)  # Check if all elements are lists
+        return False
+
+    def calculate_gamma(self, cur_biquad_cascade: BiquadCascade):
+        """Calculate the ratio of late energy to early energy"""
+        cur_output_signal = self.sos_filter.filter(self.input_signal,
+                                                   cur_biquad_cascade)
+        # ratio of the late energy to the early energy
+        # if gamma is large, then IR is decaying slowly
+        # if gamma is small, then IR is decaying fast
+        return torch.div(
+            torch.sum(
+                torch.abs(cur_output_signal[self.num_time_samps - self.N0:])),
+            torch.sum(torch.abs(cur_output_signal[:self.N0])))
+
     def forward(self, output_biquad_cascade: List):
         """
         Apply softmax to the rate of decrease of the filter
@@ -76,35 +95,38 @@ class reg_loss(nn.Module):
             output_biquad_cascade (List): B x Ndel biquad cascade filters
         """
         with torch.autograd.set_detect_anomaly(True):
-            batch_size = len(output_biquad_cascade)
+
             gamma_list = []
+            has_batch = self.is_list_of_lists(output_biquad_cascade)
+            if has_batch:
+                batch_size = len(output_biquad_cascade)
 
-            for b in range(batch_size):
-                for n in range(self.num_delay_lines):
-                    cur_biquad_cascade = output_biquad_cascade[b][n]
+                for b in range(batch_size):
+                    for n in range(self.num_groups):
+                        cur_biquad_cascade = output_biquad_cascade[b][n]
+                        gamma_list.append(
+                            self.calculate_gamma(cur_biquad_cascade))
 
-                    cur_output_signal = self.sos_filter.filter(
-                        self.input_signal, cur_biquad_cascade)
+                # penalise long decay times more (reduce pole radii)
+                # sum along delay lines
+                gamma = torch.stack(gamma_list).view(batch_size,
+                                                     self.num_groups)
+                loss = torch.div(torch.sum(gamma * torch.exp(gamma), 1),
+                                 torch.sum(torch.exp(gamma), 1))
+                # sum along batch size
+                return torch.sum(loss)
+            else:
+                for n in range(self.num_groups):
+                    cur_biquad_cascade = output_biquad_cascade[n]
 
-                    # ratio of the late energy to the early energy
-                    # if gamma is large, then IR is decaying slowly
-                    # if gamma is small, then IR is decaying fast
-                    gamma_list.append(
-                        torch.div(
-                            torch.sum(
-                                torch.abs(
-                                    cur_output_signal[self.num_time_samps -
-                                                      self.N0:])),
-                            torch.sum(torch.abs(cur_output_signal[:self.N0]))))
+                    gamma_list.append(self.calculate_gamma(cur_biquad_cascade))
 
-            # penalise long decay times more (reduce pole radii)
-            # sum along delay lines
-            gamma = torch.stack(gamma_list).view(batch_size,
-                                                 self.num_delay_lines)
-            loss = torch.div(torch.sum(gamma * torch.exp(gamma), 1),
-                             torch.sum(torch.exp(gamma), 1))
-            # sum along batch size
-            return torch.sum(loss)
+                # penalise long decay times more (reduce pole radii)
+                # sum along delay lines
+                gamma = torch.stack(gamma_list).view(self.num_groups)
+                loss = torch.div(torch.sum(gamma * torch.exp(gamma)),
+                                 torch.sum(torch.exp(gamma)))
+                return loss
 
 
 class edr_loss(nn.Module):
@@ -117,7 +139,6 @@ class edr_loss(nn.Module):
         hop_size: int = 2**9,
         reduced_pole_radius: Optional[float] = None,
         use_erb_grouping: bool = False,
-        use_weight_fn: bool = False,
         time_axis: int = -1,
         freq_axis: int = -2,
     ):
@@ -199,7 +220,7 @@ class edr_loss(nn.Module):
         # sum over time axis
         freq_loss = torch.sum(torch.abs(target_edr - ach_edr),
                               dim=self.time_axis)
-        logger.info(f'Frequencies: {self.freqs_hz}, loss value: {freq_loss}')
+        logger.info(f'Frequencies: {self.freqs_hz}, \nLoss value: {freq_loss}')
 
         # sum over frequency and time axes and normalise to get a scalar error
         if target_edr.ndim == 3:

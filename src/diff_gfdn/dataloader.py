@@ -71,6 +71,7 @@ class RIRData:
                  wav_path: Path,
                  band_centre_hz: ArrayLike,
                  common_decay_times: List,
+                 amplitudes: Optional[List] = None,
                  room_dims: Optional[List] = None,
                  absorption_coeffs: Optional[List] = None,
                  mixing_time_ms: float = 20.0):
@@ -81,6 +82,8 @@ class RIRData:
             wav_path (Path): path to the RIR
             band_centre_hz (ArrayLike): octave band centres where common T60s are calculated
             common_decay_times (List[ArrayLike]): common decay times for the different rooms
+            amplitudes (List[ArrayLike]): the amplitudes of the common slopes, unique to the receiver position,
+                                          same size as common_decay times
             room_dims (optional, List): l,w,h for each room in coupled space
             absorption_coeffs (optional, List): uniform absorption coefficients for each room
             mixing_time_ms (float): time when early reflections morph into late reverb
@@ -100,6 +103,7 @@ class RIRData:
         self.sample_rate = sample_rate
         self.common_decay_times = common_decay_times
         self.band_centre_hz = band_centre_hz
+        self.amplitudes = amplitudes
         self.mixing_time_ms = mixing_time_ms
         self.room_dims = room_dims
         self.absorption_coeffs = absorption_coeffs
@@ -166,6 +170,7 @@ class RoomDataset(ABC):
                  rirs: NDArray,
                  band_centre_hz: ArrayLike,
                  common_decay_times: List,
+                 amplitudes: NDArray,
                  room_dims: List,
                  room_start_coord: List,
                  absorption_coeffs: List,
@@ -179,6 +184,8 @@ class RoomDataset(ABC):
             rirs (NDArray): omni-rirs at all source and receiver positions
             band_centre_hz (ArrayLike): octave band centres where common T60s are calculated
             common_decay_times (List[ArrayLike]): common decay times for the different rooms
+            amplitudes (NDArray): the amplitudes of the common slopes of size 
+                                  (num_freq_bands x  num_rooms x num_rec_pos)
             room_dims (List): l,w,h for each room in coupled space
             room_start_coord (List): coordinates of the room's starting vertex (first room starts at origin)
             absorption_coeffs (List): uniform absorption coefficients for each room
@@ -191,6 +198,7 @@ class RoomDataset(ABC):
         self.rirs = rirs
         self.band_centre_hz = band_centre_hz
         self.common_decay_times = common_decay_times
+        self.amplitudes = amplitudes
         self.num_rec = self.receiver_position.shape[0]
         self.num_src = self.source_position.shape[0]
         self.rir_length = self.rirs.shape[-1]
@@ -347,6 +355,7 @@ class ThreeRoomDataset(RoomDataset):
                 band_centre_hz = srir_mat['band_centre_hz']
                 common_decay_times = np.asarray(
                     np.squeeze(srir_mat['common_decay_times'], axis=1))
+                amplitudes = np.asarray(srir_mat['amplitudes'])
 
         except Exception as exc:
             raise FileNotFoundError(
@@ -361,8 +370,8 @@ class ThreeRoomDataset(RoomDataset):
         room_start_coord = [(0, 0, 0), (4.0, 2.0, 0), (6.0, 5.0, 0)]
         super().__init__(num_rooms, sample_rate, source_position,
                          receiver_position, rirs, band_centre_hz,
-                         common_decay_times, room_dims, room_start_coord,
-                         absorption_coeffs)
+                         common_decay_times, amplitudes, room_dims,
+                         room_start_coord, absorption_coeffs)
         # how far apart the receivers are placed
         mic_spacing_m = 0.3
         self.mesh_3D = super().get_3D_meshgrid(mic_spacing_m)

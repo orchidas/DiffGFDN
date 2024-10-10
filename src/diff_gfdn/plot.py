@@ -139,7 +139,8 @@ def plot_spectrogram(S: torch.tensor,
                      freqs: ArrayLike,
                      time_frames: ArrayLike,
                      title: Optional[str] = None,
-                     save_path: Optional[str] = None):
+                     save_path: Optional[str] = None,
+                     log_freq_axis: bool = False):
     """
     Plot spectrogram from STFT data
     Args:
@@ -148,6 +149,8 @@ def plot_spectrogram(S: torch.tensor,
         time_frames (ArrayLike): time indices in s of length T
         title (optional, str): title of plot
         save_path (optional, str): path used for saving file
+        log_freq_axis (bool) : whether the frequency axis should be in log scale
+
     """
     plt.figure()
     plt.imshow(db(np.abs(S)).cpu().detach().numpy(),
@@ -161,6 +164,10 @@ def plot_spectrogram(S: torch.tensor,
                ])
     plt.xlabel('Time (s)')
     plt.ylabel('Frequency (Hz)')
+    plt.ylim([20, max(freqs)])
+
+    if log_freq_axis:
+        plt.yscale('log')
     cbar = plt.colorbar()
     cbar.set_label('dB')
     if title is not None:
@@ -175,7 +182,8 @@ def plot_edr(
     win_size: int = 2**9,
     hop_size: int = 2**8,
     title: Optional[str] = None,
-    save_path: Optional[str] = None
+    save_path: Optional[str] = None,
+    log_freq_axis: bool = False,
 ) -> Tuple[torch.tensor, ArrayLike, ArrayLike]:
     """
     Plot EDR of the RIR h
@@ -186,6 +194,7 @@ def plot_edr(
         hop_size (int): hop size used for STFT
         title (optional, str): title of plot
         save_path (optional, str): path where to save plot
+        log_freq_axis (bool) : whether the frequency axis should be in log scale
     """
     S, freqs, time_frames = get_stft_torch(h,
                                            fs,
@@ -194,5 +203,10 @@ def plot_edr(
                                            nfft=win_size,
                                            freq_axis=0)
     edr = get_edr_from_stft(S)
-    plot_spectrogram(edr, freqs, time_frames, title, save_path=save_path)
+    plot_spectrogram(edr,
+                     freqs,
+                     time_frames,
+                     title,
+                     save_path=save_path,
+                     log_freq_axis=log_freq_axis)
     return edr

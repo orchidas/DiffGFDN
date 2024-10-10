@@ -3,7 +3,6 @@ trainer_config:
   max_epochs: 10
   train_dir: '../output/single_rir_out_gains_filter_coupling/'
   ir_dir: '../audio/single_rir_out_gains_filter_coupling/'
-  use_erb_edr_loss: True
 feedback_loop_config:
   coupling_matrix_type: 'filter_matrix'
   pu_matrix_order: 32

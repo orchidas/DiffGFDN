@@ -26,12 +26,14 @@ file_path = Path(
 filename = 'cs_analysis_results_omni'
 freqs = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
 common_t60 = []
+amplitudes = []
 
 for i in range(len(freqs)):
     full_path = file_path / f'{filename}_{freqs[i]}.mat'
     with h5py.File(full_path.resolve(), 'r') as mat_file:
         data = mat_file['analysisResults']
         common_t60.append(data['commonDecayTimes'][:])
+        amplitudes.append(data['aVals'][:])
 
 # Convert the list to a NumPy array if needed
 data_dict = {
@@ -41,6 +43,7 @@ data_dict = {
     'srirs': srirs,
     'band_centre_hz': freqs,
     'common_decay_times': common_t60,
+    'amplitudes': amplitudes,
 }
 
 # Specify the output pickle file path

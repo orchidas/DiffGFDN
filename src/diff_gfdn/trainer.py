@@ -48,8 +48,7 @@ class Trainer:
                          use_erb_grouping=trainer_config.use_erb_edr_loss),
                 reg_loss(
                     ms_to_samps(trainer_config.output_filt_ir_len_ms,
-                                self.net.sample_rate),
-                    self.net.num_delay_lines,
+                                self.net.sample_rate), self.net.num_groups,
                     self.net.output_filters.num_biquads)
             ]
         else:
@@ -233,6 +232,10 @@ class SinglePosTrainer(Trainer):
         # a train-valid split. This is because we need the ENTIRE sampled unit circle
         # response to calculate the loss function
 
+        # normalize input and output gains based on energy of FDN's IR
+        data = next(iter(train_dataset))
+        self.normalize(data)
+
         self.train_loss = []
         st = time.time()  # start time
         for epoch in trange(self.max_epochs, desc='Training'):
@@ -275,14 +278,26 @@ class SinglePosTrainer(Trainer):
         self.optimizer.zero_grad()
         H = self.net(data)
         if self.use_reg_loss:
-            loss = self.criterion[0](
-                data['target_rir_response'], H) + self.criterion[1](
-                    self.net.output_filters.biquad_cascade)
+            loss = self.criterion[0](data['target_rir_response'],
+                                     H) + self.criterion[1](
+                                         self.net.biquad_cascade)
         else:
             loss = self.criterion(data['target_rir_response'], H)
         loss.backward()
         self.optimizer.step()
         return loss.item()
+
+    @torch.no_grad()
+    def normalize(self, data: Dict):
+        # average enery normalization
+        H, _ = get_response(data, self.net)
+        energyH = torch.sum(torch.pow(torch.abs(H), 2)) / torch.tensor(
+            H.size(0))
+
+        # apply energy normalization on input and output gains only
+        for name, prm in self.net.named_parameters():
+            if name in ('input_gains', 'output_gains'):
+                prm.data.copy_(torch.div(prm.data, torch.pow(energyH, 1 / 4)))
 
     @torch.no_grad()
     def save_ir(self,

@@ -14,7 +14,7 @@ from .gain_filters import (SVF, BiquadCascade, SoftPlus, SOSFilter,
                            SVF_from_MLP, TanSigmoid)
 from .utils import absorption_to_gain_per_sample, to_complex
 
-# pylint: disable=W0718
+# pylint: disable=W0718, E1136, E1137
 
 
 class DiffGFDN(nn.Module):
@@ -294,13 +294,15 @@ class DiffGFDNSinglePos(DiffGFDN):
         self.input_gains = nn.Parameter(
             torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
 
+        self.compress_pole_factor = output_filter_config.compress_pole_factor
+
         # check if the output gains are filters or scalars
         self.use_svf_in_output = output_filter_config.use_svfs
         if self.use_svf_in_output:
-            self.num_biquads = output_filter_config.num_biquads
+            self.num_biquads = output_filter_config.num_biquads_svf
             self.output_svf_params = nn.Parameter(
                 2 * torch.randn(self.num_groups, self.num_biquads, 5) - 1)
-            self.output_filter = SOSFilter(self.num_biquads)
+            self.output_filters = SOSFilter(self.num_biquads)
             self.soft_plus = SoftPlus()
             self.tan_sigmoid = TanSigmoid()
         else:
@@ -347,10 +349,16 @@ class DiffGFDNSinglePos(DiffGFDN):
                            dtype=torch.complex64)
 
         reshape_size = (self.num_groups, self.num_biquads)
-        self.output_svf_params[..., 0] = self.tan_sigmoid(
-            self.output_svf_params[..., 0].view(-1)).view(reshape_size)
-        self.svf_params[..., 1] = self.soft_plus(
-            self.output_svf_params[..., 1].view(-1)).view(reshape_size)
+        # gradient computation is an issue if we view in place,
+        # best to clone this
+        output_svf_params = self.output_svf_params.clone()
+
+        flattened_svf_freqs = output_svf_params[..., 0].view(-1)
+        flattened_svf_res = output_svf_params[..., 1].view(-1)
+        output_svf_params[..., 0] = self.tan_sigmoid(flattened_svf_freqs).view(
+            reshape_size)
+        output_svf_params[..., 1] = self.soft_plus(flattened_svf_res).view(
+            reshape_size)
 
         # initialise empty filters
         self.biquad_cascade = [
@@ -361,7 +369,7 @@ class DiffGFDNSinglePos(DiffGFDN):
 
         # fill the empty filters
         for i in range(self.num_groups):
-            svf_params_del_line = self.svf_params[i, :]
+            svf_params_del_line = output_svf_params[i, :]
             svf_cascade = [
                 SVF(svf_params_del_line[k, 0], svf_params_del_line[k, 1],
                     svf_params_del_line[k, 2], svf_params_del_line[k, 3],
@@ -373,7 +381,7 @@ class DiffGFDNSinglePos(DiffGFDN):
             # all delay lines in a group have the same output filter
             Hout[i * self.num_delay_lines_per_group:(i + 1) *
                  self.num_delay_lines_per_group, :] = torch.tile(
-                     self.output_filter(z_values, self.biquad_cascade[i]),
+                     self.output_filters(z_values, self.biquad_cascade[i]),
                      (self.num_delay_lines_per_group, 1))
 
         return Hout
@@ -418,6 +426,13 @@ class DiffGFDNSinglePos(DiffGFDN):
             logger.warning('Parameter not initialised yet in FeedbackLoop!')
 
         try:
+            self.output_svf_params[..., 0] = self.tan_sigmoid(
+                self.output_svf_params[..., 0].view(-1)).view(
+                    self.num_groups, self.num_biquads)
+            self.output_svf_params[..., 1] = self.soft_plus(
+                self.output_svf_params[..., 1].view(-1)).view(
+                    self.num_groups, self.num_biquads)
+
             param_np['output_svf_params'] = self.output_svf_params.squeeze(
             ).cpu().numpy()
             param_np['output_biquad_coeffs'] = [

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 from loguru import logger
 from scipy.io import savemat
@@ -186,8 +187,22 @@ def run_training_single_pos(config_dict: DiffGFDNConfig):
     ir_path = Path(config_dict.ir_path).resolve()
     match = re.search(r'ir_\([^)]+\)', config_dict.ir_path)
     ir_name = match.group()
-    rir_data = RIRData(ir_path, room_data.band_centre_hz,
-                       room_data.common_decay_times)
+
+    # find receiver position from string
+    match = re.search(r'ir_\(([^,]+), ([^,]+), ([^,]+)\)', ir_name)
+    # Convert the extracted values to floats
+    x, y, z = map(float, match.groups())
+    rec_pos = np.array([x, y, z])
+
+    # find amplitudes corresponding to the receiver position
+    rec_pos_idx = np.where(
+        np.all(room_data.receiver_position == rec_pos, axis=1))[0]
+    amplitudes = room_data.amplitudes[..., rec_pos_idx]
+
+    rir_data = RIRData(ir_path,
+                       room_data.band_centre_hz,
+                       room_data.common_decay_times,
+                       amplitudes=amplitudes)
 
     # get the training config
     trainer_config = config_dict.trainer_config
