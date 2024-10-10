@@ -1,9 +1,9 @@
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import numpy as np
+from pydantic import BaseModel, computed_field, Field, model_validator
 import sympy as sp
-from pydantic import BaseModel, Field, computed_field, model_validator
 
 from ..utils import ms_to_samps
 
@@ -71,10 +71,23 @@ class TrainerConfig(BaseModel):
     train_dir: str = "../output"
     # where to save the IRs
     ir_dir: str = "../audio"
-    # by how much to reduce the radius of each pole during frequency sampling
-    reduced_pole_radius: Optional[float] = None
     # attenuation in dB that the anti aliasing envelope should be reduced by
-    alias_attenuation_db: Optional[int] = None 
+    alias_attenuation_db: Optional[int] = None
+    # by how much to reduce the radius of each pole during frequency sampling
+    reduced_pole_radius: float = Field(
+        default=1.0)  # Default value, to be set dynamically
+
+    # Validator for the 'reduced_pole_radius' field
+    @model_validator(mode='after')
+    @classmethod
+    def calculate_reduced_pole_radius(cls, model):
+        """Set reduced pole radius based on alias_attenuation_db"""
+        alias_attenuation_db = model.alias_attenuation_db
+        num_freq_bins = model.num_freq_bins
+        if alias_attenuation_db is not None and num_freq_bins is not None:
+            model.reduced_pole_radius = 10**(-abs(alias_attenuation_db) /
+                                             num_freq_bins / 20)
+        return model
 
 
 class DiffGFDNConfig(BaseModel):
@@ -96,17 +109,6 @@ class DiffGFDNConfig(BaseModel):
     feedback_loop_config: FeedbackLoopConfig = FeedbackLoopConfig()
     # number of biquads in SVF
     output_filter_config: OutputFilterConfig = OutputFilterConfig()
-    # Validator to ensure the nested TrainerConfig is validated,
-    # otherwise new sampling radius won't be set
-    @model_validator(mode='before')
-    @classmethod
-    def validate_trainer_config(cls, values: Dict):
-        """Make sure all fields of TrainerConfig are validated"""
-        trainer_config = values.get('trainer_config')
-        # Explicitly convert to TrainerConfig
-        if isinstance(trainer_config, dict):
-            values['trainer_config'] = TrainerConfig(**trainer_config)
-        return values
 
     @computed_field
     @property

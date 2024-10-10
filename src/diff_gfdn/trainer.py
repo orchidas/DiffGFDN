@@ -1,12 +1,12 @@
 import os
-import time
 from pathlib import Path
+import time
 from typing import Dict, Optional
 
-import torch
-import torchaudio
 from loguru import logger
+import torch
 from torch.utils.data import DataLoader
+import torchaudio
 from tqdm import trange
 
 from .config.config import TrainerConfig
@@ -28,11 +28,7 @@ class Trainer:
         self.train_dir = Path(trainer_config.train_dir).resolve()
         self.ir_dir = Path(trainer_config.ir_dir).resolve()
         self.use_reg_loss = trainer_config.use_reg_loss
-        # if the sampling was done outside the unit circle, we need to compensate for that
-        if trainer_config.alias_attenuation_db is not None:
-            self.reduced_pole_radius = 10 ** (- abs(trainer_config.alias_attenuation_db) / trainer_config.num_freq_bins / 20 )
-        else:
-            self.reduced_pole_radius = trainer_config.reduced_pole_radius
+        self.reduced_pole_radius = trainer_config.reduced_pole_radius
 
         if not os.path.exists(self.ir_dir):
             os.makedirs(self.ir_dir)
@@ -55,8 +51,9 @@ class Trainer:
                     self.net.output_filters.num_biquads)
             ]
         else:
-            self.criterion = edr_loss(self.net.sample_rate,
-                                      reduced_pole_radius=self.reduced_pole_radius)
+            self.criterion = edr_loss(
+                self.net.sample_rate,
+                reduced_pole_radius=self.reduced_pole_radius)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=10,
                                                          gamma=0.1)
@@ -192,7 +189,8 @@ class Trainer:
 
         # undo sampling outside the unit circle by multiplying IR with an exponentiated envelope
         if reduced_pole_radius is not None:
-            h *= torch.pow(1.0/reduced_pole_radius, torch.arange(0, h.shape[-1]))
+            h *= torch.pow(1.0 / reduced_pole_radius,
+                           torch.arange(0, h.shape[-1]))
 
         if norm:
             h = torch.div(h, torch.max(torch.abs(h)))

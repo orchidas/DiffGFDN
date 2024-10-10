@@ -1,14 +1,14 @@
 import os
-import torch
 from pathlib import Path
 from typing import List, Optional
 
-import matplotlib.pyplot as plt
 from loguru import logger
+import matplotlib.pyplot as plt
 from scipy.io import savemat
+import torch
 
 from .config.config import DiffGFDNConfig
-from .dataloader import ThreeRoomDataset, load_dataset, to_device
+from .dataloader import load_dataset, ThreeRoomDataset
 from .model import DiffGFDN
 from .trainer import Trainer
 
@@ -91,7 +91,9 @@ def run_training(config_dict: DiffGFDNConfig):
         config_dict (DiffGFDNTrainConfig): configuration parameters for training
     """
     # read the coupled room dataset
-    room_data = ThreeRoomDataset(Path(config_dict.room_dataset_path).resolve(), config_dict=config_dict)
+    room_data = ThreeRoomDataset(Path(config_dict.room_dataset_path).resolve(),
+                                 config_dict=config_dict)
+
     # add number of groups to the config dictionary
     config_dict = config_dict.copy(update={"num_groups": room_data.num_rooms})
     assert config_dict.num_delay_lines % config_dict.num_groups == 0, "Delay lines must be \
@@ -103,20 +105,21 @@ def run_training(config_dict: DiffGFDNConfig):
 
     # get the training config
     trainer_config = config_dict.trainer_config
-    # if num_freq_bins was given in the config file, the following line won't cahnge anything
-    trainer_config.num_freq_bins = room_data.num_freq_bins 
-    # update the new reduced pole radius # TODO this is very ugly and probebly can be done in the 
-    if trainer_config.reduced_pole_radius is None and trainer_config.alias_attenuation_db is not None:
-        trainer_config.reduced_pole_radius = 10 ** (- abs(trainer_config.alias_attenuation_db) / trainer_config.num_freq_bins / 20 )
-    elif trainer_config.reduced_pole_radius is None:
-        trainer_config.reduced_pole_radius = 1
+    # update num_freq_bins in pydantic class
+    trainer_config = trainer_config.model_copy(
+        update={"num_freq_bins": room_data.num_freq_bins})
+    # also update the calculation of reduced_pole_radius
+    trainer_config = trainer_config.calculate_reduced_pole_radius(
+        trainer_config)
+
     # prepare the training and validation data for DiffGFDN
     train_dataset, valid_dataset = load_dataset(
         room_data,
         trainer_config.device,
         trainer_config.train_valid_split,
         trainer_config.batch_size,
-        new_sampling_radius=1.0/trainer_config.reduced_pole_radius,)
+        new_sampling_radius=1.0 / trainer_config.reduced_pole_radius,
+    )
 
     # initialise the model
     model = DiffGFDN(
