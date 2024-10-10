@@ -1,6 +1,5 @@
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
 import torch
 from loguru import logger
 from scipy.signal import butter
@@ -64,13 +63,12 @@ class DiffGFDN(nn.Module):
         ]
         if self.use_absorption_filters:
             # this will be of size (num_groups, num_del_per_group, numerator (filter_order), denominator(filter_order))
-            self.gain_per_sample = torch.tensor(np.array([
-                decay_times_to_gain_filters(band_centre_hz,
-                                            common_decay_times[:, i],
-                                            self.delays_by_group[i],
-                                            self.sample_rate)
+            self.gain_per_sample = torch.tensor([
+                decay_times_to_gain_filters(
+                    band_centre_hz, common_decay_times[:, i],
+                    self.delays_by_group[i], self.sample_rate).tolist()
                 for i in range(self.num_groups)
-            ]),
+            ],
                                                 device=self.device)
             self.filter_order = self.gain_per_sample.shape[-2]
             self.gain_per_sample = self.gain_per_sample.view(
@@ -301,7 +299,7 @@ class DiffGFDNSinglePos(DiffGFDN):
         if self.use_svf_in_output:
             self.num_biquads = output_filter_config.num_biquads_svf
             self.output_svf_params = nn.Parameter(
-                2 * torch.randn(self.num_groups, self.num_biquads, 5) - 1)
+                torch.randn(self.num_groups, self.num_biquads, 5))
             self.output_filters = SOSFilter(self.num_biquads)
             self.soft_plus = SoftPlus()
             self.tan_sigmoid = TanSigmoid()
