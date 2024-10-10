@@ -53,7 +53,8 @@ class Trainer:
         else:
             self.criterion = edr_loss(
                 self.net.sample_rate,
-                reduced_pole_radius=self.reduced_pole_radius)
+                reduced_pole_radius=self.reduced_pole_radius,
+                use_erb_grouping=trainer_config.use_erb_grouping)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=10,
                                                          gamma=0.1)
