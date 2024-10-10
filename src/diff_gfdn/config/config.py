@@ -71,6 +71,8 @@ class TrainerConfig(BaseModel):
     train_dir: str = "../output"
     # where to save the IRs
     ir_dir: str = "../audio"
+    # whether to save the true measured IRs as wave files
+    save_true_irs: bool = False
     # attenuation in dB that the anti aliasing envelope should be reduced by
     alias_attenuation_db: Optional[int] = None
     # by how much to reduce the radius of each pole during frequency sampling

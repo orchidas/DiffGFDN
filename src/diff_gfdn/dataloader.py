@@ -244,10 +244,7 @@ class ThreeRoomDataset(RoomDataset):
     in Proc. of AES International Conference on Audio for Gaming, 2024.
     """
 
-    def __init__(self,
-                 filepath: Path,
-                 config_dict: DiffGFDNConfig,
-                 save_irs: Optional[bool] = False):
+    def __init__(self, filepath: Path, config_dict: DiffGFDNConfig):
         """Read the data from the filepath"""
         num_rooms = 3
         assert str(filepath).endswith(
@@ -292,7 +289,7 @@ class ThreeRoomDataset(RoomDataset):
         # how far apart the receivers are placed
         mic_spacing_m = 0.3
         self.mesh_3D = super().get_3D_meshgrid(mic_spacing_m)
-        if save_irs:
+        if config_dict.trainer_config.save_true_irs:
             logger.info("Saving RIRs")
             self.save_omni_irs()
 

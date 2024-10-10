@@ -5,5 +5,5 @@ trainer_config:
     train_dir: '../output/sample_outside_unit_circle/'
     ir_dir: '../audio/sample_outside_unit_circle/'
     alias_attenuation_db: 60
-    save_irs: True
+    save_true_irs: True
 room_dataset_path: '/Users/dalsag1/Documents/datasets/Georg_3room_FDTD/srirs.pkl'
