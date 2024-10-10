@@ -288,9 +288,10 @@ class DiffGFDNSinglePos(DiffGFDN):
                          room_dims, absorption_coeffs, common_decay_times,
                          band_centre_hz)
 
-        # unique to the network
+        # unique to the network - same gains for each group
         self.input_gains = nn.Parameter(
-            torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
+            (2 * torch.randn(self.num_delay_lines, 1) - 1) /
+            self.num_delay_lines)
 
         self.compress_pole_factor = output_filter_config.compress_pole_factor
 
@@ -299,7 +300,7 @@ class DiffGFDNSinglePos(DiffGFDN):
         if self.use_svf_in_output:
             self.num_biquads = output_filter_config.num_biquads_svf
             self.output_svf_params = nn.Parameter(
-                torch.randn(self.num_groups, self.num_biquads, 5))
+                2 * torch.randn(self.num_groups, self.num_biquads, 5) - 1)
             self.output_filters = SOSFilter(self.num_biquads)
             self.soft_plus = SoftPlus()
             self.tan_sigmoid = TanSigmoid()
@@ -321,6 +322,10 @@ class DiffGFDNSinglePos(DiffGFDN):
                 self.output_gains.expand(self.num_delay_lines, num_freq_pts))
 
         # this is also of size Ndel x 1
+        # input_gains = self.input_gains.repeat_interleave(
+        #     self.num_delay_lines_per_group, dim=0)
+        # B = to_complex(input_gains)
+
         B = to_complex(self.input_gains)
 
         # get the output of the feedback loop, this is of size num_freq_points x Ndel x Ndel

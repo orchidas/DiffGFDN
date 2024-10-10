@@ -43,6 +43,17 @@ def calc_erb_filters(
     return erb_filters, erb_freqs
 
 
+def scaled_shifted_sigmoid_inverse(x: torch.tensor, scale_factor: float,
+                                   cutoff: float, top: float,
+                                   bottom: float) -> torch.tensor:
+    """
+    Inverse of a  scaled sigmoid function that lies between bottom and top, 
+    and switches from top to bottom at cutoff.
+    """
+    return bottom + torch.div((top - bottom),
+                              (1 + torch.exp(scale_factor * (x - cutoff))))
+
+
 class reg_loss(nn.Module):
     """
     Penalises the rate of decay of the output filters (pole radius) to reduce time aliasing 
@@ -141,6 +152,7 @@ class edr_loss(nn.Module):
         use_erb_grouping: bool = False,
         time_axis: int = -1,
         freq_axis: int = -2,
+        use_weight_fn: bool = False,
     ):
         """
         Args:
@@ -162,6 +174,7 @@ class edr_loss(nn.Module):
         self.reduced_pole_radius = reduced_pole_radius
         self.time_axis = time_axis
         self.freq_axis = freq_axis
+        self.use_weight_fn = use_weight_fn
         if self.use_erb_grouping:
             self.erb_filters, self.freqs_hz = calc_erb_filters(sample_rate,
                                                                nfft=win_size,
@@ -169,6 +182,17 @@ class edr_loss(nn.Module):
         else:
             self.erb_filters = None
             self.freqs_hz = rfftfreq(self.win_size, d=1.0 / self.sample_rate)
+
+        if self.use_weight_fn:
+            # apply frequency-dependent weighting with more weight on the lower frequency loss below 1kHz
+            logger.info("Using frequency-dependent weighting on EDR loss")
+            cutoff_freq_hz = 1e3
+            scale_factor = 10**(-2.5)
+            top = 2.0
+            bottom = 1.0
+            self.frequency_weights = scaled_shifted_sigmoid_inverse(
+                torch.tensor(self.freqs_hz), scale_factor, cutoff_freq_hz,
+                bottom, top)
 
     def forward(self, target_response: torch.tensor,
                 achieved_response: torch.tensor) -> torch.tensor:
@@ -220,7 +244,9 @@ class edr_loss(nn.Module):
         # sum over time axis
         freq_loss = torch.sum(torch.abs(target_edr - ach_edr),
                               dim=self.time_axis)
-        logger.info(f'Frequencies: {self.freqs_hz}, \nLoss value: {freq_loss}')
+        if self.use_weight_fn:
+            freq_loss *= self.frequency_weights
+        # logger.info(f'Frequencies: {self.freqs_hz}, \nLoss value: {freq_loss}')
 
         # sum over frequency and time axes and normalise to get a scalar error
         if target_edr.ndim == 3:

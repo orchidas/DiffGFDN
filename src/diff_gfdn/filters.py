@@ -293,7 +293,7 @@ def decay_times_to_gain_filters(band_centre_hz: List,
                                 common_decay_times: List,
                                 delay_length_samp: List[int],
                                 fs: float,
-                                filter_order: int = 12,
+                                filter_order: int = 8,
                                 num_freq_bins: int = 2**10,
                                 plot_response: bool = False):
     """Fit filters to the common decay times in octave bands"""
@@ -315,8 +315,9 @@ def decay_times_to_gain_filters(band_centre_hz: List,
             band_centre_hz,
             fs,
             n_fft=num_freq_bins,
-            cutoff=(20, 16e3),
+            cutoff=(20, fs // 2 - 4e3),
             rolloff_dc_db=-60,
+            rolloff_nyq_db=-100,
             return_one_sided=True)
 
         interp_min_phase_ir = tf2minphase(interp_delay_line_filter[i, :],

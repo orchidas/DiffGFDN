@@ -40,6 +40,7 @@ def plot_t60_filter_response(
                ["Measured", "Interpolated", "Warped prony fit"])
     plt.xlabel('Frequency(Hz)')
     plt.ylabel('Magnitude (dB)')
+    plt.ylim([-10, 5])
     plt.tight_layout()
 
 

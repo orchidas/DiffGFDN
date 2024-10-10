@@ -45,7 +45,8 @@ class Trainer:
             self.criterion = [
                 edr_loss(self.net.sample_rate,
                          reduced_pole_radius=self.reduced_pole_radius,
-                         use_erb_grouping=trainer_config.use_erb_edr_loss),
+                         use_erb_grouping=trainer_config.use_erb_edr_loss,
+                         use_weight_fn=trainer_config.use_frequency_weighting),
                 reg_loss(
                     ms_to_samps(trainer_config.output_filt_ir_len_ms,
                                 self.net.sample_rate), self.net.num_groups,
@@ -55,7 +56,8 @@ class Trainer:
             self.criterion = edr_loss(
                 self.net.sample_rate,
                 use_erb_grouping=trainer_config.use_erb_edr_loss,
-                reduced_pole_radius=self.reduced_pole_radius)
+                reduced_pole_radius=self.reduced_pole_radius,
+                use_weight_fn=trainer_config.use_frequency_weighting)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=10,
                                                          gamma=0.1)

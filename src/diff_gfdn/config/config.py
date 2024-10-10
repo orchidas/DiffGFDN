@@ -76,6 +76,8 @@ class TrainerConfig(BaseModel):
     use_reg_loss: bool = False
     # whether to use perceptual ERB loss
     use_erb_edr_loss: bool = False
+    # whether to use frequency-based weighting in loss
+    use_frequency_weighting: bool = False
     # directory to save results
     train_dir: str = "../output/cpu/"
     # where to save the IRs
