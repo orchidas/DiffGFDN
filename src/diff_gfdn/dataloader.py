@@ -1,20 +1,20 @@
-import os
-import pickle
-import inspect
 from abc import ABC
 from dataclasses import dataclass
+import os
 from pathlib import Path
+import pickle
 from typing import List, Optional
 
+from loguru import logger
 import matplotlib.pyplot as plt
 import numpy as np
-import soundfile as sf
-import torch
-from loguru import logger
 from numpy.typing import ArrayLike, NDArray
 from scipy.fft import rfft, rfftfreq
+import soundfile as sf
+import torch
 from torch.utils import data
 
+from .config.config import DiffGFDNConfig
 from .utils import ms_to_samps
 
 # flake8: noqa: E231
@@ -79,7 +79,8 @@ class RoomDataset(ABC):
                  room_dims: List,
                  room_start_coord: List,
                  absorption_coeffs: List,
-                 mixing_time_ms: float = 20.0):
+                 mixing_time_ms: float = 20.0,
+                 nfft: Optional[int] = None):
         """
         Args:
             num_rooms (int): number of rooms in coupled space
@@ -93,6 +94,7 @@ class RoomDataset(ABC):
             room_start_coord (List): coordinates of the room's starting vertex (first room starts at origin)
             absorption_coeffs (List): uniform absorption coefficients for each room
             mixing_time_ms (float): mixing time of the RIR for early-late split
+            nfft (optional, int): number of frequency bins
         """
         self.sample_rate = sample_rate
         self.num_rooms = num_rooms
@@ -108,13 +110,17 @@ class RoomDataset(ABC):
         self.room_dims = room_dims
         self.room_start_coord = room_start_coord
         self.mixing_time_ms = mixing_time_ms
+        self.nfft = nfft
         self.early_late_split()
 
     @property
     def num_freq_bins(self):
         """Number of frequency bins in the magnitude response"""
-        max_rt60_samps = self.common_decay_times.max() * self.sample_rate
-        return int(np.pow(2, np.ceil(np.log2(max_rt60_samps))))
+        if self.nfft is not None:
+            return self.nfft
+        else:
+            max_rt60_samps = self.common_decay_times.max() * self.sample_rate
+            return int(np.pow(2, np.ceil(np.log2(max_rt60_samps))))
 
     @property
     def freq_bins_rad(self):
@@ -238,7 +244,7 @@ class ThreeRoomDataset(RoomDataset):
     in Proc. of AES International Conference on Audio for Gaming, 2024.
     """
 
-    def __init__(self, filepath: Path, save_irs: Optional[bool] = False):
+    def __init__(self, filepath: Path, config_dict: DiffGFDNConfig):
         """Read the data from the filepath"""
         num_rooms = 3
         assert str(filepath).endswith(
@@ -257,7 +263,7 @@ class ThreeRoomDataset(RoomDataset):
                 band_centre_hz = srir_mat['band_centre_hz']
                 common_decay_times = np.asarray(
                     np.squeeze(srir_mat['common_decay_times'], axis=1))
-
+                nfft = config_dict.trainer_config.num_freq_bins
         except Exception as exc:
             raise FileNotFoundError(
                 f"File was not found at {str(filepath)}") from exc
@@ -269,14 +275,21 @@ class ThreeRoomDataset(RoomDataset):
         room_dims = [(4.0, 8.0, 3.0), (6.0, 3.0, 3.0), (4.0, 8.0, 3.0)]
         # this denotes the 3D position of the first vertex of the floor
         room_start_coord = [(0, 0, 0), (4.0, 2.0, 0), (6.0, 5.0, 0)]
-        super().__init__(num_rooms, sample_rate, source_position,
-                         receiver_position, rirs, band_centre_hz,
-                         common_decay_times, room_dims, room_start_coord,
-                         absorption_coeffs)
+        super().__init__(num_rooms,
+                         sample_rate,
+                         source_position,
+                         receiver_position,
+                         rirs,
+                         band_centre_hz,
+                         common_decay_times,
+                         room_dims,
+                         room_start_coord,
+                         absorption_coeffs,
+                         nfft=nfft)
         # how far apart the receivers are placed
         mic_spacing_m = 0.3
         self.mesh_3D = super().get_3D_meshgrid(mic_spacing_m)
-        if save_irs:
+        if config_dict.trainer_config.save_true_irs:
             logger.info("Saving RIRs")
             self.save_omni_irs()
 
@@ -331,7 +344,7 @@ class RIRDataset(data.Dataset):
             self.z_values = torch.polar(torch.ones_like(freq_bins_rad),
                                         freq_bins_rad * 2 * np.pi)
         else:
-            assert new_sampling_radius > 1.0
+            assert new_sampling_radius >= 1.0
             logger.info(
                 f"Sampling outside the unit circle at a radius {new_sampling_radius}"
             )
@@ -361,7 +374,8 @@ class RIRDataset(data.Dataset):
                                self.rir_mag_response[idx, :])
         return {'input': input_features, 'target': target_labels}
 
-def to_device(data_class : data.Dataset, device: torch.device):
+
+def to_device(data_class: data.Dataset, device: torch.device):
     """Move all tensor attributes to self.device."""
     for field_name, field_value in data_class.__dict__.items():
         if isinstance(field_value, torch.Tensor):
@@ -369,9 +383,11 @@ def to_device(data_class : data.Dataset, device: torch.device):
         elif isinstance(field_value, Meshgrid):
             setattr(data_class, field_name, to_device(field_value, device))
         elif isinstance(field_value, np.ndarray):
-            setattr(data_class, field_name, torch.tensor(field_value, device=device))
+            setattr(data_class, field_name,
+                    torch.tensor(field_value, device=device))
     return data_class
-    
+
+
 def custom_collate(batch: data.Dataset):
     """
     Collate datapoints in the dataloader.
@@ -411,7 +427,7 @@ def custom_collate(batch: data.Dataset):
     }
 
 
-def split_dataset(dataset: data.Dataset, split: float, device: torch.device):
+def split_dataset(dataset: data.Dataset, split: float):
     """
     Randomly split a dataset into non-overlapping new datasets of 
     sizes given in 'split' argument
@@ -436,13 +452,12 @@ def get_dataloader(dataset: data.Dataset,
                    shuffle: bool = True,
                    device='cpu') -> data.DataLoader:
     """Create torch dataloader form given dataset"""
-    dataloader = data.DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        generator=torch.Generator(device=device),
-        drop_last=True,
-        collate_fn=custom_collate)
+    dataloader = data.DataLoader(dataset,
+                                 batch_size=batch_size,
+                                 shuffle=shuffle,
+                                 generator=torch.Generator(device=device),
+                                 drop_last=True,
+                                 collate_fn=custom_collate)
     return dataloader
 
 
@@ -469,24 +484,20 @@ def load_dataset(room_data: RoomDataset,
                                      in the frequency domain, sample points on a circle whose radius
                                      is larger than 1 
     """
-    dataset = RIRDataset(device, room_data)
-    
+    dataset = RIRDataset(device, room_data, new_sampling_radius)
+
     dataset = to_device(dataset, device)
     # split data into training and validation set
-    train_set, valid_set = split_dataset(dataset, train_valid_split_ratio, device=device)
+    train_set, valid_set = split_dataset(dataset, train_valid_split_ratio)
 
     # dataloaders
-    train_loader = get_dataloader(
-        train_set,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        device=device
-    )
+    train_loader = get_dataloader(train_set,
+                                  batch_size=batch_size,
+                                  shuffle=shuffle,
+                                  device=device)
 
-    valid_loader = get_dataloader(
-        valid_set,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        device=device
-    )
+    valid_loader = get_dataloader(valid_set,
+                                  batch_size=batch_size,
+                                  shuffle=shuffle,
+                                  device=device)
     return train_loader, valid_loader

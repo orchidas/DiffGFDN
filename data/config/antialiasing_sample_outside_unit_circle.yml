@@ -1,6 +1,6 @@
 trainer_config:
-    device: 'mps'
+    device: 'cpu'
     max_epochs: 3
     train_dir: '../output/sample_outside_unit_circle/'
     ir_dir: '../audio/sample_outside_unit_circle/'
-    reduced_pole_radius: 0.999
+    alias_attenuation_db: 60

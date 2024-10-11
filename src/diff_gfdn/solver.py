@@ -1,14 +1,14 @@
 import os
-import torch
 from pathlib import Path
 from typing import List, Optional
 
-import matplotlib.pyplot as plt
 from loguru import logger
+import matplotlib.pyplot as plt
 from scipy.io import savemat
+import torch
 
 from .config.config import DiffGFDNConfig
-from .dataloader import ThreeRoomDataset, load_dataset, to_device
+from .dataloader import load_dataset, ThreeRoomDataset
 from .model import DiffGFDN
 from .trainer import Trainer
 
@@ -91,7 +91,9 @@ def run_training(config_dict: DiffGFDNConfig):
         config_dict (DiffGFDNTrainConfig): configuration parameters for training
     """
     # read the coupled room dataset
-    room_data = ThreeRoomDataset(Path(config_dict.room_dataset_path).resolve())
+    room_data = ThreeRoomDataset(Path(config_dict.room_dataset_path).resolve(),
+                                 config_dict=config_dict)
+
     # add number of groups to the config dictionary
     config_dict = config_dict.copy(update={"num_groups": room_data.num_rooms})
     assert config_dict.num_delay_lines % config_dict.num_groups == 0, "Delay lines must be \
@@ -103,6 +105,12 @@ def run_training(config_dict: DiffGFDNConfig):
 
     # get the training config
     trainer_config = config_dict.trainer_config
+    # update num_freq_bins in pydantic class
+    trainer_config = trainer_config.model_copy(
+        update={"num_freq_bins": room_data.num_freq_bins})
+    # also update the calculation of reduced_pole_radius
+    trainer_config = trainer_config.calculate_reduced_pole_radius(
+        trainer_config)
 
     # prepare the training and validation data for DiffGFDN
     train_dataset, valid_dataset = load_dataset(
@@ -110,7 +118,8 @@ def run_training(config_dict: DiffGFDNConfig):
         trainer_config.device,
         trainer_config.train_valid_split,
         trainer_config.batch_size,
-        new_sampling_radius=trainer_config.new_sampling_radius)
+        new_sampling_radius=1.0 / trainer_config.reduced_pole_radius,
+    )
 
     # initialise the model
     model = DiffGFDN(

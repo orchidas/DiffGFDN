@@ -1,9 +1,8 @@
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
-import torch
 from loguru import logger
 from scipy.signal import butter
+import torch
 from torch import nn
 
 from .config.config import FeedbackLoopConfig, OutputFilterConfig
@@ -50,7 +49,7 @@ class DiffGFDN(nn.Module):
         # input parameters
         self.num_groups = num_groups
         self.absorption_coeffs = absorption_coeffs
-        self.delays = torch.tensor(delays, dtype=torch.int32)
+        self.delays = delays
         self.num_delay_lines = len(delays)
         self.num_delay_lines_per_group = int(self.num_delay_lines /
                                              self.num_groups)
@@ -62,12 +61,12 @@ class DiffGFDN(nn.Module):
         if self.use_absorption_filters:
             # this will be of size (num_groups, num_del_per_group, numerator (filter_order), denominator(filter_order))
             self.gain_per_sample = torch.tensor([
-                    decay_times_to_gain_filters(band_centre_hz,
-                                                common_decay_times[:, i],
-                                                self.delays_by_group[i],
-                                                self.sample_rate)
-                    for i in range(self.num_groups)
-                ], device=self.device)
+                decay_times_to_gain_filters(
+                    band_centre_hz, common_decay_times[:, i],
+                    self.delays_by_group[i], self.sample_rate).tolist()
+                for i in range(self.num_groups)
+            ],
+                                                device=self.device)
             self.filter_order = self.gain_per_sample.shape[-2]
             self.gain_per_sample = self.gain_per_sample.view(
                 self.num_delay_lines, self.filter_order, 2)
@@ -75,17 +74,19 @@ class DiffGFDN(nn.Module):
         else:
             self.gain_per_sample = torch.flatten(
                 torch.tensor([
-                        absorption_to_gain_per_sample(room_dims[i],
-                                                      absorption_coeffs[i],
-                                                      self.delays_by_group[i],
-                                                      self.sample_rate)[1]
-                        for i in range(self.num_groups)
-                    ], device=self.device))
+                    absorption_to_gain_per_sample(
+                        room_dims[i], absorption_coeffs[i],
+                        self.delays_by_group[i], self.sample_rate)[1]
+                    for i in range(self.num_groups)
+                ],
+                             device=self.device))
 
         # logger.info(f'Gains for delay lines are {self.gain_per_sample}')
 
         # here are the different operating blocks
-        self.delays = self.delays.to(self.device)
+        self.delays = torch.tensor(delays,
+                                   dtype=torch.float32,
+                                   device=self.device)
         self.input_gains = nn.Parameter(
             torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
         self.feedback_loop = FeedbackLoop(
