@@ -342,24 +342,20 @@ class ThreeRoomDataset(RoomDataset):
         assert str(filepath).endswith(
             '.pkl'), "provide the path to the .pkl file"
         # read contents from .mat file
-        try:
-            logger.info('Reading pkl file ...')
-            with open(filepath, 'rb') as f:
-                srir_mat = pickle.load(f)
-                sample_rate = srir_mat['fs'][0][0]
-                source_position = srir_mat['srcPos'].T
-                receiver_position = srir_mat['rcvPos'].T
-                # these are second order ambisonic signals
-                # I am guessing the first channel contains the W component
-                rirs = np.squeeze(srir_mat['srirs'][0, ...]).T
-                band_centre_hz = srir_mat['band_centre_hz']
-                common_decay_times = np.asarray(
-                    np.squeeze(srir_mat['common_decay_times'], axis=1))
-                amplitudes = np.asarray(srir_mat['amplitudes'])
+        logger.info('Reading pkl file ...')
+        with open(filepath, 'rb') as f:
+            srir_mat = pickle.load(f)
+            sample_rate = srir_mat['fs'][0][0]
+            source_position = srir_mat['srcPos'].T
+            receiver_position = srir_mat['rcvPos'].T
+            # these are second order ambisonic signals
+            # I am guessing the first channel contains the W component
+            rirs = np.squeeze(srir_mat['srirs'][0, ...]).T
+            band_centre_hz = srir_mat['band_centre_hz']
+            common_decay_times = np.asarray(
+                np.squeeze(srir_mat['common_decay_times'], axis=1))
+            amplitudes = np.asarray(srir_mat['amplitudes'])
 
-        except Exception as exc:
-            raise FileNotFoundError(
-                f"File was not found at {str(filepath)}") from exc
 
         logger.info("Done reading pkl file")
         # uniform absorption coefficients of the three rooms

@@ -8,7 +8,7 @@ from loguru import logger
 logger.info("Reading mat file")
 
 # Load the MATLAB v7.3 .mat file using h5py
-file_path = Path("../resources/Georg_3room_FDTD/srirs.mat").resolve()
+file_path = Path("/Users/dalsag1/Documents/datasets/Georg_3room_FDTD/srirs.mat").resolve()
 
 with h5py.File(file_path, 'r') as mat_file:
     # Get the dataset
@@ -22,7 +22,7 @@ with h5py.File(file_path, 'r') as mat_file:
 
 # load the common slopes from the other mat files
 file_path = Path(
-    "../resources/Georg_3room_FDTD/Common_Slope_Analysis_Results/")
+    "/Users/dalsag1/Documents/datasets/Georg_3room_FDTD/Common_Slope_Analysis_Results/")
 filename = 'cs_analysis_results_omni'
 freqs = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
 common_t60 = []
@@ -47,7 +47,7 @@ data_dict = {
 }
 
 # Specify the output pickle file path
-pickle_file_path = Path("../resources/Georg_3room_FDTD/srirs.pkl").resolve()
+pickle_file_path = Path("/Users/dalsag1/Documents/datasets/Georg_3room_FDTD/srirs.pkl").resolve()
 
 # Write the data to a pickle file
 with open(pickle_file_path, 'wb') as pickle_file:

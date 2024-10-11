@@ -25,9 +25,13 @@ class IIRFilter(nn.Module):
         self.num_filters = num_filters
         self.filter_numerator = filter_numerator
         self.filter_denominator = filter_denominator
-
-        assert self.filter_numerator.shape == (self.num_filters,
+        if len(self.filter_numerator.shape) == 3:
+            assert self.filter_numerator.shape[-1] == 3 # assert that the filter is a biquad
+            self.is_sos=True
+        else:
+            assert self.filter_numerator.shape == (self.num_filters,
                                                self.filt_order)
+            self.is_sos=False
 
     def forward(self, z: torch.tensor):
         """
@@ -37,14 +41,17 @@ class IIRFilter(nn.Module):
         H = torch.ones((self.num_filters, len(z)), dtype=torch.complex64)
         Hnum = torch.zeros_like(H)
         Hden = torch.zeros_like(H)
-        for k in range(self.filt_order):
-            Hnum += torch.einsum('n, k -> nk', self.filter_numerator[:, k],
-                                 torch.pow(z, -k))
-            Hden += torch.einsum('n, k -> nk', self.filter_denominator[:, k],
-                                 torch.pow(z, -k))
+        if self.is_sos:
+            raise NotImplementedError
+        else:
+            for k in range(self.filt_order):
+                Hnum += torch.einsum('n, k -> nk', self.filter_numerator[:, k],
+                                    torch.pow(z, -k))
+                Hden += torch.einsum('n, k -> nk', self.filter_denominator[:, k],
+                                    torch.pow(z, -k))
 
-        H = torch.div(Hnum, Hden + 1e-9)
-        return H
+            H = torch.div(Hnum, Hden + 1e-9)
+            return H
 
 
 class Skew(nn.Module):

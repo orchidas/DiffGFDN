@@ -1,5 +1,6 @@
 from typing import List, Optional, Tuple
 
+import torch
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.fft import fft, fftfreq, ifft, irfft, rfftfreq
@@ -9,6 +10,7 @@ from scipy.signal import hilbert, tf2zpk, zpk2tf
 
 from .plot import plot_t60_filter_response
 from .utils import db, db2lin
+from .geq.eq import design_geq
 
 # pylint: disable=invalid-name
 
@@ -332,3 +334,35 @@ def decay_times_to_gain_filters(band_centre_hz: List,
                                  num_coeffs, den_coeffs, fs,
                                  interp_delay_line_filter, num_freq_bins)
     return np.stack((num_coeffs, den_coeffs), axis=-1)
+
+
+### GEQ ### 
+# Ref: ACCURATE REVERBERATION TIME CONTROL IN FEEDBACK DELAY NETWORKS by Schlecht SJ and Habets EAP
+
+def decay_times_to_gain_filters_geq(band_centre_hz: List,
+                                    common_decay_times: List,
+                                    delay_length_samp: List[int],
+                                    fs: float,
+                                    filter_order: int = 8,
+                                    num_freq_bins: int = 2**10,
+                                    plot_response: bool = False):
+    """Fit filters to the common decay times in octave bands"""
+    shelving_crossover_hz = [band_centre_hz[0]/pow(2, 1/2), band_centre_hz[-1]*pow(2, 1/2)]
+    
+    # the T60s for each delay line need to be attenuated
+    num_delay_lines = len(delay_length_samp)
+    num_coeffs = torch.zeros((len(band_centre_hz) + 3, num_delay_lines, 3))
+    den_coeffs = torch.zeros_like(num_coeffs)
+
+    target_gains_linear = torch.tensor(10**(-3 / fs / common_decay_times)).unsqueeze(-1)**delay_length_samp
+    # pad target gains with 0.5x of the first/last values for the shelving filters
+    target_gains_linear = torch.cat((target_gains_linear[0:1,:]*0.5, target_gains_linear, target_gains_linear[-1:,:]*0.5), dim=0)
+    for i in range(len(delay_length_samp)):
+            b, a = design_geq( 
+                20*torch.log10(target_gains_linear[:,i]),
+                center_freq=torch.tensor(band_centre_hz),
+                shelving_crossover=torch.tensor(shelving_crossover_hz),
+                fs=fs)
+            num_coeffs[:, i, :], den_coeffs[:, i, :] = b.permute(1, 0), a.permute(1, 0)
+        
+    return torch.stack((num_coeffs, den_coeffs), axis=-1)

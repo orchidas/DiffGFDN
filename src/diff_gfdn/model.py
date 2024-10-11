@@ -8,7 +8,7 @@ from torch import nn
 from .config.config import (CouplingMatrixType, FeedbackLoopConfig,
                             OutputFilterConfig)
 from .feedback_loop import FeedbackLoop
-from .filters import decay_times_to_gain_filters
+from .filters import decay_times_to_gain_filters, decay_times_to_gain_filters_geq
 from .gain_filters import (SVF, BiquadCascade, SoftPlus, SOSFilter,
                            SVF_from_MLP, TanSigmoid)
 from .utils import absorption_to_gain_per_sample, to_complex
@@ -64,15 +64,22 @@ class DiffGFDN(nn.Module):
         if self.use_absorption_filters:
             # this will be of size (num_groups, num_del_per_group, numerator (filter_order), denominator(filter_order))
             self.gain_per_sample = torch.tensor([
-                decay_times_to_gain_filters(
+                decay_times_to_gain_filters_geq(
                     band_centre_hz, common_decay_times[:, i],
                     self.delays_by_group[i], self.sample_rate).tolist()
                 for i in range(self.num_groups)
             ],
                                                 device=self.device)
             self.filter_order = self.gain_per_sample.shape[-2]
-            self.gain_per_sample = self.gain_per_sample.view(
-                self.num_delay_lines, self.filter_order, 2)
+            try: 
+                self.gain_per_sample = self.gain_per_sample.view(
+                    self.num_delay_lines, self.filter_order, 2)
+            except:
+                # cascade of SOS filters is detected
+                n_filters = self.gain_per_sample.shape[1]
+                self.gain_per_sample = self.gain_per_sample.permute(0, 2, 1, 3, 4)
+                self.gain_per_sample = self.gain_per_sample.reshape(
+                    self.num_delay_lines, n_filters, self.filter_order, 2)
 
         else:
             self.gain_per_sample = torch.flatten(
