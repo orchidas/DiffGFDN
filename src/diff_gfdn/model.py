@@ -9,8 +9,8 @@ from .config.config import (CouplingMatrixType, FeedbackLoopConfig,
                             OutputFilterConfig)
 from .feedback_loop import FeedbackLoop
 from .filters import decay_times_to_gain_filters
-from .gain_filters import (SVF, BiquadCascade, SoftPlus, SOSFilter,
-                           SVF_from_MLP, TanSigmoid)
+from .gain_filters import (SVF, BiquadCascade, ScaledSigmoid, SoftPlus,
+                           SOSFilter, SVF_from_MLP)
 from .utils import absorption_to_gain_per_sample, to_complex
 
 # pylint: disable=W0718, E1136, E1137
@@ -302,8 +302,8 @@ class DiffGFDNSinglePos(DiffGFDN):
             self.output_svf_params = nn.Parameter(
                 2 * torch.randn(self.num_groups, self.num_biquads, 5) - 1)
             self.output_filters = SOSFilter(self.num_biquads)
+            self.scaled_sigmoid = ScaledSigmoid()
             self.soft_plus = SoftPlus()
-            self.tan_sigmoid = TanSigmoid()
         else:
             self.output_gains = nn.Parameter(
                 torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
@@ -322,10 +322,6 @@ class DiffGFDNSinglePos(DiffGFDN):
                 self.output_gains.expand(self.num_delay_lines, num_freq_pts))
 
         # this is also of size Ndel x 1
-        # input_gains = self.input_gains.repeat_interleave(
-        #     self.num_delay_lines_per_group, dim=0)
-        # B = to_complex(input_gains)
-
         B = to_complex(self.input_gains)
 
         # get the output of the feedback loop, this is of size num_freq_points x Ndel x Ndel
@@ -358,10 +354,10 @@ class DiffGFDNSinglePos(DiffGFDN):
 
         flattened_svf_freqs = output_svf_params[..., 0].view(-1)
         flattened_svf_res = output_svf_params[..., 1].view(-1)
-        output_svf_params[..., 0] = self.tan_sigmoid(flattened_svf_freqs).view(
+        output_svf_params[..., 0] = self.soft_plus(flattened_svf_freqs).view(
             reshape_size)
-        output_svf_params[..., 1] = self.soft_plus(flattened_svf_res).view(
-            reshape_size)
+        output_svf_params[..., 1] = self.scaled_sigmoid(
+            flattened_svf_res).view(reshape_size)
 
         # initialise empty filters
         self.biquad_cascade = [
@@ -429,10 +425,10 @@ class DiffGFDNSinglePos(DiffGFDN):
             logger.warning('Parameter not initialised yet in FeedbackLoop!')
 
         try:
-            self.output_svf_params[..., 0] = self.tan_sigmoid(
+            self.output_svf_params[..., 0] = self.soft_plus(
                 self.output_svf_params[..., 0].view(-1)).view(
                     self.num_groups, self.num_biquads)
-            self.output_svf_params[..., 1] = self.soft_plus(
+            self.output_svf_params[..., 1] = self.scaled_sigmoid(
                 self.output_svf_params[..., 1].view(-1)).view(
                     self.num_groups, self.num_biquads)
 

@@ -71,11 +71,23 @@ class BiquadCascade:
         return BiquadCascade(num_sos, num_coeffs, den_coeffs)
 
 
+class ScaledSigmoid(nn.Module):
+
+    def forward(self,
+                x: torch.tensor,
+                lower_limit: Optional[float] = None) -> torch.tensor:
+        """Sigmoid non-linearity to constrain a function between lower limit and 1"""
+        if lower_limit is None:
+            lower_limit = 1.0 / np.sqrt(2)
+        return (1.0 - lower_limit) * torch.div(1,
+                                               1 + torch.exp(-x)) + lower_limit
+
+
 class SoftPlus(nn.Module):
 
     def forward(self, x: torch.Tensor):
         """Softplus function ensures positive output for SVF resonance"""
-        return torch.div(torch.log(1 + torch.exp(x)), np.log(2))
+        return torch.log(1 + torch.exp(x))
 
 
 class TanSigmoid(nn.Module):
