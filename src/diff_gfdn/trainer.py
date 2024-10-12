@@ -1,12 +1,12 @@
 import os
-import time
 from pathlib import Path
+import time
 from typing import Dict
 
-import torch
-import torchaudio
 from loguru import logger
+import torch
 from torch.utils.data import DataLoader
+import torchaudio
 from tqdm import trange
 
 from .config.config import TrainerConfig
@@ -29,7 +29,6 @@ class Trainer:
         self.train_dir = Path(trainer_config.train_dir).resolve()
         self.ir_dir = Path(trainer_config.ir_dir).resolve()
         self.use_reg_loss = trainer_config.use_reg_loss
-        # if the sampling was done outside the unit circle, we need to compensate for that
         self.reduced_pole_radius = trainer_config.reduced_pole_radius
 
         if not os.path.exists(self.ir_dir):
@@ -58,6 +57,7 @@ class Trainer:
                 use_erb_grouping=trainer_config.use_erb_edr_loss,
                 reduced_pole_radius=self.reduced_pole_radius,
                 use_weight_fn=trainer_config.use_frequency_weighting)
+
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=10,
                                                          gamma=0.1)
@@ -198,6 +198,7 @@ class VarReceiverPosTrainer(Trainer):
         H, h = get_response(input_features, self.net)
 
         # undo sampling outside the unit circle by multiplying IR with an exponentiated envelope
+
         if self.reduced_pole_radius is not None:
             h *= torch.pow(1.0 / self.reduced_pole_radius,
                            torch.arange(0, h.shape[-1]))

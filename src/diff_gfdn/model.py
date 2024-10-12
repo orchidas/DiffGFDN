@@ -1,17 +1,15 @@
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
-import torch
 from loguru import logger
+import numpy as np
 from scipy.signal import butter
+import torch
 from torch import nn
 
-from .config.config import (CouplingMatrixType, FeedbackLoopConfig,
-                            OutputFilterConfig)
+from .config.config import CouplingMatrixType, FeedbackLoopConfig, OutputFilterConfig
 from .feedback_loop import FeedbackLoop
 from .filters import decay_times_to_gain_filters
-from .gain_filters import (SVF, BiquadCascade, ScaledSigmoid, SoftPlus,
-                           SOSFilter, SVF_from_MLP)
+from .gain_filters import BiquadCascade, ScaledSigmoid, SoftPlus, SOSFilter, SVF, SVF_from_MLP
 from .utils import absorption_to_gain_per_sample, to_complex
 
 # pylint: disable=W0718, E1136, E1137
@@ -53,7 +51,7 @@ class DiffGFDN(nn.Module):
         # input parameters
         self.num_groups = num_groups
         self.absorption_coeffs = absorption_coeffs
-        self.delays = torch.tensor(delays, dtype=torch.int32)
+        self.delays = delays
         self.num_delay_lines = len(delays)
         self.num_delay_lines_per_group = int(self.num_delay_lines /
                                              self.num_groups)
@@ -85,13 +83,18 @@ class DiffGFDN(nn.Module):
                 ],
                              device=self.device))
 
+        self.delays = torch.tensor(delays,
+                                   dtype=torch.float32,
+                                   device=self.device)
+
+        self.delays = self.delays.to(self.device)
+
         self.feedback_loop = FeedbackLoop(
             self.num_groups, self.num_delay_lines_per_group, self.delays,
             self.gain_per_sample, self.use_absorption_filters,
             feedback_loop_config.coupling_matrix_type,
             feedback_loop_config.pu_matrix_order)
 
-        self.delays = self.delays.to(self.device)
         # add a lowpass filter at the end to remove high frequency artifacts
         self.design_lowpass_filter()
 

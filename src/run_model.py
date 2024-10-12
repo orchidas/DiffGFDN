@@ -1,16 +1,15 @@
 import argparse
 import os
+from pathlib import Path
 import pickle
 import time
-from pathlib import Path
 from typing import Dict
 
-import yaml
 from pydantic import BaseModel
+import yaml
 
 from diff_gfdn.config.config import DiffGFDNConfig
-from diff_gfdn.solver import (run_training_single_pos,
-                              run_training_var_receiver_pos)
+from diff_gfdn.solver import run_training_single_pos, run_training_var_receiver_pos
 
 # pylint: disable=W1514
 
