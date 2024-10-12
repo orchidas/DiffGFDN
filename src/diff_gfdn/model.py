@@ -1,5 +1,6 @@
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import torch
 from loguru import logger
 from scipy.signal import butter
@@ -96,7 +97,7 @@ class DiffGFDN(nn.Module):
 
     def design_lowpass_filter(self,
                               filter_order: int = 16,
-                              cutoff_hz: float = 12e3):
+                              cutoff_hz: float = 15e3):
         """
         Add a lowpass filter in the end to prevent spurius high frequency artifacts
         Args:
@@ -292,6 +293,9 @@ class DiffGFDNSinglePos(DiffGFDN):
         self.input_gains = nn.Parameter(
             (2 * torch.randn(self.num_delay_lines, 1) - 1) /
             self.num_delay_lines)
+        # each delay line should have a unique scalar gain
+        self.output_gains = nn.Parameter(
+            torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
 
         self.compress_pole_factor = output_filter_config.compress_pole_factor
 
@@ -302,11 +306,8 @@ class DiffGFDNSinglePos(DiffGFDN):
             self.output_svf_params = nn.Parameter(
                 2 * torch.randn(self.num_groups, self.num_biquads, 5) - 1)
             self.output_filters = SOSFilter(self.num_biquads)
-            self.scaled_sigmoid = ScaledSigmoid()
+            self.scaled_sigmoid = ScaledSigmoid(lower_limit=1.0 / np.sqrt(2))
             self.soft_plus = SoftPlus()
-        else:
-            self.output_gains = nn.Parameter(
-                torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
 
     def forward(self, x: Dict) -> torch.tensor:
         """
@@ -316,10 +317,12 @@ class DiffGFDNSinglePos(DiffGFDN):
         """
         z = x['z_values']
         num_freq_pts = len(z)
+        output_gains = to_complex(
+            self.output_gains.expand(self.num_delay_lines, num_freq_pts))
+
         # this is of size Ndel x num_freq_points
-        C = self.get_output_filter(
-            z) if self.use_svf_in_output else to_complex(
-                self.output_gains.expand(self.num_delay_lines, num_freq_pts))
+        C = output_gains * self.get_output_filter(
+            z) if self.use_svf_in_output else output_gains
 
         # this is also of size Ndel x 1
         B = to_complex(self.input_gains)
