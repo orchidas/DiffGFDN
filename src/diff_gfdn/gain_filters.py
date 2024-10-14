@@ -9,8 +9,10 @@ from torchaudio.functional import filtfilt
 from .config.config import FeatureEncodingType
 
 # pylint: disable=E0606
+# flake8: noqa:E265
 
 
+#######################################FILTER UTILS#########################################
 @dataclass
 class SVF:
     """Dataclass representing a state variable filter, which can then be converted to a biquad"""
@@ -71,6 +73,106 @@ class BiquadCascade:
         return BiquadCascade(num_sos, num_coeffs, den_coeffs)
 
 
+class IIRFilter(nn.Module):
+
+    def __init__(self, filt_order: int, num_filters: int,
+                 filter_numerator: torch.tensor,
+                 filter_denominator: torch.tensor):
+        """
+        Filter input with an IIR filter of order filt_order
+        Args:
+            filt_order (int): order of the IIR fulter
+        """
+        super().__init__()
+        self.filt_order = filt_order
+        self.num_filters = num_filters
+        self.filter_numerator = filter_numerator
+        self.filter_denominator = filter_denominator
+
+        assert self.filter_numerator.shape == (self.num_filters,
+                                               self.filt_order)
+
+    def forward(self, z: torch.tensor):
+        """
+        Calculate 
+        Here, z represents the input frequency sampling points
+        """
+        H = torch.ones((self.num_filters, len(z)), dtype=torch.complex64)
+        Hnum = torch.zeros_like(H)
+        Hden = torch.zeros_like(H)
+
+        for k in range(self.filt_order):
+            Hnum += torch.einsum('n, k -> nk', self.filter_numerator[:, k],
+                                 torch.pow(z, -k))
+            Hden += torch.einsum('n, k -> nk', self.filter_denominator[:, k],
+                                 torch.pow(z, -k))
+
+        H = torch.div(Hnum, Hden + 1e-9)
+        return H
+
+
+class SOSFilter(nn.Module):
+
+    def __init__(
+        self,
+        num_biquads: int,
+        biquad_cascade: Optional[BiquadCascade] = None,
+    ):
+        """
+        Filter input with a cascade of second order sections (either in the time of frequency domain)
+        Args:
+            num_biquads : number of biquads in the filter
+
+        """
+        super().__init__()
+        self.num_biquads = num_biquads
+        if biquad_cascade is not None:
+            self.biquad_cascade = biquad_cascade
+
+    def forward(self,
+                z: torch.Tensor,
+                biquad_cascade: Optional[BiquadCascade] = None):
+        """
+        Calculate prod_i (b0,i + b1,iz^{-1} + b2,i z^{-2}) / (a0,i + a1,i z^{-1} + a2,iz^{-2})
+        Here, z represents the input frequency sampling points
+        """
+        if biquad_cascade is None:
+            biquad_cascade = self.biquad_cascade
+
+        H = torch.ones(len(z), dtype=torch.complex64)
+        for k in range(self.num_biquads):
+            H *= torch.div(
+                biquad_cascade.num_coeffs[k, 0] +
+                biquad_cascade.num_coeffs[k, 1] * torch.pow(z, -1) +
+                biquad_cascade.num_coeffs[k, 2] * torch.pow(z, -2),
+                biquad_cascade.den_coeffs[k, 0] +
+                biquad_cascade.den_coeffs[k, 1] * torch.pow(z, -1) +
+                biquad_cascade.den_coeffs[k, 2] * torch.pow(z, -2))
+
+        return H
+
+    def filter(
+        self,
+        input_signal: torch.Tensor,
+        biquad_cascade: Optional[BiquadCascade] = None,
+    ):
+        """Filter the input signal in the time domain. This will be useful during inferencing"""
+        output = np.zeros_like(input_signal)
+
+        if biquad_cascade is None:
+            biquad_cascade = self.biquad_cascade
+
+        # filter in SOS form
+        for k in range(self.num_biquads):
+            inp = input_signal if k == 0 else output
+            output = filtfilt(inp, self.biquad_cascade.den_coeffs[k, :],
+                              self.biquad_cascade.num_coeffs[k, :])
+        return output
+
+
+###################################CONSTRAINTS#####################################
+
+
 class Sigmoid(nn.Module):
     """Sigmoid nonlinearity between 0 and 1"""
 
@@ -126,52 +228,7 @@ class TanSigmoid(nn.Module):
         return torch.tan(np.pi * sigmoid * 0.5)
 
 
-class SOSFilter(nn.Module):
-
-    def __init__(
-        self,
-        num_biquads: int,
-    ):
-        """
-        Filter input with a cascade of second order sections (either in the time of frequency domain)
-        Args:
-            num_biquads : number of biquads in the filter
-
-        """
-        super().__init__()
-        self.num_biquads = num_biquads
-
-    def forward(self, z: torch.Tensor, biquad_cascade: BiquadCascade):
-        """
-        Calculate prod_i (b0,i + b1,iz^{-1} + b2,i z^{-2}) / (a0,i + a1,i z^{-1} + a2,iz^{-2})
-        Here, z represents the input frequency sampling points
-        """
-        H = torch.ones(len(z), dtype=torch.complex64)
-        for k in range(self.num_biquads):
-            H *= torch.div(
-                biquad_cascade.num_coeffs[k, 0] +
-                biquad_cascade.num_coeffs[k, 1] * torch.pow(z, -1) +
-                biquad_cascade.num_coeffs[k, 2] * torch.pow(z, -2),
-                biquad_cascade.den_coeffs[k, 0] +
-                biquad_cascade.den_coeffs[k, 1] * torch.pow(z, -1) +
-                biquad_cascade.den_coeffs[k, 2] * torch.pow(z, -2))
-
-        return H
-
-    def filter(
-        self,
-        input_signal: torch.Tensor,
-        biquad_cascade: BiquadCascade,
-    ):
-        """Filter the input signal in the time domain. This will be useful during inferencing"""
-        output = np.zeros_like(input_signal)
-
-        # filter in SOS form
-        for k in range(self.num_biquads):
-            inp = input_signal if k == 0 else output
-            output = filtfilt(inp, biquad_cascade.den_coeffs[k, :],
-                              biquad_cascade.num_coeffs[k, :])
-        return output
+#######################################MLP-RELATED###########################################
 
 
 class SinusoidalEncoding(nn.Module):

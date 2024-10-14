@@ -91,7 +91,7 @@ class DiffGFDN(nn.Module):
                 ],
                              device=self.device))
 
-        logger.info(f"Gains in delay lines: {self.gain_per_sample}")
+        # logger.info(f"Gains in delay lines: {self.gain_per_sample}")
 
         self.delays = torch.tensor(delays,
                                    dtype=torch.float32,

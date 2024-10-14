@@ -5,53 +5,10 @@ import torch
 from torch import nn
 
 from .config.config import CouplingMatrixType
+from .gain_filters import BiquadCascade, IIRFilter, SOSFilter
 from .utils import matrix_convolution, to_complex
 
 # pylint: disable=E0606
-
-
-class IIRFilter(nn.Module):
-
-    def __init__(self, filt_order: int, num_filters: int,
-                 filter_numerator: torch.tensor,
-                 filter_denominator: torch.tensor):
-        """
-        Filter input with an IIR filter of order filt_order
-        Args:
-            filt_order (int): order of the IIR fulter
-        """
-        super().__init__()
-        self.filt_order = filt_order
-        self.num_filters = num_filters
-        self.filter_numerator = filter_numerator
-        self.filter_denominator = filter_denominator
-        if len(self.filter_numerator.shape) == 3:
-            assert self.filter_numerator.shape[-1] == 3 # assert that the filter is a biquad
-            self.is_sos=True
-        else:
-            assert self.filter_numerator.shape == (self.num_filters,
-                                               self.filt_order)
-            self.is_sos=False
-
-    def forward(self, z: torch.tensor):
-        """
-        Calculate 
-        Here, z represents the input frequency sampling points
-        """
-        H = torch.ones((self.num_filters, len(z)), dtype=torch.complex64)
-        Hnum = torch.zeros_like(H)
-        Hden = torch.zeros_like(H)
-        if self.is_sos:
-            raise NotImplementedError
-        else:
-            for k in range(self.filt_order):
-                Hnum += torch.einsum('n, k -> nk', self.filter_numerator[:, k],
-                                    torch.pow(z, -k))
-                Hden += torch.einsum('n, k -> nk', self.filter_denominator[:, k],
-                                    torch.pow(z, -k))
-
-            H = torch.div(Hnum, Hden + 1e-9)
-            return H
 
 
 class Skew(nn.Module):
@@ -213,10 +170,23 @@ class FeedbackLoop(nn.Module):
         self.use_absorption_filters = use_absorption_filters
 
         # whether to use absorption filters or scalar gains in delay lines
+        print(gains.shape)
         if self.use_absorption_filters:
             filter_order = gains.shape[1]
-            self.delay_line_gains = IIRFilter(filter_order, self.num_delays,
-                                              gains[..., 0], gains[..., 1])
+            # absorption gains as IIR filters with Prony's method
+            if gains.ndim == 3:
+                self.delay_line_gains = IIRFilter(filter_order,
+                                                  self.num_delays,
+                                                  gains[..., 0], gains[..., 1])
+            # absorption gains as SOS with GEQ fitting
+            else:
+                self.delay_line_gains = []
+                for k in range(self.num_delays):
+                    delay_line_biquads = BiquadCascade(filter_order,
+                                                       gains[k, :, :, 0],
+                                                       gains[k, :, :, 1])
+                    self.delay_line_gains.append(
+                        SOSFilter(filter_order, delay_line_biquads))
         else:
             self.delay_line_gains = gains
 
@@ -273,11 +243,19 @@ class FeedbackLoop(nn.Module):
         # this will be of size num_freq_points x Ndel x Ndel
         D = torch.diag_embed(torch.unsqueeze(z, dim=-1)**self.delays)
 
-        # this is of size Ndel x Ndel
         if self.use_absorption_filters:
-            # this is of size Ndel x Ndel x num_freq_points
-            Gamma = torch.einsum('ij,jk->ijk', torch.eye(self.num_delays),
-                                 self.delay_line_gains(z))
+            # are the gains in biquads?
+            if isinstance(self.delay_line_gains, list):
+                # this is of size Ndel x Ndel x num_freq_points
+                Gamma = torch.zeros(
+                    (self.num_delays, self.num_delays, num_freq_points),
+                    dtype=torch.complex64)
+                for k in range(self.num_delays):
+                    Gamma[k, k, :] = self.delay_line_gains[k](z)
+            else:
+                # this is of size Ndel x Ndel x num_freq_points
+                Gamma = torch.einsum('ij,jk->ijk', torch.eye(self.num_delays),
+                                     self.delay_line_gains(z))
         else:
             # this is of size Ndel x Ndel
             Gamma = to_complex(torch.diag(self.delay_line_gains))
