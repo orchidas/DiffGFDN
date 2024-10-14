@@ -319,13 +319,13 @@ def absorption_to_gain_per_sample(room_dims: Tuple, absorption_coeff: float,
     return (rt60, gain_per_sample)
 
 
-def decay_times_to_gain_filters(band_centre_hz: List,
-                                common_decay_times: List,
-                                delay_length_samp: List[int],
-                                fs: float,
-                                filter_order: int = 8,
-                                num_freq_bins: int = 2**10,
-                                plot_response: bool = False):
+def decay_times_to_gain_filters_prony(band_centre_hz: List,
+                                      common_decay_times: List,
+                                      delay_length_samp: List[int],
+                                      fs: float,
+                                      filter_order: int = 8,
+                                      num_freq_bins: int = 2**10,
+                                      plot_response: bool = False):
     """Fit filters to the common decay times in octave bands"""
     # the T60s for each delay line need to be attenuated
     num_delay_lines = len(delay_length_samp)
@@ -357,10 +357,12 @@ def decay_times_to_gain_filters(band_centre_hz: List,
         num_coeffs[i, :], den_coeffs[i, :] = prony_warped(
             interp_min_phase_ir, fs, filter_order, filter_order)
 
+    print(num_coeffs.shape, den_coeffs.shape)
     if plot_response:
         plot_t60_filter_response(band_centre_hz, delay_line_filters,
                                  num_coeffs, den_coeffs, fs,
                                  interp_delay_line_filter, num_freq_bins)
+
     return np.stack((num_coeffs, den_coeffs), axis=-1)
 
 
@@ -383,15 +385,17 @@ def decay_times_to_gain_filters_geq(band_centre_hz: List,
     den_coeffs = torch.zeros_like(num_coeffs)
 
     target_gains_linear = torch.tensor(
-        10**(-3 / fs / common_decay_times)).unsqueeze(-1)**delay_length_samp
+        10**(-3 / fs / common_decay_times)).unsqueeze(-1)**torch.tensor(
+            delay_length_samp, dtype=torch.int32)
     # pad target gains with 0.5x of the first/last values for the shelving filters
-    target_gains_linear = torch.cat(
+    target_gains_linear_pad = torch.cat(
         (target_gains_linear[0:1, :] * 0.5, target_gains_linear,
          target_gains_linear[-1:, :] * 0.5),
         dim=0)
+
     for i in range(len(delay_length_samp)):
         b, a = design_geq(
-            20 * torch.log10(target_gains_linear[:, i]),
+            db(target_gains_linear_pad[:, i]),
             center_freq=torch.tensor(band_centre_hz),
             shelving_crossover=torch.tensor(shelving_crossover_hz),
             fs=fs)
@@ -400,7 +404,8 @@ def decay_times_to_gain_filters_geq(band_centre_hz: List,
                                                           0), a.permute(1, 0)
 
     if plot_response:
-        plot_t60_filter_response(band_centre_hz, target_gains_linear,
-                                 num_coeffs, den_coeffs, fs)
+        plot_t60_filter_response(band_centre_hz, target_gains_linear.T,
+                                 num_coeffs.detach().numpy(),
+                                 den_coeffs.detach().numpy(), fs)
 
     return torch.stack((num_coeffs, den_coeffs), axis=-1)

@@ -2,10 +2,10 @@ from typing import List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
 from numpy.typing import ArrayLike, NDArray
 from scipy.fft import rfftfreq
-from scipy.signal import freqz
+from scipy.signal import freqz, sosfreqz
+import torch
 
 from .losses import get_edr_from_stft, get_stft_torch
 from .utils import db
@@ -25,19 +25,34 @@ def plot_t60_filter_response(
     freq_axis_one_sided = rfftfreq(num_freq_bins, d=1.0 / sample_rate)
 
     for k in range(num_delay_lines):
-        freq_axis, total_response[k, :] = freqz(num_coeffs[k, :],
-                                                den_coeffs[k, :],
-                                                worN=num_freq_bins,
-                                                fs=sample_rate)
+        if num_coeffs.ndim == 2:
+            freq_axis, total_response[k, :] = freqz(num_coeffs[k, :],
+                                                    den_coeffs[k, :],
+                                                    worN=num_freq_bins,
+                                                    fs=sample_rate)
+        else:
+            sos_coeffs = np.concatenate(
+                (num_coeffs[:, k, :], den_coeffs[:, k, :]), axis=-1)
+
+            for i in range(sos_coeffs.shape[0]):
+                sos_coeffs[i, :] /= sos_coeffs[i, 3]
+
+            freq_axis, total_response[k, :] = sosfreqz(sos_coeffs,
+                                                       worN=num_freq_bins,
+                                                       fs=sample_rate)
 
     plt.figure()
     line0 = plt.semilogx(freqs, db(desired_filter_mag.T), marker="o")
-    line1 = plt.semilogx(freq_axis_one_sided,
-                         db(np.abs(interp_delay_line_filter.T)),
-                         linestyle='--')
-    line2 = plt.semilogx(freq_axis, db(np.abs(total_response.T)))
-    plt.legend([line0[0], line1[0], line2[0]],
-               ["Measured", "Interpolated", "Warped prony fit"])
+    line1 = plt.semilogx(freq_axis, db(np.abs(total_response.T)))
+
+    if interp_delay_line_filter is not None:
+        line2 = plt.semilogx(freq_axis_one_sided,
+                             db(np.abs(interp_delay_line_filter.T)),
+                             linestyle='--')
+        plt.legend([line0[0], line1[0], line2[0]],
+                   ["Measured", "Warped prony fit", "Interpolated"])
+    else:
+        plt.legend([line0[0], line1[0]], ["Measured", "GEQ fit"])
     plt.xlabel('Frequency(Hz)')
     plt.ylabel('Magnitude (dB)')
     plt.ylim([-10, 5])

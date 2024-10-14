@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from ..utils import db
+from ..utils import db2lin
 from .functional import peak_filter, probe_sos, shelving_filter
 from .utils import minimize_LBFGS, RegularGridInterpolator
 
@@ -84,24 +84,24 @@ def geq(center_freq: torch.Tensor,
 
     for band in range(num_bands):
         if band == 0:
-            b = torch.tensor([db(gain_db[band]), 0, 0], device=device)
+            b = torch.tensor([db2lin(gain_db[band]), 0, 0], device=device)
             a = torch.tensor([1, 0, 0], device=device)
         elif band == 1:
             b, a = shelving_filter(shelving_freq[0],
-                                   db(gain_db[band]),
+                                   db2lin(gain_db[band]),
                                    'low',
                                    fs=fs,
                                    device=device)
         elif band == num_bands - 1:
             b, a = shelving_filter(shelving_freq[1],
-                                   db(gain_db[band]),
+                                   db2lin(gain_db[band]),
                                    'high',
                                    fs=fs,
                                    device=device)
         else:
             Q = torch.sqrt(R) / (R - 1)
             b, a = peak_filter(center_freq[band - 2],
-                               db(gain_db[band]),
+                               db2lin(gain_db[band]),
                                Q,
                                fs=fs,
                                device=device)
@@ -137,14 +137,15 @@ def design_geq(target_gain: torch.Tensor,
     nfft = 2**16
     num_freq = len(center_freq) + len(shelving_crossover)
     R = torch.tensor(2.7)
+
     # Control frequencies are spaced logarithmically
     num_control = 100
     control_freq = torch.round(
         torch.logspace(np.log10(1), np.log10(fs / 2.1), num_control + 1))
+
     # interpolate the target gain values at control frequencies
     target_freq = torch.cat(
         (torch.tensor([1]), center_freq, torch.tensor([fs / 2.1])))
-    # targetInterp = torch.tensor(np.interp(control_freq, target_freq, target_gain.squeeze()))
     interp = RegularGridInterpolator([target_freq], target_gain)
     targetInterp = interp([control_freq])
 
