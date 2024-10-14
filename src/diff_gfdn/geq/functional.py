@@ -1,63 +1,18 @@
-import torch
+from typing import List, Tuple, Union
+
 import numpy as np
 import scipy.signal
+import torch
+
+from ..utils import hertz2rad
 from .utils import RegularGridInterpolator
 
-def get_magnitude(x):
-    r"""
-    Gets the magnitude of a complex tensor.
+# pylint: disable=C0301
 
-        **Args**:
-            x (torch.tensor): The input tensor.
 
-        **Returns**:
-            torch.tensor: The magnitude of x.
+def biquad2tf(b: torch.Tensor, a: torch.Tensor, nfft: int):
     """
-    # get the magnitude of a complex tensor
-    return torch.abs(x)
-
-def get_eigenvalues(x: torch.Tensor):
-    r"""
-    Gets the eigenvalues of a complex tensor.
-    The last two dimensions of the input tensor must be identical.
-
-        **Args**:
-            x (torch.tensor): The input tensor.
-
-        **Returns**:
-            torch.tensor: The eigenvalues of x.
-    """
-    assert(x.shape[-1] == x.shape[-2])
-    if x.shape[-1] == 1:
-        return x
-    
-    return torch.linalg.eigvals(x)
-
-def skew_matrix(X):
-    r"""
-    Generate a skew symmetric matrix from a given matrix X.
-    """
-    A = X.triu(1)
-    return A - A.transpose(-1, -2)
-
-def get_frequency_samples(num, device=None):
-    r'''
-    Get frequency samples (in radians) sampled at linearly spaced points along the unit circle.
-    
-    **Args**
-        - num (int): number of frequency samples
-        - device (torch.device, optional): The device of constructed tensors. Default: None.
-        
-    **Returns**
-        - frequency samples in radians between [0, pi]
-    '''
-    angle = torch.linspace(0, 1, num, device=device)
-    abs = torch.ones(num, device=device)
-    return torch.polar(abs, angle * np.pi)
-
-def biquad2tf(b, a, nfft):
-    """
-    Converts a biquad filter representation to a transfer function.
+    Convert a biquad filter representation to a transfer function.
     Shape of :math:`b` and :math:`a` is (3, n_sections)
 
     **Args**:
@@ -75,7 +30,8 @@ def biquad2tf(b, a, nfft):
     B = torch.fft.rfft(b, nfft, dim=0)
     A = torch.fft.rfft(a, nfft, dim=0)
     H = torch.prod(B, dim=1) / torch.prod(A, dim=1)
-    return H    
+    return H
+
 
 def signal_gallery(
     batch_size: int,
@@ -89,7 +45,7 @@ def signal_gallery(
 ):
     r"""
     Generate a tensor containing a signal based on the specified signal type.
-    
+
     Supported signal types are:
     - impulse: A single impulse at the first sample, followed by :attr:`n_samples-1` zeros.
     - sine: A sine wave of frequency :attr:`rate` Hz, if given. Otherwise, a sine wave of frequency 1 Hz.
@@ -110,7 +66,6 @@ def signal_gallery(
         **Returns**:
             - torch.Tensor: A tensor of shape (batch_size, n_samples, n) containing the generated signals.
     """
-
     signal_types = {
         "impulse",
         "sine",
@@ -127,90 +82,41 @@ def signal_gallery(
         x[:, 0, :] = 1
         return x.to(device)
     elif signal_type == "sine":
-        if rate is not None: 
+        if rate is not None:
+            return torch.sin(2 * np.pi * rate / fs * torch.linspace(
+                0, n_samples / fs, n_samples)).unsqueeze(-1).expand(
+                    batch_size, n_samples, n).to(device)
+        else:
             return torch.sin(
-                2 * np.pi * rate / fs * torch.linspace(0, n_samples/fs, n_samples)
-                ).unsqueeze(-1).expand(batch_size, n_samples, n).to(device)
-        else :
-            return torch.sin(
-                torch.linspace(0, 2 * np.pi, n_samples)
-                .unsqueeze(-1)
-                .expand(batch_size, n_samples, n)
-            ).to(device)
+                torch.linspace(0, 2 * np.pi, n_samples).unsqueeze(-1).expand(
+                    batch_size, n_samples, n)).to(device)
     elif signal_type == "sweep":
         t = torch.linspace(0, n_samples / fs - 1 / fs, n_samples)
-        x = torch.tensor(
-            scipy.signal.chirp(t, f0=20, f1=20000, t1=t[-1], method="linear"),
-            device=device
-        ).unsqueeze(-1)
+        x = torch.tensor(scipy.signal.chirp(t,
+                                            f0=20,
+                                            f1=20000,
+                                            t1=t[-1],
+                                            method="linear"),
+                         device=device).unsqueeze(-1)
         return x.expand(batch_size, n_samples, n)
     elif signal_type == "wgn":
         return torch.randn((batch_size, n_samples, n), device=device)
     elif signal_type == "exp":
-        return torch.exp(-rate * torch.arange(n_samples) / fs ).unsqueeze(-1).expand(batch_size, n_samples, n).to(device)
+        return torch.exp(-rate * torch.arange(n_samples) /
+                         fs).unsqueeze(-1).expand(batch_size, n_samples,
+                                                  n).to(device)
     elif signal_type == "reference":
         if isinstance(reference, torch.Tensor):
             return reference.expand(batch_size, n_samples, n).to(device)
         else:
-            return torch.tensor(reference, device=device).expand(batch_size, n_samples, n)
-        
-def hertz2rad(hertz: torch.Tensor, fs):
-    r'''
-    Convert frequency from cycles per second to rad
-    .. math::
-        \omega = \frac{2\pi f}{f_s}
-    where :math:`f` is the frequency in Hz and :math:`f_s` is the sampling frequency in Hz.
+            return torch.tensor(reference,
+                                device=device).expand(batch_size, n_samples, n)
 
-    **Args**:
-        - hertz (torch.Tensor): The frequency in Hz.
-        - fs (int): The sampling frequency in Hz.
-    '''
-    return torch.divide(hertz, fs)*2*torch.pi
 
-def rad2hertz(rad: torch.Tensor, fs):
-    r'''
-    Convert frequency from rad to cycles per second
-    .. math::
-        f = \frac{\omega f_s}{2\pi}
-    where :math:`\omega` is the frequency in rad and :math:`f_s` is the sampling frequency in Hz.
-
-    **Args**:
-        - rad (torch.Tensor): The frequency in rad.
-        - fs (int): The sampling frequency in Hz.
-    '''
-    return torch.divide(rad*fs, 2*torch.pi)
-
-def db2mag(db):
-    r"""
-    Convert a value from decibels (dB) to magnitude.
-    .. math::
-        \text{magnitude} = 10^{db/20}
-    where :math:`db` is the input value in decibels.
-
-    **Args**:
-        - db (float): The value in decibels.
-    **Returns**:
-        - float: The corresponding magnitude value.
-    """
-
-    return 10**(db/20)
-
-def mag2db(mag):
-    r"""
-    Convert a value from magnitude to decibels (dB).
-    .. math::
-        \text{dB} = 20\log_{10}(\text{magnitude})
-    where :math:`\text{magnitude}` is the input value in magnitude.
-
-    **Args**:
-        - mag (float): The value in magnitude.
-    **Returns**:
-        - float: The corresponding value in decibels.
-    """
-
-    return 20*torch.log10(torch.abs(mag))
-
-def lowpass_filter(fc: float=500.0, gain:float=0.0, fs: int=48000, device=None) -> tuple:
+def lowpass_filter(fc: float = 500.0,
+                   gain: float = 0.0,
+                   fs: int = 48000,
+                   device=None) -> tuple:
     r"""
     Lowpass filter coefficients. It uses the `RBJ cookbook formulas <https://webaudio.github.io/Audio-EQ-Cookbook/Audio-EQ-Cookbook.txt>`_ to map 
     the cutoff frequency and gain to the filter coefficients to the to the :math:`\mathbf{b}` and :math:`\mathbf{a}` biquad coefficients.
@@ -240,10 +146,9 @@ def lowpass_filter(fc: float=500.0, gain:float=0.0, fs: int=48000, device=None) 
         - b (ndarray): The numerator coefficients of the filter transfer function.
         - a (ndarray): The denominator coefficients of the filter transfer function.
     """
-
     omegaC = hertz2rad(fc, fs).to(device=device)
     two = torch.tensor(2, device=device)
-    alpha = torch.sin(omegaC)/2 * torch.sqrt(two)
+    alpha = torch.sin(omegaC) / 2 * torch.sqrt(two)
     cosOC = torch.cos(omegaC)
 
     a = torch.ones(3, *omegaC.shape, device=device)
@@ -253,12 +158,16 @@ def lowpass_filter(fc: float=500.0, gain:float=0.0, fs: int=48000, device=None) 
     b[1] = 1 - cosOC
     b[2] = (1 - cosOC) / 2
     a[0] = 1 + alpha
-    a[1] = - 2 * cosOC
+    a[1] = -2 * cosOC
     a[2] = 1 - alpha
 
-    return 10**(gain/20)*b, a
+    return 10**(gain / 20) * b, a
 
-def highpass_filter(fc: float=10000.0, gain:float=0.0, fs: int=48000, device=None) -> tuple:
+
+def highpass_filter(fc: float = 10000.0,
+                    gain: float = 0.0,
+                    fs: int = 48000,
+                    device=None) -> tuple:
     r"""
     Highpass filter coefficients. It uses the `RBJ cookbook formulas <https://webaudio.github.io/Audio-EQ-Cookbook/Audio-EQ-Cookbook.txt>`_ to map 
     the cutoff frequency and gain to the filter coefficients to the to the :math:`\mathbf{b}` and :math:`\mathbf{a}` biquad coefficients.
@@ -282,30 +191,34 @@ def highpass_filter(fc: float=10000.0, gain:float=0.0, fs: int=48000, device=Non
             - gain (float, optional): The gain of the filter in dB. Default: 0 dB.
             - fs (int, optional): The sampling frequency of the signal in Hz. Default: 48000 Hz.
             - device (torch.device, optional): The device of constructed tensors. Default: None.
-            
+
         **Returns**:
             - b (ndarray): The numerator coefficients of the filter transfer function.
             - a (ndarray): The denominator coefficients of the filter transfer function.
     """
-
     omegaC = hertz2rad(fc, fs)
     two = torch.tensor(2, device=device)
-    alpha = torch.sin(omegaC)/2 * torch.sqrt(two)
+    alpha = torch.sin(omegaC) / 2 * torch.sqrt(two)
     cosOC = torch.cos(omegaC)
 
     a = torch.ones(3, *omegaC.shape, device=device)
     b = torch.ones(3, *omegaC.shape, device=device)
 
     b[0] = (1 + cosOC) / 2
-    b[1] = - (1 + cosOC)
+    b[1] = -(1 + cosOC)
     b[2] = (1 + cosOC) / 2
     a[0] = 1 + alpha
-    a[1] = - 2 * cosOC
+    a[1] = -2 * cosOC
     a[2] = 1 - alpha
 
-    return 10**(gain/20)*b, a
+    return 10**(gain / 20) * b, a
 
-def bandpass_filter(fc1:torch.Tensor, fc2:torch.Tensor, gain:float=0.0, fs: int=48000, device=None) -> tuple:
+
+def bandpass_filter(fc1: torch.Tensor,
+                    fc2: torch.Tensor,
+                    gain: float = 0.0,
+                    fs: int = 48000,
+                    device=None) -> tuple:
     r"""
     Bandpass filter coefficients. It uses the `RBJ cookbook formulas <https://webaudio.github.io/Audio-EQ-Cookbook/Audio-EQ-Cookbook.txt>`_ to map 
     the cutoff frequencies and gain to the filter coefficients to the to the :math:`\mathbf{b}` and :math:`\mathbf{a}` biquad coefficients.
@@ -322,7 +235,7 @@ def bandpass_filter(fc1:torch.Tensor, fc2:torch.Tensor, gain:float=0.0, fs: int=
         a_0 = 1 + \alpha,\;\; a_1 = -2 \cos(\omega_c),\;\; a_2 = 1 - \alpha
 
     where 
-    
+
     .. math::
         \omega_c = \frac{2\pi f_{c1} + 2\pi f_{c2}}{2 f_s}`,
 
@@ -340,16 +253,16 @@ def bandpass_filter(fc1:torch.Tensor, fc2:torch.Tensor, gain:float=0.0, fs: int=
             - gain (float, optional): The gain of the filter in dB. Default: 0 dB.
             - fs (int, optional): The sampling frequency of the signal in Hz. Default: 48000 Hz.
             - device (torch.device, optional): The device of constructed tensors. Default: None.
-            
+
         **Returns**:
             - b (ndarray): The numerator coefficients of the filter transfer function.
             - a (ndarray): The denominator coefficients of the filter transfer function.
     """
-
     omegaC = (hertz2rad(fc1, fs) + hertz2rad(fc2, fs)) / 2
-    BW = torch.log2(fc2/fc1)
+    BW = torch.log2(fc2 / fc1)
     two = torch.tensor(2, device=device)
-    alpha = torch.sin(omegaC) * torch.sinh(torch.log(two) / two * BW * (omegaC / torch.sin(omegaC)))
+    alpha = torch.sin(omegaC) * torch.sinh(
+        torch.log(two) / two * BW * (omegaC / torch.sin(omegaC)))
 
     cosOC = torch.cos(omegaC)
 
@@ -358,14 +271,19 @@ def bandpass_filter(fc1:torch.Tensor, fc2:torch.Tensor, gain:float=0.0, fs: int=
 
     b[0] = alpha
     b[1] = 0
-    b[2] = - alpha
+    b[2] = -alpha
     a[0] = 1 + alpha
-    a[1] = - 2 * cosOC
+    a[1] = -2 * cosOC
     a[2] = 1 - alpha
 
-    return 10**(gain/20)*b, a
+    return 10**(gain / 20) * b, a
 
-def shelving_filter(fc:torch.Tensor, gain:torch.Tensor, type:str='low', fs: int=48000, device=None):
+
+def shelving_filter(fc: torch.Tensor,
+                    gain: torch.Tensor,
+                    filt_type: str = 'low',
+                    fs: int = 48000,
+                    device=None):
     r"""
     Shelving filter coefficents. 
     Outputs the cutoff frequencies and gain to the filter coefficients to the to the :math:`\mathbf{b}` and :math:`\mathbf{a}` biquad coefficients.
@@ -377,7 +295,7 @@ def shelving_filter(fc:torch.Tensor, gain:torch.Tensor, type:str='low', fs: int=
         b_0 = g^{1/2} ( g^{1/2} \tau^2 + \sqrt{2} \tau g^{1/4} + 1 ),\;\; b_1 = g^{1/2} (2 g^{1/2} \tau^2 - 2 ),\;\; b_2 = g^{1/2} ( g^{1/2} \tau^2 - \sqrt{2} \tau g^{1/4} + 1 )
 
         a_0 = g^{1/2} + \sqrt{2} \tau g^{1/4} + \tau^2,\;\; a_1 = 2 \tau^{2} - 2 g^{1/2} ,\;\; a_2 = g^{1/2} - \sqrt{2} \tau g^{1/4} + \tau^2
-    
+
     for high shelving filter:
     .. math::
         b_0 = g ( g^{1/2} + \sqrt{2} \tau g^{1/4} + \tau^2 ),\;\; a_1 = g ( 2 \tau^{2} - 2 g^{1/2} ),\;\; a_2 = g (g^{1/2} - \sqrt{2} \tau g^{1/4} + \tau^2)
@@ -389,10 +307,10 @@ def shelving_filter(fc:torch.Tensor, gain:torch.Tensor, type:str='low', fs: int=
         **Args**:
             - fc (torch.Tensor): The cutoff frequency of the filter in Hz.
             - gain (torch.Tensor): The linear gain of the filter.
-            - type (str, optional): The type of shelving filter. Can be 'low' or 'high'. Default: 'low'.
+            - filt_type (str, optional): The type of shelving filter. Can be 'low' or 'high'. Default: 'low'.
             - fs (int, optional): The sampling frequency of the signal in Hz.
             - device (torch.device, optional): The device of constructed tensors. Default: None.
-            
+
         **Returns**:
             - b (torch.Tensor): The numerator coefficients of the filter transfer function.
             - a (torch.Tensor): The denominator coefficients of the filter transfer function.
@@ -402,9 +320,9 @@ def shelving_filter(fc:torch.Tensor, gain:torch.Tensor, type:str='low', fs: int=
 
     omegaC = hertz2rad(fc, fs)
     t = torch.tan(omegaC / 2)
-    t2 = t ** 2
-    g2 = gain ** 0.5
-    g4 = gain ** 0.25
+    t2 = t**2
+    g2 = gain**0.5
+    g4 = gain**0.25
 
     two = torch.tensor(2, device=device)
     b[0] = g2 * t2 + torch.sqrt(two) * t * g4 + 1
@@ -417,14 +335,19 @@ def shelving_filter(fc:torch.Tensor, gain:torch.Tensor, type:str='low', fs: int=
 
     b = g2 * b
 
-    if type == 'high':
+    if filt_type == 'high':
         tmp = torch.clone(b)
         b = a * gain
         a = tmp
 
     return b, a
 
-def peak_filter(fc:torch.Tensor, gain:torch.Tensor, Q:torch.Tensor,  fs: int=48000, device=None) -> tuple:
+
+def peak_filter(fc: torch.Tensor,
+                gain: torch.Tensor,
+                Q: torch.Tensor,
+                fs: int = 48000,
+                device=None) -> tuple:
     r"""
     Peak filter coefficients.
     Outputs the cutoff frequencies and gain to the filter coefficients to the to the :math:`\mathbf{b}` and :math:`\mathbf{a}` biquad coefficients.
@@ -467,6 +390,7 @@ def peak_filter(fc:torch.Tensor, gain:torch.Tensor, Q:torch.Tensor,  fs: int=480
 
     return b, a
 
+
 def sosfreqz(sos: torch.Tensor, nfft: int = 512):
     """
     Compute the complex frequency response via FFT of cascade of biquads
@@ -478,7 +402,7 @@ def sosfreqz(sos: torch.Tensor, nfft: int = 512):
         **Returns**:
             - H (torch.Tensor): Overall complex frequency response with shape (bs, n_bins)
     """
-    n_sections, n_coeffs = sos.size()
+    _, n_coeffs = sos.size()
     assert n_coeffs == 6  # must be second order
 
     B = torch.fft.rfft(sos[:, :3], nfft, dim=-1)
@@ -486,9 +410,16 @@ def sosfreqz(sos: torch.Tensor, nfft: int = 512):
     H = torch.prod(B, dim=0) / (torch.prod(A, dim=0))
     return H
 
-def svf(fc: torch.Tensor, R: torch.Tensor, m: torch.Tensor = torch.ones((3,)), G: torch.Tensor=None, filter_type=None, fs: int=48000, device=None):
+
+def svf(fc: torch.Tensor,
+        R: torch.Tensor,
+        m: torch.Tensor = torch.ones((3, )),
+        G: torch.Tensor = None,
+        filter_type=None,
+        fs: int = 48000,
+        device=None):
     r"""
-    Implements a State Variable Filter (SVF) with various filter types.
+    Implement a State Variable Filter (SVF) with various filter types.
 
         **Args**:
             - fc (torch.Tensor): The cutoff frequency of the filter.
@@ -498,13 +429,12 @@ def svf(fc: torch.Tensor, R: torch.Tensor, m: torch.Tensor = torch.ones((3,)), G
             - filter_type (str, optional): The type of filter to be applied. Can be one of "lowpass", "highpass", "bandpass", "lowshelf", "highshelf", "peaking", "notch", or None. Default: None.
             - fs (int, optional): The sampling frequency. Default: 48000.
             - device (torch.device, optional): The device of constructed tensors. Default: None.
-                    
+
         **Returns**:
             Tuple[torch.Tensor, torch.Tensor]: The numerator and denominator coefficients of the filter transfer function.
 
     """
-    
-    f = torch.tan(torch.pi * fc/fs)
+    f = torch.tan(torch.pi * fc / fs)
     assert (R > 0).any(), "Resonance must be positive to ensure stability"
 
     if G is None:
@@ -512,43 +442,69 @@ def svf(fc: torch.Tensor, R: torch.Tensor, m: torch.Tensor = torch.ones((3,)), G
 
     if filter_type == "lowpass":
         m = torch.cat(
-            ((torch.ones_like(G)).unsqueeze(-1),
+            (
+                (torch.ones_like(G)).unsqueeze(-1),
                 (torch.zeros_like(G)).unsqueeze(-1),
-                torch.zeros_like(G).unsqueeze(-1),),dim=-1,)
+                torch.zeros_like(G).unsqueeze(-1),
+            ),
+            dim=-1,
+        )
     elif filter_type == "highpass":
         m = torch.cat(
-            ((torch.zeros_like(G)).unsqueeze(-1),
+            (
                 (torch.zeros_like(G)).unsqueeze(-1),
-                torch.ones_like(G).unsqueeze(-1),),dim=-1,)
+                (torch.zeros_like(G)).unsqueeze(-1),
+                torch.ones_like(G).unsqueeze(-1),
+            ),
+            dim=-1,
+        )
     elif filter_type == "bandpass":
         m = torch.cat(
-            ((torch.zeros_like(G)).unsqueeze(-1),
+            (
+                (torch.zeros_like(G)).unsqueeze(-1),
                 (torch.ones_like(G)).unsqueeze(-1),
-                torch.zeros_like(G).unsqueeze(-1),),dim=-1,)
+                torch.zeros_like(G).unsqueeze(-1),
+            ),
+            dim=-1,
+        )
     elif filter_type == "lowshelf":
         m = torch.cat(
-            ((torch.ones_like(G)).unsqueeze(-1),
+            (
+                (torch.ones_like(G)).unsqueeze(-1),
                 (2 * R * torch.sqrt(G)).unsqueeze(-1),
-                (G * torch.ones_like(G)).unsqueeze(-1),),dim=-1,)
-    elif filter_type ==  "highshelf":
+                (G * torch.ones_like(G)).unsqueeze(-1),
+            ),
+            dim=-1,
+        )
+    elif filter_type == "highshelf":
         m = torch.cat(
-            ((G * torch.ones_like(G)).unsqueeze(-1),
+            (
+                (G * torch.ones_like(G)).unsqueeze(-1),
                 (2 * R * torch.sqrt(G)).unsqueeze(-1),
-                (torch.ones_like(G)).unsqueeze(-1),),dim=-1,)
-    elif filter_type == "peaking" or filter_type == "notch":
+                (torch.ones_like(G)).unsqueeze(-1),
+            ),
+            dim=-1,
+        )
+    elif filter_type in ("peaking", "notch"):
         m = torch.cat(
-            ((torch.ones_like(G)).unsqueeze(-1),
+            (
+                (torch.ones_like(G)).unsqueeze(-1),
                 (2 * R * torch.sqrt(G)).unsqueeze(-1),
-                (torch.ones_like(G)).unsqueeze(-1),),dim=-1,)
-    else: 
-        print("The filter type not specified or not in the list. Using the given mixing coefficents.")
+                (torch.ones_like(G)).unsqueeze(-1),
+            ),
+            dim=-1,
+        )
+    else:
+        print(
+            "The filter type not specified or not in the list. Using the given mixing coefficents."
+        )
 
     b = torch.zeros((3, *f.shape), device=device)
     a = torch.zeros((3, *f.shape), device=device)
 
-    b[0] = (f**2) * m[...,0] + f * m[...,1] + m[...,2]
-    b[1] = 2 * (f**2) * m[...,0] - 2 * m[...,2]
-    b[2] = (f**2) * m[...,0] - f * m[...,1] + m[...,2]
+    b[0] = (f**2) * m[..., 0] + f * m[..., 1] + m[..., 2]
+    b[1] = 2 * (f**2) * m[..., 0] - 2 * m[..., 2]
+    b[2] = (f**2) * m[..., 0] - f * m[..., 1] + m[..., 2]
 
     a[0] = (f**2) + 2 * R * f + 1
     a[1] = 2 * (f**2) - 2
@@ -556,8 +512,13 @@ def svf(fc: torch.Tensor, R: torch.Tensor, m: torch.Tensor = torch.ones((3,)), G
 
     return b, a
 
-def probe_sos(sos, control_freqs, nfft, fs, device=None):
-    r''' Probe the frequency / magnitude response of a cascaded SOS filter at the points
+
+def probe_sos(sos: torch.Tensor,
+              control_freqs: Union[List, torch.Tensor],
+              nfft: int,
+              fs: float,
+              device=None):
+    r"""Probe the frequency / magnitude response of a cascaded SOS filter at the points
     specified by the control frequencies.
 
         **Args**:
@@ -571,60 +532,38 @@ def probe_sos(sos, control_freqs, nfft, fs, device=None):
                 - G (torch.Tensor): Magnitude response of the filter at the control frequencies.
                 - H (torch.Tensor): Frequency response of the filter.
                 - W (torch.Tensor): Phase response of the filter.
-    '''
+    """
     n_freqs = sos.shape[-1]
-    
-    H = torch.zeros((nfft//2+1, n_freqs), dtype=torch.cdouble, device=device)
-    W = torch.zeros((nfft//2+1, n_freqs), device=device)
+
+    H = torch.zeros((nfft // 2 + 1, n_freqs),
+                    dtype=torch.cdouble,
+                    device=device)
+    W = torch.zeros((nfft // 2 + 1, n_freqs), device=device)
     G = torch.zeros((len(control_freqs), n_freqs), device=device)
-    
+
     for band in range(n_freqs):
         sos[:, band] = sos[:, band] / sos[3, band]
 
         B = torch.fft.rfft(sos[:3, band], nfft, dim=0)
         A = torch.fft.rfft(sos[3:, band], nfft, dim=0)
         h = B / (A + torch.tensor(1e-10, device=device))
-        f = torch.fft.rfftfreq(nfft, 1/fs)
-        interp = RegularGridInterpolator([f],  20 * torch.log10(torch.abs(h)))
-        g = interp([control_freqs])  
+        f = torch.fft.rfftfreq(nfft, 1 / fs)
+        interp = RegularGridInterpolator([f], 20 * torch.log10(torch.abs(h)))
+        g = interp([control_freqs])
 
         G[:, band] = g
         H[:, band] = h
-        W[:, band] = 2*torch.pi*f/fs
+        W[:, band] = 2 * torch.pi * f / fs
 
     return G, H, W
 
-def find_onset(rir):
-    # TODO add proper docstring
-    r''' find onset in input RIR by extracting a local energy envelope of the 
-    RIR then finding its maximum point'''
-    # extract local energy envelope 
-    win_len = 64
-    overlap = 0.75
-    win = torch.hann_window(win_len)
 
-    # pad rir 
-    rir = torch.nn.functional.pad(rir, (int(win_len * overlap), int(win_len * overlap)))
-    hop = (1 - overlap)
-    n_wins = np.floor(rir.shape[0] / (win_len * hop) - 1/2/hop)
-
-    local_energy = []
-    for i in range(1, int(n_wins - 1)):
-        local_energy.append(
-            torch.sum(
-                (rir[(i-1)*int(win_len*hop):(i-1)*int(win_len*hop) + win_len] ** 2) * win
-            ).item()
-        )
-    # discard trailing points 
-    # remove (1/2/hop) to avoid map to negative time (center of window) 
-    n_win_discard = (overlap/hop) - (1/2/hop) 
-
-    local_energy = local_energy[int(n_win_discard):]
-    return int(win_len * hop * (np.argmax(local_energy) - 1))    # one hopsize as safety margin 
-
-def WGN_reverb(matrix_size: tuple=(1,1), t60: float=1.0, samplerate: int=48000, device=None) -> torch.Tensor:
+def WGN_reverb(matrix_size: Tuple = (1, 1),
+               t60: float = 1.0,
+               samplerate: int = 48000,
+               device=None) -> torch.Tensor:
     r"""
-    Generates White-Gaussian-Noise-reverb impulse responses.
+    Generate White-Gaussian-Noise-reverb impulse responses.
 
         **Args**:
             - matrix_size (tuple, optional): (output_channels, input_channels). Defaults to (1,1).
@@ -640,9 +579,11 @@ def WGN_reverb(matrix_size: tuple=(1,1), t60: float=1.0, samplerate: int=48000, 
     # White Guassian Noise
     noise = torch.randn(n_samples, *matrix_size, device=device)
     # Decay
-    dr = t60/torch.log(torch.tensor(1000, dtype=torch.float32, device=device))
-    decay = torch.exp(-1/dr*torch.linspace(0, t60, n_samples))
-    decay = decay.view(-1, *(1,)*(len(matrix_size))).expand(-1, *matrix_size)
+    dr = t60 / torch.log(torch.tensor(1000, dtype=torch.float32,
+                                      device=device))
+    decay = torch.exp(-1 / dr * torch.linspace(0, t60, n_samples))
+    decay = decay.view(-1,
+                       *(1, ) * (len(matrix_size))).expand(-1, *matrix_size)
     # Decaying WGN
     IRs = torch.mul(noise, decay)
     # Go to frequency domain
@@ -652,10 +593,15 @@ def WGN_reverb(matrix_size: tuple=(1,1), t60: float=1.0, samplerate: int=48000, 
     fc_left = torch.tensor([20], dtype=torch.float32, device=device)
     fc_right = torch.tensor([20000], dtype=torch.float32, device=device)
     g = torch.tensor([1], dtype=torch.float32, device=device)
-    b,a = bandpass_filter(fc1=fc_left, fc2=fc_right, gain=g, fs=samplerate, device=device)
-    sos = torch.cat((b.reshape(1,3), a.reshape(1,3)), dim=1)
+    b, a = bandpass_filter(fc1=fc_left,
+                           fc2=fc_right,
+                           gain=g,
+                           fs=samplerate,
+                           device=device)
+    sos = torch.cat((b.reshape(1, 3), a.reshape(1, 3)), dim=1)
     bp_H = sosfreqz(sos=sos, nfft=n_samples).squeeze()
-    bp_H = bp_H.view(*bp_H.shape, *(1,)*(len(TFs.shape)-1)).expand(*TFs.shape)
+    bp_H = bp_H.view(*bp_H.shape,
+                     *(1, ) * (len(TFs.shape) - 1)).expand(*TFs.shape)
 
     # Apply bandpass filter
     TFs = torch.mul(TFs, bp_H)
@@ -664,5 +610,5 @@ def WGN_reverb(matrix_size: tuple=(1,1), t60: float=1.0, samplerate: int=48000, 
     IRs = torch.fft.irfft(input=TFs, n=n_samples, dim=0)
 
     # Normalize
-    vec_norms = torch.linalg.vector_norm(IRs, ord=2, dim=(0))
+    vec_norms = torch.linalg.vector_norm(IRs, ord=2, dim=0)
     return IRs / vec_norms

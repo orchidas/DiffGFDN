@@ -1,28 +1,12 @@
+from itertools import product
+from typing import List, Tuple, Union
+
 import torch
 from torch import nn
 from torch.optim import LBFGS
-import torch 
-import soundfile as sf
-from itertools import product
 
-def get_device():
-    r""" Output 'cuda' if gpu is available, 'cpu' otherwise """
-    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# pylint:disable=W0612
 
-def to_complex(x):
-    r"""
-    Converts a real tensor to a complex tensor.
-
-        **Args**:
-            x (torch.Tensor): The input tensor.
-
-        **Returns**:
-            torch.Tensor: The complex tensor with the same shape as the input tensor.
-    """
-    return torch.complex(x, torch.zeros_like(x))
-
-def save_audio(filepath, x, fs=48000):
-    sf.write(filepath, x.cpu().numpy(), fs)
 
 class RegularGridInterpolator:
     """
@@ -45,11 +29,12 @@ class RegularGridInterpolator:
             - torch.Tensor: The interpolated values.
     """
 
-    def __init__(self, points, values):
+    def __init__(self, points: Union[Tuple, List], values: torch.Tensor):
+        """Initialise the grid"""
         self.points = points
         self.values = values
 
-        assert isinstance(self.points, tuple) or isinstance(self.points, list)
+        assert isinstance(self.points, (tuple, list))
         assert isinstance(self.values, torch.Tensor)
 
         self.ms = list(self.values.shape)
@@ -61,7 +46,8 @@ class RegularGridInterpolator:
             assert isinstance(p, torch.Tensor)
             assert p.shape[0] == self.values.shape[i]
 
-    def __call__(self, points_to_interp):
+    def __call__(self, points_to_interp: Union[Tuple, List]):
+        """Interpolate values at a new set of points"""
         assert self.points is not None
         assert self.values is not None
 
@@ -96,33 +82,66 @@ class RegularGridInterpolator:
                 torch.prod(torch.stack(bs_s), dim=0)
         denominator = torch.prod(torch.stack(overalls), dim=0)
         return numerator / denominator
-    
+
+
 class MLS(nn.Module):
-    def __init__(self, G, target_interp):
+    """Magnitude least squares function for optimisation of GEQ"""
+
+    def __init__(self, G: torch.Tensor, target_interp: torch.Tensor):
+        """
+        Initialise MLS solver
+        Args:
+            G (torch.tensor): interaction matrix
+            target_interp (torch.tensor): interpolated target gains
+        """
         super().__init__()
         self.G = G
         self.target_interp = target_interp
 
-    def forward(self, x):
-        return torch.mean(torch.pow(torch.matmul(self.G, x) - self.target_interp, 2))
+    def forward(self, x: torch.tensor):
+        """
+        Args:
+            x (torch.tensor): command gains
+        """
+        return torch.mean(
+            torch.pow(torch.matmul(self.G, x) - self.target_interp, 2))
 
 
-def minimize_LBFGS(G, target_interp, lower_bound, upper_bound, num_freq, max_iter=100):
-
+def minimize_LBFGS(G: torch.Tensor,
+                   target_interp: torch.Tensor,
+                   lower_bound: float,
+                   upper_bound: float,
+                   num_freq: int,
+                   max_iter: int = 100) -> torch.Tensor:
+    """
+    LBFGS minimizer for finding command gains of GEQ
+    Args:
+        G (torch.Tensor): interaction matrix of size (K x L+1)
+        target_interp (torch.Tensor): target gains
+        lower_bound (float): lower bound on command gain
+        upper_bound (float): upper bound on command gain
+        num_freq (int): number of frequency points (same length as target gain)
+        max_iter (int): maximum number of iterations for optimiser
+    Returns:
+        torch.Tensor: optimised command gains
+    """
     initial_guess = nn.Parameter(torch.ones(num_freq + 1))
-    assert len(lower_bound) == len(upper_bound) == len(initial_guess), 'The number of bounds must be equal to the number of gains.'
-    
+    assert len(lower_bound) == len(upper_bound) == len(
+        initial_guess
+    ), 'The number of bounds must be equal to the number of gains.'
+
     # Create an instance of LBFGS optimizer
     optimizer = LBFGS([initial_guess])
     criterion = MLS(G, target_interp)
+
     # Define a closure for the LBFGS optimizer
     def closure():
         optimizer.zero_grad()
         loss = criterion(initial_guess)
         loss.backward()
-        initial_guess.data.clamp_(lower_bound, upper_bound) 
+        initial_guess.data.clamp_(lower_bound, upper_bound)
         return loss
-    
+
     # Perform optimization
     for i in range(max_iter):
         optimizer.step(closure)

@@ -10,8 +10,7 @@ include = ["diff_gfdn"]
 
 [project]
 name = "DiffGFDN"
-description = "Differentiable Grouped Feedback Delay Networks \
-for dynamic and efficient late reverberation rendering in coupled spaces"
+description = "Differentiable Grouped Feedback Delay Networks for dynamic and efficient late reverberation rendering in coupled spaces"
 version = "0.0.1"
 requires-python = ">=3.8"
 readme = "README.md"

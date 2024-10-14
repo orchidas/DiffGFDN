@@ -1,16 +1,16 @@
 import os
-import re
 from pathlib import Path
+import re
 from typing import List, Optional
 
+from loguru import logger
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
-from loguru import logger
 from scipy.io import savemat
+import torch
 
 from .config.config import DiffGFDNConfig
-from .dataloader import RIRData, ThreeRoomDataset, load_dataset
+from .dataloader import load_dataset, RIRData, ThreeRoomDataset
 from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
 from .trainer import SinglePosTrainer, VarReceiverPosTrainer
 
@@ -95,7 +95,8 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
     logger.info("Training over a grid of listener positions")
 
     # read the coupled room dataset
-    room_data = ThreeRoomDataset(Path(config_dict.room_dataset_path).resolve())
+    room_data = ThreeRoomDataset(Path(config_dict.room_dataset_path).resolve(),
+                                 config_dict=config_dict)
 
     # add number of groups to the config dictionary
     config_dict = config_dict.copy(update={"num_groups": room_data.num_rooms})
@@ -108,6 +109,12 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
 
     # get the training config
     trainer_config = config_dict.trainer_config
+    # update num_freq_bins in pydantic class
+    trainer_config = trainer_config.model_copy(
+        update={"num_freq_bins": room_data.num_freq_bins})
+    # also update the calculation of reduced_pole_radius
+    trainer_config = trainer_config.calculate_reduced_pole_radius(
+        trainer_config)
 
     # prepare the training and validation data for DiffGFDN
     train_dataset, valid_dataset = load_dataset(
@@ -115,7 +122,8 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
         trainer_config.device,
         trainer_config.train_valid_split,
         trainer_config.batch_size,
-        new_sampling_radius=trainer_config.new_sampling_radius)
+        new_sampling_radius=1.0 / trainer_config.reduced_pole_radius,
+    )
 
     # initialise the model
     model = DiffGFDNVarReceiverPos(
@@ -172,7 +180,8 @@ def run_training_single_pos(config_dict: DiffGFDNConfig):
     logger.info("Training for a single RIR measurement")
 
     # read the coupled room dataset
-    room_data = ThreeRoomDataset(Path(config_dict.room_dataset_path).resolve())
+    room_data = ThreeRoomDataset(
+        Path(config_dict.room_dataset_path).resolve(), config_dict)
 
     # add number of groups to the config dictionary
     config_dict = config_dict.copy(update={"num_groups": room_data.num_rooms})
@@ -216,13 +225,13 @@ def run_training_single_pos(config_dict: DiffGFDNConfig):
         trainer_config = trainer_config.copy(
             update={"batch_size": rir_data.num_freq_bins})
 
-    train_dataset = load_dataset(
-        rir_data,
-        trainer_config.device,
-        trainer_config.train_valid_split,
-        trainer_config.batch_size,
-        shuffle=False,
-        new_sampling_radius=trainer_config.new_sampling_radius)
+    train_dataset = load_dataset(rir_data,
+                                 trainer_config.device,
+                                 trainer_config.train_valid_split,
+                                 trainer_config.batch_size,
+                                 shuffle=False,
+                                 new_sampling_radius=1.0 /
+                                 trainer_config.reduced_pole_radius)
 
     # initialise the model
     model = DiffGFDNSinglePos(

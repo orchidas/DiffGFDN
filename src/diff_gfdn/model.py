@@ -1,17 +1,16 @@
 from typing import Dict, List, Optional, Tuple
 
-import torch
 from loguru import logger
+import numpy as np
 from scipy.signal import butter
+import torch
 from torch import nn
 
-from .config.config import (CouplingMatrixType, FeedbackLoopConfig,
-                            OutputFilterConfig)
+from .config.config import CouplingMatrixType, FeedbackLoopConfig, OutputFilterConfig
 from .feedback_loop import FeedbackLoop
-from .filters import decay_times_to_gain_filters, decay_times_to_gain_filters_geq
-from .gain_filters import (SVF, BiquadCascade, SoftPlus, SOSFilter,
-                           SVF_from_MLP, TanSigmoid)
-from .utils import absorption_to_gain_per_sample, to_complex
+from .filters import absorption_to_gain_per_sample, decay_times_to_gain_filters_geq
+from .gain_filters import BiquadCascade, ScaledSigmoid, SoftPlus, SOSFilter, SVF, SVF_from_MLP
+from .utils import to_complex
 
 # pylint: disable=W0718, E1136, E1137
 
@@ -52,7 +51,7 @@ class DiffGFDN(nn.Module):
         # input parameters
         self.num_groups = num_groups
         self.absorption_coeffs = absorption_coeffs
-        self.delays = torch.tensor(delays, dtype=torch.int32)
+        self.delays = delays
         self.num_delay_lines = len(delays)
         self.num_delay_lines_per_group = int(self.num_delay_lines /
                                              self.num_groups)
@@ -71,13 +70,14 @@ class DiffGFDN(nn.Module):
             ],
                                                 device=self.device)
             self.filter_order = self.gain_per_sample.shape[-2]
-            try: 
+            try:
                 self.gain_per_sample = self.gain_per_sample.view(
                     self.num_delay_lines, self.filter_order, 2)
-            except:
+            except Exception:
                 # cascade of SOS filters is detected
                 n_filters = self.gain_per_sample.shape[1]
-                self.gain_per_sample = self.gain_per_sample.permute(0, 2, 1, 3, 4)
+                self.gain_per_sample = self.gain_per_sample.permute(
+                    0, 2, 1, 3, 4)
                 self.gain_per_sample = self.gain_per_sample.reshape(
                     self.num_delay_lines, n_filters, self.filter_order, 2)
 
@@ -91,19 +91,26 @@ class DiffGFDN(nn.Module):
                 ],
                              device=self.device))
 
+        logger.info(f"Gains in delay lines: {self.gain_per_sample}")
+
+        self.delays = torch.tensor(delays,
+                                   dtype=torch.float32,
+                                   device=self.device)
+
+        self.delays = self.delays.to(self.device)
+
         self.feedback_loop = FeedbackLoop(
             self.num_groups, self.num_delay_lines_per_group, self.delays,
             self.gain_per_sample, self.use_absorption_filters,
             feedback_loop_config.coupling_matrix_type,
             feedback_loop_config.pu_matrix_order)
 
-        self.delays = self.delays.to(self.device)
         # add a lowpass filter at the end to remove high frequency artifacts
         self.design_lowpass_filter()
 
     def design_lowpass_filter(self,
                               filter_order: int = 16,
-                              cutoff_hz: float = 12e3):
+                              cutoff_hz: float = 15e3):
         """
         Add a lowpass filter in the end to prevent spurius high frequency artifacts
         Args:
@@ -299,6 +306,9 @@ class DiffGFDNSinglePos(DiffGFDN):
         self.input_gains = nn.Parameter(
             (2 * torch.randn(self.num_delay_lines, 1) - 1) /
             self.num_delay_lines)
+        # each delay line should have a unique scalar gain
+        self.output_gains = nn.Parameter(
+            torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
 
         self.compress_pole_factor = output_filter_config.compress_pole_factor
 
@@ -309,11 +319,8 @@ class DiffGFDNSinglePos(DiffGFDN):
             self.output_svf_params = nn.Parameter(
                 2 * torch.randn(self.num_groups, self.num_biquads, 5) - 1)
             self.output_filters = SOSFilter(self.num_biquads)
+            self.scaled_sigmoid = ScaledSigmoid(lower_limit=1.0 / np.sqrt(2))
             self.soft_plus = SoftPlus()
-            self.tan_sigmoid = TanSigmoid()
-        else:
-            self.output_gains = nn.Parameter(
-                torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
 
     def forward(self, x: Dict) -> torch.tensor:
         """
@@ -323,16 +330,14 @@ class DiffGFDNSinglePos(DiffGFDN):
         """
         z = x['z_values']
         num_freq_pts = len(z)
+        output_gains = to_complex(
+            self.output_gains.expand(self.num_delay_lines, num_freq_pts))
+
         # this is of size Ndel x num_freq_points
-        C = self.get_output_filter(
-            z) if self.use_svf_in_output else to_complex(
-                self.output_gains.expand(self.num_delay_lines, num_freq_pts))
+        C = output_gains * self.get_output_filter(
+            z) if self.use_svf_in_output else output_gains
 
         # this is also of size Ndel x 1
-        # input_gains = self.input_gains.repeat_interleave(
-        #     self.num_delay_lines_per_group, dim=0)
-        # B = to_complex(input_gains)
-
         B = to_complex(self.input_gains)
 
         # get the output of the feedback loop, this is of size num_freq_points x Ndel x Ndel
@@ -365,10 +370,10 @@ class DiffGFDNSinglePos(DiffGFDN):
 
         flattened_svf_freqs = output_svf_params[..., 0].view(-1)
         flattened_svf_res = output_svf_params[..., 1].view(-1)
-        output_svf_params[..., 0] = self.tan_sigmoid(flattened_svf_freqs).view(
+        output_svf_params[..., 0] = self.soft_plus(flattened_svf_freqs).view(
             reshape_size)
-        output_svf_params[..., 1] = self.soft_plus(flattened_svf_res).view(
-            reshape_size)
+        output_svf_params[..., 1] = self.scaled_sigmoid(
+            flattened_svf_res).view(reshape_size)
 
         # initialise empty filters
         self.biquad_cascade = [
@@ -436,10 +441,10 @@ class DiffGFDNSinglePos(DiffGFDN):
             logger.warning('Parameter not initialised yet in FeedbackLoop!')
 
         try:
-            self.output_svf_params[..., 0] = self.tan_sigmoid(
+            self.output_svf_params[..., 0] = self.soft_plus(
                 self.output_svf_params[..., 0].view(-1)).view(
                     self.num_groups, self.num_biquads)
-            self.output_svf_params[..., 1] = self.soft_plus(
+            self.output_svf_params[..., 1] = self.scaled_sigmoid(
                 self.output_svf_params[..., 1].view(-1)).view(
                     self.num_groups, self.num_biquads)
 

@@ -71,11 +71,51 @@ class BiquadCascade:
         return BiquadCascade(num_sos, num_coeffs, den_coeffs)
 
 
+class Sigmoid(nn.Module):
+    """Sigmoid nonlinearity between 0 and 1"""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Sigmoid non-linearity to constrain a function between lower limit and 1"""
+        return 1.0 / (1 + torch.exp(-x))
+
+
+class ScaledSigmoid(nn.Module):
+
+    def __init__(self, lower_limit: float):
+        """
+        Args:
+            lower_limit (float): lower limit of function value
+        """
+        super().__init__()
+        self.lower_limit = lower_limit
+        self.sigmoid = Sigmoid()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Sigmoid non-linearity to constrain a function between lower limit and 1"""
+        return (1.0 - self.lower_limit) * self.sigmoid(x) + self.lower_limit
+
+
 class SoftPlus(nn.Module):
 
     def forward(self, x: torch.Tensor):
         """Softplus function ensures positive output for SVF resonance"""
-        return torch.div(torch.log(1 + torch.exp(x)), np.log(2))
+        return torch.log(1 + torch.exp(x))
+
+
+class ScaledSoftPlus(nn.Module):
+
+    def __init__(self, upper_limit: float):
+        """
+        Args:
+        upper_limit (float): upper limit of function value
+        """
+        super().__init__()
+        self.soft_plus = SoftPlus()
+        self.upper_limit = upper_limit
+
+    def forward(self, x: torch.Tensor):
+        """Scaled softplus function to get values between 0 and upper limit"""
+        return self.upper_limit * self.soft_plus(x) / (1 + self.soft_plus(x))
 
 
 class TanSigmoid(nn.Module):

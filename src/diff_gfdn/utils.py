@@ -1,10 +1,10 @@
-from typing import Dict, List, Tuple, Union
+from typing import Dict, Optional, Union
 
 import numpy as np
-import torch
-import torchaudio.functional as Faudio
 from numpy.typing import ArrayLike
+import torch
 from torch import nn
+import torchaudio.functional as Faudio
 
 
 def db(x: Union[ArrayLike, torch.tensor],
@@ -65,6 +65,69 @@ def ms_to_samps(ms: Union[float, ArrayLike],
         return int(samp)
     else:
         return samp.astype(np.int32)
+
+
+def hertz2rad(hertz: torch.Tensor, fs: float):
+    r"""
+    Convert frequency from cycles per second to rad
+    .. math::
+        \omega = \frac{2\pi f}{f_s}
+    where :math:`f` is the frequency in Hz and :math:`f_s` is the sampling frequency in Hz.
+
+    **Args**:
+        - hertz (torch.Tensor): The frequency in Hz.
+        - fs (int): The sampling frequency in Hz.
+    """
+    return torch.divide(hertz, fs) * 2 * torch.pi
+
+
+def rad2hertz(rad: torch.Tensor, fs: float):
+    r"""
+    Convert frequency from rad to cycles per second
+    .. math::
+        f = \frac{\omega f_s}{2\pi}
+    where :math:`\omega` is the frequency in rad and :math:`f_s` is the sampling frequency in Hz.
+
+    **Args**:
+        - rad (torch.Tensor): The frequency in rad.
+        - fs (int): The sampling frequency in Hz.
+    """
+    return torch.divide(rad * fs, 2 * torch.pi)
+
+
+def get_frequency_samples(num: int, device: Optional[torch.device] = None):
+    r"""
+    Get frequency samples (in radians) sampled at linearly spaced points along the unit circle.
+
+    **Args**
+        - num (int): number of frequency samples
+        - device (torch.device, optional): The device of constructed tensors. Default: None.
+
+    **Returns**
+        - frequency samples in radians between [0, pi]
+    """
+    angle = torch.linspace(0, 1, num, device=device)
+    mag = torch.ones(num, device=device)
+    return torch.polar(mag, angle * np.pi)
+
+
+def get_magnitude(x):
+    r"""
+    Get the magnitude of a complex tensor.
+
+        **Args**:
+            x (torch.tensor): The input tensor.
+
+        **Returns**:
+            torch.tensor: The magnitude of x.
+    """
+    # get the magnitude of a complex tensor
+    return torch.abs(x)
+
+
+def to_complex(X: torch.Tensor):
+    """Make a real tensor complex"""
+    return torch.complex(X, torch.zeros_like(X))
 
 
 @torch.no_grad()
@@ -144,11 +207,6 @@ def matrix_convolution(A: torch.tensor, B: torch.tensor) -> torch.tensor:
     return C
 
 
-def to_complex(X: torch.Tensor):
-    """Make a real tensor complex"""
-    return torch.complex(X, torch.zeros_like(X))
-
-
 def is_paraunitary(A: torch.tensor, max_tol: float = 1e-6) -> bool:
     """
     Check if a polynomial matrix A of size NxNxP is paraunitary by ensuring
@@ -181,31 +239,3 @@ def is_unitary(A: torch.tensor, max_tol: float = 1e-6) -> bool:
     T -= torch.eye(N)
     max_off_diag_value = torch.max(torch.abs(T))
     return max_off_diag_value < max_tol, max_off_diag_value
-
-
-def absorption_to_gain_per_sample(room_dims: Tuple, absorption_coeff: float,
-                                  delay_length_samp: List[int],
-                                  fs: float) -> Tuple[float, List]:
-    """
-    Use Sabine's equation to get T60 from absorption coefficient, then convert that to the equivalent
-    gain for a delay line, given its length in samples.
-    Args:
-        room_dims (Tuple): room dimensions for a room as a tuple of length, width, height
-        absorption_coeff (float): uniform absorption coefficient for a room
-        delay_length_samp (int): length of the delay lines in samples 
-        fs (float): sampling rate
-    Returns:
-        Tuple: RT60s and list of gain per sample (1 for each room)
-    """
-    volume = np.prod(room_dims)
-    if len(room_dims) == 3:
-        area = 2 * (room_dims[0] * room_dims[1] + room_dims[1] * room_dims[2] +
-                    room_dims[2] * room_dims[0])
-    else:
-        area = 2 * (room_dims[0] + room_dims[1])
-
-    # RT60 according to sabine
-    rt60 = 0.161 * volume / (area * absorption_coeff)
-    gain_per_sample = db2lin(-60 * delay_length_samp / (fs * rt60))
-
-    return (rt60, gain_per_sample)
