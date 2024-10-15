@@ -171,7 +171,6 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
         self.output_filters = SVF_from_MLP(
             self.num_groups,
             self.num_delay_lines_per_group,
-            output_filter_config.num_biquads_svf,
             output_filter_config.num_fourier_features,
             output_filter_config.num_hidden_layers,
             output_filter_config.num_neurons_per_layer,
