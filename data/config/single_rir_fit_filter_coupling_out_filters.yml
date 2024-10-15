@@ -1,0 +1,11 @@
+ir_path: '../audio/true/ir_(0.20, 2.60, 1.50).wav'
+trainer_config:
+  max_epochs: 10
+  train_dir: '../output/single_rir_out_filters_filter_coupling/'
+  ir_dir: '../audio/single_rir_out_filters_filter_coupling/'
+  use_reg_loss: True
+feedback_loop_config:
+  coupling_matrix_type: 'filter_matrix'
+  pu_matrix_order: 32
+output_filter_config:
+  use_svfs: True
