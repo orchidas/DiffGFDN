@@ -7,6 +7,7 @@ from torch import nn
 from torchaudio.functional import filtfilt
 
 from .config.config import FeatureEncodingType
+from .utils import db2lin
 
 # pylint: disable=E0606
 # flake8: noqa:E265
@@ -19,9 +20,82 @@ class SVF:
 
     cutoff_frequency: float
     resonance: float
-    m_LP: float
-    m_HP: float
-    m_BP: float
+    filter_type: str
+    m_LP: Optional[float] = 1.0
+    m_HP: Optional[float] = 1.0
+    m_BP: Optional[float] = 1.0
+    G_db: Optional[float] = None
+
+    def __post_init__(self):
+        """Fix the mixing coefficients based on the type of filter"""
+        assert self.resonance > 0, "Resonance must be positive to ensure stability"
+
+        if self.G_db is None:
+            self.G = 1.0
+        else:
+            self.G = db2lin(self.G_db)
+
+        if self.filter_type == "lowpass":
+            m = torch.cat(
+                (
+                    (torch.ones_like(self.G)).unsqueeze(-1),
+                    (torch.zeros_like(self.G)).unsqueeze(-1),
+                    torch.zeros_like(self.G).unsqueeze(-1),
+                ),
+                dim=-1,
+            )
+        elif self.filter_type == "highpass":
+            m = torch.cat(
+                (
+                    (torch.zeros_like(self.G)).unsqueeze(-1),
+                    (torch.zeros_like(self.G)).unsqueeze(-1),
+                    torch.ones_like(self.G).unsqueeze(-1),
+                ),
+                dim=-1,
+            )
+        elif self.filter_type == "bandpass":
+            m = torch.cat(
+                (
+                    (torch.zeros_like(self.G)).unsqueeze(-1),
+                    (torch.ones_like(self.G)).unsqueeze(-1),
+                    torch.zeros_like(self.G).unsqueeze(-1),
+                ),
+                dim=-1,
+            )
+        elif self.filter_type == "lowshelf":
+            m = torch.cat(
+                (
+                    (self.G * torch.ones_like(self.G)).unsqueeze(-1),
+                    (2 * self.resonance * torch.sqrt(self.G)).unsqueeze(-1),
+                    (torch.ones_like(self.G)).unsqueeze(-1),
+                ),
+                dim=-1,
+            )
+        elif self.filter_type == "highshelf":
+            m = torch.cat(
+                (
+                    (torch.ones_like(self.G)).unsqueeze(-1),
+                    (2 * self.resonance * torch.sqrt(self.G)).unsqueeze(-1),
+                    (self.G * torch.ones_like(self.G)).unsqueeze(-1),
+                ),
+                dim=-1,
+            )
+        elif self.filter_type in ("peaking", "notch"):
+            m = torch.cat(
+                (
+                    (torch.ones_like(self.G)).unsqueeze(-1),
+                    (2 * self.resonance * self.G).unsqueeze(-1),
+                    (torch.ones_like(self.G)).unsqueeze(-1),
+                ),
+                dim=-1,
+            )
+        else:
+            print(
+                "The filter type not specified or not in the list. Using the given mixing coefficents."
+            )
+        self.m_LP = m[0]
+        self.m_HP = m[1]
+        self.m_BP = m[2]
 
 
 @dataclass
@@ -165,59 +239,68 @@ class SOSFilter(nn.Module):
         # filter in SOS form
         for k in range(self.num_biquads):
             inp = input_signal if k == 0 else output
-            output = filtfilt(inp, self.biquad_cascade.den_coeffs[k, :],
-                              self.biquad_cascade.num_coeffs[k, :])
+            output = filtfilt(inp, biquad_cascade.den_coeffs[k, :],
+                              biquad_cascade.num_coeffs[k, :])
         return output
 
 
-###################################CONSTRAINTS#####################################
+###################################CONSTRAINTS###########################################
 
 
 class Sigmoid(nn.Module):
     """Sigmoid nonlinearity between 0 and 1"""
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Sigmoid non-linearity to constrain a function between lower limit and 1"""
+        """Sigmoid non-linearity to constrain a function between 0 and 1"""
         return 1.0 / (1 + torch.exp(-x))
 
 
 class ScaledSigmoid(nn.Module):
 
-    def __init__(self, lower_limit: float):
+    def __init__(self, lower_limit: float, upper_limit: float):
         """
         Args:
             lower_limit (float): lower limit of function value
         """
         super().__init__()
         self.lower_limit = lower_limit
+        self.upper_limit = upper_limit
         self.sigmoid = Sigmoid()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Sigmoid non-linearity to constrain a function between lower limit and 1"""
-        return (1.0 - self.lower_limit) * self.sigmoid(x) + self.lower_limit
+        """Sigmoid non-linearity to constrain a function between lower limit and upper limit"""
+        return self.lower_limit + (self.upper_limit -
+                                   self.lower_limit) * self.sigmoid(x)
 
 
 class SoftPlus(nn.Module):
 
     def forward(self, x: torch.Tensor):
-        """Softplus function ensures positive output for SVF resonance"""
+        """Softplus function ensures positive output"""
         return torch.log(1 + torch.exp(x))
 
 
 class ScaledSoftPlus(nn.Module):
 
-    def __init__(self, upper_limit: float):
+    def __init__(
+        self,
+        lower_limit: float,
+        upper_limit: float,
+    ):
         """
         Args:
         upper_limit (float): upper limit of function value
         """
         super().__init__()
         self.soft_plus = SoftPlus()
+        self.lower_limit = lower_limit
         self.upper_limit = upper_limit
 
     def forward(self, x: torch.Tensor):
-        """Scaled softplus function to get values between 0 and upper limit"""
-        return self.upper_limit * self.soft_plus(x) / (1 + self.soft_plus(x))
+        """Scaled softplus function to get values between lowr_lmit and upper limit"""
+        return self.lower_limit + (self.upper_limit -
+                                   self.lower_limit) * self.soft_plus(x) / (
+                                       1 + self.soft_plus(x))
 
 
 class TanSigmoid(nn.Module):

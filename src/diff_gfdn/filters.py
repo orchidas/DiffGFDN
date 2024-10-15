@@ -357,7 +357,6 @@ def decay_times_to_gain_filters_prony(band_centre_hz: List,
         num_coeffs[i, :], den_coeffs[i, :] = prony_warped(
             interp_min_phase_ir, fs, filter_order, filter_order)
 
-    print(num_coeffs.shape, den_coeffs.shape)
     if plot_response:
         plot_t60_filter_response(band_centre_hz, delay_line_filters,
                                  num_coeffs, den_coeffs, fs,

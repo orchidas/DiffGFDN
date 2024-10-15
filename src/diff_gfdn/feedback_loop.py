@@ -170,7 +170,6 @@ class FeedbackLoop(nn.Module):
         self.use_absorption_filters = use_absorption_filters
 
         # whether to use absorption filters or scalar gains in delay lines
-        print(gains.shape)
         if self.use_absorption_filters:
             filter_order = gains.shape[1]
             # absorption gains as IIR filters with Prony's method

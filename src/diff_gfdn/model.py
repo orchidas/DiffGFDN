@@ -1,7 +1,6 @@
 from typing import Dict, List, Optional, Tuple
 
 from loguru import logger
-import numpy as np
 from scipy.signal import butter
 import torch
 from torch import nn
@@ -9,7 +8,8 @@ from torch import nn
 from .config.config import CouplingMatrixType, FeedbackLoopConfig, OutputFilterConfig
 from .feedback_loop import FeedbackLoop
 from .filters import absorption_to_gain_per_sample, decay_times_to_gain_filters_geq
-from .gain_filters import BiquadCascade, ScaledSigmoid, SoftPlus, SOSFilter, SVF, SVF_from_MLP
+from .gain_filters import BiquadCascade, ScaledSigmoid, ScaledSoftPlus, SOSFilter, SVF, SVF_from_MLP
+from .geq.eq import eq_freqs
 from .utils import to_complex
 
 # pylint: disable=W0718, E1136, E1137
@@ -315,12 +315,27 @@ class DiffGFDNSinglePos(DiffGFDN):
         # check if the output gains are filters or scalars
         self.use_svf_in_output = output_filter_config.use_svfs
         if self.use_svf_in_output:
-            self.num_biquads = output_filter_config.num_biquads_svf
-            self.output_svf_params = nn.Parameter(
-                2 * torch.randn(self.num_groups, self.num_biquads, 5) - 1)
+            centre_freq, shelving_crossover = eq_freqs()
+            self.svf_cutoff_freqs = torch.pi * torch.cat(
+                (torch.tensor([shelving_crossover[0]]), centre_freq,
+                 torch.tensor([shelving_crossover[-1]]))) / self.sample_rate
+            self.num_biquads = len(self.svf_cutoff_freqs)
+
+            # resonance distributed randomly between 0 and 1
+            init_params = torch.randn(self.num_groups, self.num_biquads, 2)
+            # gains initialised at 0dB
+            init_params[..., 1] = torch.zeros(
+                (self.num_groups, self.num_biquads))
+
+            # the resonance and the gain of the SVFs are the parameters
+            self.output_svf_params = nn.Parameter(init_params)
+
             self.output_filters = SOSFilter(self.num_biquads)
-            self.scaled_sigmoid = ScaledSigmoid(lower_limit=1.0 / np.sqrt(2))
-            self.soft_plus = SoftPlus()
+            # resonance should be between 0 and 1 for complex conjugate poles
+            self.scaled_sigmoid = ScaledSigmoid(lower_limit=0.0,
+                                                upper_limit=1.0)
+            # SVF gain range in dB
+            self.soft_plus = ScaledSoftPlus(lower_limit=-3.0, upper_limit=3.0)
 
     def forward(self, x: Dict) -> torch.tensor:
         """
@@ -368,11 +383,11 @@ class DiffGFDNSinglePos(DiffGFDN):
         # best to clone this
         output_svf_params = self.output_svf_params.clone()
 
-        flattened_svf_freqs = output_svf_params[..., 0].view(-1)
-        flattened_svf_res = output_svf_params[..., 1].view(-1)
-        output_svf_params[..., 0] = self.soft_plus(flattened_svf_freqs).view(
+        flattened_svf_gains = output_svf_params[..., 1].view(-1)
+        flattened_svf_res = output_svf_params[..., 0].view(-1)
+        output_svf_params[..., 1] = self.soft_plus(flattened_svf_gains).view(
             reshape_size)
-        output_svf_params[..., 1] = self.scaled_sigmoid(
+        output_svf_params[..., 0] = self.scaled_sigmoid(
             flattened_svf_res).view(reshape_size)
 
         # initialise empty filters
@@ -386,9 +401,13 @@ class DiffGFDNSinglePos(DiffGFDN):
         for i in range(self.num_groups):
             svf_params_del_line = output_svf_params[i, :]
             svf_cascade = [
-                SVF(svf_params_del_line[k, 0], svf_params_del_line[k, 1],
-                    svf_params_del_line[k, 2], svf_params_del_line[k, 3],
-                    svf_params_del_line[k, 4]) for k in range(self.num_biquads)
+                SVF(cutoff_frequency=self.svf_cutoff_freqs[k],
+                    resonance=svf_params_del_line[k, 0],
+                    filter_type=("lowshelf" if k == 0 else
+                                 "highshelf" if k == self.num_biquads -
+                                 1 else "peaking"),
+                    G_db=svf_params_del_line[k, 1])
+                for k in range(self.num_biquads)
             ]
             self.biquad_cascade[i] = BiquadCascade.from_svf_coeffs(
                 svf_cascade, self.compress_pole_factor)
@@ -441,11 +460,11 @@ class DiffGFDNSinglePos(DiffGFDN):
             logger.warning('Parameter not initialised yet in FeedbackLoop!')
 
         try:
-            self.output_svf_params[..., 0] = self.soft_plus(
-                self.output_svf_params[..., 0].view(-1)).view(
-                    self.num_groups, self.num_biquads)
-            self.output_svf_params[..., 1] = self.scaled_sigmoid(
+            self.output_svf_params[..., 1] = self.soft_plus(
                 self.output_svf_params[..., 1].view(-1)).view(
+                    self.num_groups, self.num_biquads)
+            self.output_svf_params[..., 0] = self.scaled_sigmoid(
+                self.output_svf_params[..., 0].view(-1)).view(
                     self.num_groups, self.num_biquads)
 
             param_np['output_svf_params'] = self.output_svf_params.squeeze(

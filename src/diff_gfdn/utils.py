@@ -111,20 +111,6 @@ def get_frequency_samples(num: int, device: Optional[torch.device] = None):
     return torch.polar(mag, angle * np.pi)
 
 
-def get_magnitude(x):
-    r"""
-    Get the magnitude of a complex tensor.
-
-        **Args**:
-            x (torch.tensor): The input tensor.
-
-        **Returns**:
-            torch.tensor: The magnitude of x.
-    """
-    # get the magnitude of a complex tensor
-    return torch.abs(x)
-
-
 def to_complex(X: torch.Tensor):
     """Make a real tensor complex"""
     return torch.complex(X, torch.zeros_like(X))
