@@ -1,5 +1,5 @@
-import pickle
 from pathlib import Path
+import pickle
 
 import h5py
 from loguru import logger
@@ -8,7 +8,7 @@ from loguru import logger
 logger.info("Reading mat file")
 
 # Load the MATLAB v7.3 .mat file using h5py
-file_path = Path("/Users/dalsag1/Documents/datasets/Georg_3room_FDTD/srirs.mat").resolve()
+file_path = Path("../resources/Georg_3room_FDTD/srirs.mat").resolve()
 
 with h5py.File(file_path, 'r') as mat_file:
     # Get the dataset
@@ -22,7 +22,7 @@ with h5py.File(file_path, 'r') as mat_file:
 
 # load the common slopes from the other mat files
 file_path = Path(
-    "/Users/dalsag1/Documents/datasets/Georg_3room_FDTD/Common_Slope_Analysis_Results/")
+    "../resources/Georg_3room_FDTD/Common_Slope_Analysis_Results/")
 filename = 'cs_analysis_results_omni'
 freqs = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
 common_t60 = []
@@ -33,7 +33,7 @@ for i in range(len(freqs)):
     with h5py.File(full_path.resolve(), 'r') as mat_file:
         data = mat_file['analysisResults']
         common_t60.append(data['commonDecayTimes'][:])
-        amplitudes.append(data['aVals'][:])
+        amplitudes.append(data['aVals'][:] + data['nVals'][:])
 
 # Convert the list to a NumPy array if needed
 data_dict = {
@@ -47,7 +47,7 @@ data_dict = {
 }
 
 # Specify the output pickle file path
-pickle_file_path = Path("/Users/dalsag1/Documents/datasets/Georg_3room_FDTD/srirs.pkl").resolve()
+pickle_file_path = Path("../resources/Georg_3room_FDTD/srirs.pkl").resolve()
 
 # Write the data to a pickle file
 with open(pickle_file_path, 'wb') as pickle_file:

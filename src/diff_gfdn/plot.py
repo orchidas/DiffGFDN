@@ -176,8 +176,10 @@ def plot_spectrogram(S: torch.tensor,
                    time_frames.min(),
                    time_frames.max(),
                    freqs.min(),
-                   freqs.max()
-               ])
+                   freqs.max(),
+               ],
+               vmin=-35,
+               vmax=35)
     plt.xlabel('Time (s)')
     plt.ylabel('Frequency (Hz)')
     plt.ylim([20, max(freqs)])

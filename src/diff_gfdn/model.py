@@ -144,7 +144,8 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
                  common_decay_times: Optional[List] = None,
                  band_centre_hz: Optional[List] = None):
         """
-        Differentiable GFDN module for a grid of listener locations.
+        Differentiable GFDN module for a grid of listener locations, where the output filter
+        coefficients are learnt with deep learning.
         Args:
             sample_rate (int): sampling rate of the FDN
             num_groups (int): number of rooms in coupled space
@@ -168,7 +169,11 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
         self.input_gains = nn.Parameter(
             torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
 
+        self.output_gains = nn.Parameter(
+            torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
+
         self.output_filters = SVF_from_MLP(
+            self.sample_rate,
             self.num_groups,
             self.num_delay_lines_per_group,
             output_filter_config.num_fourier_features,
@@ -185,11 +190,13 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
             x(dict) : input feature dict
         """
         z = x['z_values']
+        self.batch_size = x['listener_position'].shape[0]
 
         num_freq_pts = len(z)
         # this is of size B x Ndel x num_freq_points
-        C = self.output_filters(x)
-        self.batch_size = C.shape[0]
+        C = self.output_filters(x) * to_complex(
+            self.output_gains.expand(self.batch_size, self.num_delay_lines,
+                                     num_freq_pts))
         # this is also of size B x Ndel x num_freq_points
         B = to_complex(
             self.input_gains.expand(self.batch_size, self.num_delay_lines,
@@ -227,26 +234,35 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
         param_np['gains_per_sample'] = self.gain_per_sample.squeeze().cpu(
         ).numpy()
         param_np['input_gains'] = self.input_gains.squeeze().cpu().numpy()
-        param_np['individual_mixing_matrix'] = self.feedback_loop.M.squeeze(
-        ).cpu().numpy()
+        param_np['output_gains'] = self.output_gains.squeeze().cpu().numpy()
 
         try:
-            param_np[
-                'coupled_feedback_matrix'] = self.feedback_loop.get_coupled_feedback_matrix(
-                ).squeeze().cpu().numpy()
-            if self.feedback_loop.coupling_matrix_type == CouplingMatrixType.SCALAR:
-                param_np['coupling_matrix'] = self.feedback_loop.nd_unitary(
-                    self.feedback_loop.alpha,
-                    self.num_groups).squeeze().cpu().numpy()
-            else:
-                unitary_matrix = self.feedback_loop.ortho_param(
-                    self.feedback_loop.unitary_matrix)
-                unit_vectors = self.feedback_loop.unit_vectors / torch.norm(
-                    self.feedback_loop.unit_vectors, dim=0, keepdim=True)
+            if self.feedback_loop.coupling_matrix_type in (
+                    CouplingMatrixType.SCALAR, CouplingMatrixType.FILTER):
                 param_np[
-                    'coupling_matrix'] = self.feedback_loop.fir_paraunitary(
-                        unitary_matrix, unit_vectors).squeeze().cpu().numpy()
-
+                    'coupled_feedback_matrix'] = self.feedback_loop.get_coupled_feedback_matrix(
+                    ).squeeze().cpu().numpy()
+                param_np[
+                    'individual_mixing_matrix'] = self.feedback_loop.M.squeeze(
+                    ).cpu().numpy()
+                if self.feedback_loop.coupling_matrix_type == CouplingMatrixType.SCALAR:
+                    param_np[
+                        'coupling_matrix'] = self.feedback_loop.nd_unitary(
+                            self.feedback_loop.alpha,
+                            self.num_groups).squeeze().cpu().numpy()
+                else:
+                    unitary_matrix = self.feedback_loop.ortho_param(
+                        self.feedback_loop.unitary_matrix)
+                    unit_vectors = self.feedback_loop.unit_vectors / torch.norm(
+                        self.feedback_loop.unit_vectors, dim=0, keepdim=True)
+                    param_np[
+                        'coupling_matrix'] = self.feedback_loop.fir_paraunitary(
+                            unitary_matrix,
+                            unit_vectors).squeeze().cpu().numpy()
+            else:
+                # any unitary matrix without any specific coupling structure
+                param_np[
+                    'coupled_feedback_matrix'] = self.feedback_loop.coupled_feedback_matrix
         except Exception:
             logger.warning('Parameter not initialised yet in FeedbackLoop!')
 

@@ -306,10 +306,18 @@ class ScaledSoftPlus(nn.Module):
 
 class TanSigmoid(nn.Module):
 
+    def __init__(self, scale_factor: float = 1.0):
+        """
+        Args:
+            scale_factor (float): scale factor to determine slope of sigmoid transition
+        """
+        super().__init__()
+        self.scale_factor = scale_factor
+        self.sigmoid = Sigmoid()
+
     def forward(self, x: torch.Tensor):
         """Tan-sigmoid ensures positive output for SVF frequency"""
-        sigmoid = torch.div(1, 1 + torch.exp(-x))
-        return torch.tan(np.pi * sigmoid * 0.5)
+        return torch.tan(np.pi * self.sigmoid(x) * 0.5)
 
 
 #######################################MLP-RELATED###########################################
@@ -480,6 +488,7 @@ class SVF_from_MLP(nn.Module):
 
     def __init__(
         self,
+        sample_rate: float,
         num_groups: int,
         num_delay_lines_per_group: int,
         num_fourier_features: int,
@@ -492,6 +501,7 @@ class SVF_from_MLP(nn.Module):
         """
         Train the MLP to get SVF coefficients for a biquad cascade
         Args:
+            sample_rate (float): sampling rate of the network
             num_groups (int): number of groups in the GFDN
             num_delay_lines_per_group: number of delay lines in each group in the GFDN
             num_fourier_features (int): how much will the spatial locations expand as a feature
@@ -515,7 +525,7 @@ class SVF_from_MLP(nn.Module):
         centre_freq, shelving_crossover = eq_freqs()
         self.svf_cutoff_freqs = torch.pi * torch.cat(
             (torch.tensor([shelving_crossover[0]]), centre_freq,
-             torch.tensor([shelving_crossover[-1]]))) / self.sample_rate
+             torch.tensor([shelving_crossover[-1]]))) / sample_rate
         self.num_biquads = len(self.svf_cutoff_freqs)
 
         if self.encoding_type == FeatureEncodingType.SINE:
@@ -540,10 +550,10 @@ class SVF_from_MLP(nn.Module):
                        num_svf_params=2)
 
         self.sos_filter = SOSFilter(self.num_biquads)
+        # constraints on PEQ resonance
+        self.scaled_sigmoid = ScaledSigmoid(lower_limit=1e-6, upper_limit=1.0)
         # constraints on PEQ gains
         self.soft_plus = ScaledSoftPlus(lower_limit=-6, upper_limit=6)
-        # constraints on PEQ resonance
-        self.scaled_sigmoid = ScaledSigmoid(lower_limit=0, upper_limit=1.0)
 
     def forward(self, x: Dict) -> torch.tensor:
         """
@@ -577,11 +587,11 @@ class SVF_from_MLP(nn.Module):
             self.svf_params = self.svf_params[rec_idx, ...]  # pylint: disable=E0601
             assert self.svf_params.shape[0] == self.batch_size
 
-        # always ensure that the filter cutoff frequency and resonance are positive
+        # always ensure that the filter parameters are constrained
         reshape_size = (self.batch_size, self.num_groups, self.num_biquads)
-        self.svf_params[..., 0] = self.soft_plus(
+        self.svf_params[..., 0] = self.scaled_sigmoid(
             self.svf_params[..., 0].view(-1)).view(reshape_size)
-        self.svf_params[..., 1] = self.scaled_sigmoid(
+        self.svf_params[..., 1] = self.soft_plus(
             self.svf_params[..., 1].view(-1)).view(reshape_size)
 
         # initialise empty filters
@@ -595,6 +605,9 @@ class SVF_from_MLP(nn.Module):
         for b in range(self.batch_size):
             for i in range(self.num_groups):
                 svf_params_del_line = self.svf_params[b, i, :]
+                # logger.info(
+                #     f'Batch={b}, group={i}, resonance={svf_params_del_line[:, 0]}'
+                # )
                 svf_cascade = [
                     SVF(cutoff_frequency=self.svf_cutoff_freqs[k],
                         resonance=svf_params_del_line[k, 0],
