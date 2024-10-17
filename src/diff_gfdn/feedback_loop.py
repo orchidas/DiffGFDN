@@ -287,14 +287,23 @@ class FeedbackLoop(nn.Module):
 
         # A(z) Gamma(z)
         if self.use_absorption_filters:
-            Adecay = torch.einsum('kmn, knp -> kmp', A,
-                                  Gamma.permute(-1, 0, 1))
+            # invert diagonal matrix
+            Gamma_inv = torch.diag_embed(1.0 / torch.diagonal(Gamma),
+                                         dim1=0,
+                                         dim2=1)
+            Ddecay = D * Gamma_inv.permute(-1, 0, 1)
+            # Adecay = torch.einsum('kmn, knp -> kmp', A,
+            #                       Gamma.permute(-1, 0, 1))
         else:
-            Adecay = torch.einsum('kmn, np -> kmp', A, Gamma)
+            # invert a diagonal matrix
+            Gamma_inv = torch.diag(1.0 / torch.diagonal(Gamma))
+            Ddecay = D * Gamma_inv.unsqueeze(0).repeat(num_freq_points, 1, 1)
+            # Adecay = torch.einsum('kmn, np -> kmp', A, Gamma)
+
         # the inverse will be taken along the last 2 dimensions
         # the size is num_freq_pts x Ndel x Ndel
         # this is a complex double, but einsum can only handle complex float
-        return (torch.linalg.inv(D - Adecay)).to(torch.complex64)
+        return (torch.linalg.inv(Ddecay - A)).to(torch.complex64)
 
     def construct_block_mixing_matrix(self):
         """Form a block matrix with the individual mixing matrices and the coupling matrix"""
