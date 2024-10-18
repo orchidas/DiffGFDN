@@ -121,10 +121,13 @@ def get_polynomial_matrix_response(A: NDArray, K: int) -> NDArray:
     return Y, k / K
 
 
-def plot_polynomial_matrix_magnitude_response(PolyMat: NDArray,
-                                              sample_rate: float,
-                                              num_bins: int,
-                                              title: Optional[str] = None):
+def plot_polynomial_matrix_magnitude_response(
+    PolyMat: NDArray,
+    sample_rate: float,
+    num_bins: int,
+    title: Optional[str] = None,
+    save_path: Optional[str] = None,
+):
     """
     Plot the frequency response of the given polynomial matrix, and the frequency
     axis over which it is computed.
@@ -148,6 +151,8 @@ def plot_polynomial_matrix_magnitude_response(PolyMat: NDArray,
     ax[0, 0].set_ylabel('Magnitude (dB)')
     if title is not None:
         fig.suptitle(title)
+    if save_path is not None:
+        plt.savefig(save_path)
     plt.show()
 
 
@@ -190,7 +195,8 @@ def plot_spectrogram(S: torch.tensor,
     cbar.set_label('dB')
     if title is not None:
         plt.title(title)
-    plt.savefig(save_path)
+    if save_path is not None:
+        plt.savefig(save_path)
     plt.show()
 
 
