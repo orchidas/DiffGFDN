@@ -298,7 +298,6 @@ class FeedbackLoop(nn.Module):
             # invert a diagonal matrix
             Gamma_inv = torch.diag(1.0 / torch.diagonal(Gamma))
             Ddecay = D * Gamma_inv.unsqueeze(0).repeat(num_freq_points, 1, 1)
-            # Adecay = torch.einsum('kmn, np -> kmp', A, Gamma)
 
         # the inverse will be taken along the last 2 dimensions
         # the size is num_freq_pts x Ndel x Ndel
