@@ -5,11 +5,11 @@ from scipy.signal import butter
 import torch
 from torch import nn
 
+from .absorption_filters import absorption_to_gain_per_sample, decay_times_to_gain_filters_geq
 from .config.config import CouplingMatrixType, FeedbackLoopConfig, OutputFilterConfig
 from .feedback_loop import FeedbackLoop
-from .filters import absorption_to_gain_per_sample, decay_times_to_gain_filters_geq
+from .filters.geq import eq_freqs
 from .gain_filters import BiquadCascade, ScaledSigmoid, ScaledSoftPlus, SOSFilter, SVF, SVF_from_MLP
-from .geq.eq import eq_freqs
 from .utils import to_complex
 
 # pylint: disable=W0718, E1136, E1137

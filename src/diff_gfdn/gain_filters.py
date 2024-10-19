@@ -7,7 +7,7 @@ from torch import nn
 from torchaudio.functional import filtfilt
 
 from .config.config import FeatureEncodingType
-from .geq.eq import eq_freqs
+from .filters.geq import eq_freqs
 from .utils import db2lin
 
 # pylint: disable=E0606
