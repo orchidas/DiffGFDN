@@ -1,6 +1,6 @@
 [submodule "DecayFitNet"]
-	path = submodules/DecayFitNet
+	path = submodules/slope2noise/DecayFitNet
 	url = https://github.com/georg-goetz/DecayFitNet
 [submodule "slope2noise"]
-	path = submodules
+	path = submodules/slope2noise
 	url = https://github.com/gdalsanto/slope2noise
