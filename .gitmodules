@@ -4,3 +4,6 @@
 [submodule "slope2noise"]
 	path = submodules/slope2noise
 	url = https://github.com/gdalsanto/slope2noise
+[submodule "submodules/slope2noise"]
+	path = submodules/slope2noise
+	url = https://github.com/gdalsanto/slope2noise
