@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import pickle
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Union
 
 from loguru import logger
 import matplotlib.pyplot as plt
@@ -298,31 +298,6 @@ class RoomDataset(ABC):
         return Meshgrid(torch.from_numpy(Xcombined),
                         torch.from_numpy(Ycombined),
                         torch.from_numpy(Zcombined))
-
-    def get_2D_meshgrid(self,
-                        grid_spacing_m: float) -> Tuple[NDArray, NDArray]:
-        """
-        Returns the 2D meshgrid over receiver points
-        """
-        Xcombined = []
-        Ycombined = []
-        for nroom in range(self.num_rooms):
-            num_x_points = int(self.room_dims[nroom][0] / grid_spacing_m)
-            num_y_points = int(self.room_dims[nroom][1] / grid_spacing_m)
-            x = np.linspace(
-                self.room_start_coord[nroom][0],
-                self.room_start_coord[nroom][0] + self.room_dims[nroom][0],
-                num_x_points)
-            y = np.linspace(
-                self.room_start_coord[nroom][1],
-                self.room_start_coord[nroom][1] + self.room_dims[nroom][1],
-                num_y_points)
-
-            (xm, ym) = np.meshgrid(x, y)
-            Xcombined = np.concatenate((Xcombined, xm.flatten()))
-            Ycombined = np.concatenate((Ycombined, ym.flatten()))
-
-        return (Xcombined, Ycombined)
 
     def plot_3D_meshgrid(self, mesh_3D: Meshgrid):
         """Plot the 3D meshgrid to visualise the room geometry"""
