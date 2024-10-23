@@ -37,6 +37,7 @@ dependencies = [
     "torchaudio",
     "soundfile",
     "librosa",
+    "sklearn",
 ]
 
 [project.optional-dependencies]
