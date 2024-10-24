@@ -1,8 +1,8 @@
 trainer_config:
     device: 'cpu'
     max_epochs: 3
-    train_dir: '../output/mesh_encoding/'
-    ir_dir: '../audio/mesh_encoding/'
+    train_dir: 'output/mesh_encoding/'
+    ir_dir: 'audio/mesh_encoding/'
 output_filter_config:
     encoding_type: 'meshgrid'
     num_hidden_layers: 3

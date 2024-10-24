@@ -1,8 +1,8 @@
 trainer_config:
     device: 'cuda'
     max_epochs: 20
-    train_dir: '../output/sample_outside_unit_circle/'
-    ir_dir: '../audio/sample_outside_unit_circle/'
+    train_dir: 'output/sample_outside_unit_circle/'
+    ir_dir: 'audio/sample_outside_unit_circle/'
     alias_attenuation_db: 30
     save_irs: True
 room_dataset_path: '/scratch/elec/t412-asp/Georg_3room_FDTD/srirs.pkl'

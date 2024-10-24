@@ -1,6 +1,6 @@
 trainer_config:
     device: 'mps'
     max_epochs: 3
-    train_dir: '../output/mps/'
-    ir_dir: '../audio/mps/'
+    train_dir: 'output/mps/'
+    ir_dir: 'audio/mps/'
 

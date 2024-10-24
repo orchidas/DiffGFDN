@@ -1,8 +1,8 @@
 trainer_config:
     device: 'cpu'
     max_epochs: 3
-    train_dir: '../output/svf_pole_compress/'
-    ir_dir: '../audio/svf_pole_compress/'
+    train_dir: 'output/svf_pole_compress/'
+    ir_dir: 'audio/svf_pole_compress/'
 output_filter_config:
     # by how much to reduce the poles of the output gain SVFs
     compress_pole_factor: 0.95 

@@ -5,7 +5,11 @@ from scipy.signal import butter
 import torch
 from torch import nn
 
-from .absorption_filters import absorption_to_gain_per_sample, decay_times_to_gain_filters_geq
+from .absorption_filters import (
+    absorption_to_gain_per_sample,
+    decay_times_to_gain_filters_geq,
+    decay_times_to_gain_per_sample,
+)
 from .config.config import CouplingMatrixType, FeedbackLoopConfig, OutputFilterConfig
 from .feedback_loop import FeedbackLoop
 from .filters.geq import eq_freqs
@@ -60,6 +64,8 @@ class DiffGFDN(nn.Module):
             self.delays[i:i + self.num_delay_lines_per_group] for i in range(
                 0, self.num_delay_lines, self.num_delay_lines_per_group)
         ]
+
+        # frequency-dependent absorption filters
         if self.use_absorption_filters:
             # this will be of size (num_groups, num_del_per_group, numerator (filter_order), denominator(filter_order))
             self.gain_per_sample = torch.tensor([
@@ -81,17 +87,27 @@ class DiffGFDN(nn.Module):
                 self.gain_per_sample = self.gain_per_sample.reshape(
                     self.num_delay_lines, n_filters, self.filter_order, 2)
 
+        # broadband absorption gains
         else:
-            self.gain_per_sample = torch.flatten(
-                torch.tensor([
-                    absorption_to_gain_per_sample(
-                        room_dims[i], absorption_coeffs[i],
-                        self.delays_by_group[i], self.sample_rate)[1]
-                    for i in range(self.num_groups)
-                ],
-                             device=self.device))
+            if absorption_coeffs is None:
+                self.gain_per_sample = torch.flatten(
+                    torch.tensor([
+                        decay_times_to_gain_per_sample(
+                            common_decay_times[i], self.delays_by_group[i],
+                            self.sample_rate) for i in range(self.num_groups)
+                    ],
+                                 device=self.device))
+            else:
+                self.gain_per_sample = torch.flatten(
+                    torch.tensor([
+                        absorption_to_gain_per_sample(
+                            room_dims[i], absorption_coeffs[i],
+                            self.delays_by_group[i], self.sample_rate)[1]
+                        for i in range(self.num_groups).tolist()
+                    ],
+                                 device=self.device))
 
-        # logger.info(f"Gains in delay lines: {self.gain_per_sample}")
+        logger.info(f"Gains in delay lines: {self.gain_per_sample}")
 
         self.delays = torch.tensor(delays,
                                    dtype=torch.float32,

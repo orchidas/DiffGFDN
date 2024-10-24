@@ -8,6 +8,26 @@ The idea to use a dataset of RIRs measured in a coupled space to learn the spati
 Differentiable GFDN. More powerfully, we can parameterise the late reverberation in the entire space with this very efficient network which is ideal for real-time rendering. This not only
 reduces memory requirements of storing measured RIRs, but is also faster than convolution for long reverberation tails.
 
+## Dataset
+We have been using the dataset published [here](https://zenodo.org/records/13338346) which has three coupled rooms.
+This has been saved in `resources/Georg_3Room_FDTD/`. The mat files are converted to pickle files (for faster loading) using the script `python3 src/convert_mat_to_pkl.py`
+
+**TO-DO**
+- Set up git-lfs for dataset storage 
+
+Additionally, we have tools for generating a synthetic dataset of coupled rooms by shaping noise (see [gdalsanto/slope2noise](https://github.com/gdalsanto/slope2noise/blob/main/config/rir_synthesis_coupled_room.yml)). Set up the submodules (see [CONTRIBUTING.md](CONTRIBUTING.md)). Navigate to `submodules/slope2rir` and run `python3 main.py -c <config_path>`. An example of a config file to generate a coupled room dataset is available [here]( submodules/slope2rir/config/rir_synthesis_coupled_room_single_batch.yml).
+
+## Training
+
+To set up the repo, follow the instructions in [CONTRIBUTING.md](CONTRIBUTING.md). To run training on a single receiver position, create a config file (example [here](./data/config/single_rir_fit_random_coupling_out_gains.yml)). To run training on a grid of receiver positions, create a different config file (example [here](./data/config/antialiasing_reg_loss_more_layers_random_coupling.yml)) Then run `python3 src/run_model.py -c <config_file_path>`. 
+
+Several different model configurations can be trained (see [config.py](.src/diff_gfdn/config/config.py)). There are options for:
+- Training the output filters for a single position, or for a grid of positions (with deep learning).
+- Switching between output filters and gains
+- Switching between absorption filters and gains
+- Switching between different structures of feedback matrices
+
+
 ## Model architecture
 
 !["Differentiable GFDN architecture"](./notes/diffGFDN.png)

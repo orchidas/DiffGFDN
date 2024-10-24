@@ -1,3 +1,5 @@
+# pylint: disable=relative-beyond-top-level
+
 from enum import Enum
 from typing import List, Optional
 
@@ -78,9 +80,9 @@ class TrainerConfig(BaseModel):
     # whether to use frequency-based weighting in loss
     use_frequency_weighting: bool = False
     # directory to save results
-    train_dir: str = "../output/cpu/"
+    train_dir: str = "output/cpu/"
     # where to save the IRs
-    ir_dir: str = "../audio/cpu/"
+    ir_dir: str = "audio/cpu/"
     # whether to save the true measured IRs as wave files
     save_true_irs: bool = False
     # attenuation in dB that the anti aliasing envelope should be reduced by
@@ -106,7 +108,7 @@ class DiffGFDNConfig(BaseModel):
     """Config file for training the DiffGFDN"""
 
     # path to three room dataset
-    room_dataset_path: str = '../resources/Georg_3room_FDTD/srirs.pkl'
+    room_dataset_path: str = 'resources/Georg_3room_FDTD/srirs.pkl'
     # if a single measurement is being used
     ir_path: Optional[str] = None
     # sampling rate of the FDN

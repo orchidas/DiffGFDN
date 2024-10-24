@@ -1,7 +1,7 @@
 trainer_config:
     device: 'cpu'
-    train_dir: '../output/more_hidden_layers/'
-    ir_dir: '../audio/more_hidden_layers/'
+    train_dir: 'output/more_hidden_layers/'
+    ir_dir: 'audio/more_hidden_layers/'
 output_filter_config:
     num_hidden_layers: 3
     num_neurons_per_layer: 32
