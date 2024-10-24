@@ -94,7 +94,8 @@ class DiffGFDN(nn.Module):
                     torch.tensor([
                         decay_times_to_gain_per_sample(
                             common_decay_times[i], self.delays_by_group[i],
-                            self.sample_rate) for i in range(self.num_groups)
+                            self.sample_rate).tolist()
+                        for i in range(self.num_groups)
                     ],
                                  device=self.device))
             else:
@@ -124,15 +125,17 @@ class DiffGFDN(nn.Module):
         # add a lowpass filter at the end to remove high frequency artifacts
         self.design_lowpass_filter()
 
-    def design_lowpass_filter(self,
-                              filter_order: int = 16,
-                              cutoff_hz: float = 15e3):
+    def design_lowpass_filter(
+        self,
+        filter_order: int = 16,
+    ):
         """
         Add a lowpass filter in the end to prevent spurius high frequency artifacts
         Args:
             filter_order (int): IIR filter order
             cutoff_hz (float): cutoff frequency of the lowpass (12k by default)
         """
+        cutoff_hz = self.sample_rate / 2 - 1e3
         sos_filter_coeffs = torch.tensor(
             butter(filter_order,
                    cutoff_hz / (self.sample_rate / 2.0),
