@@ -1,0 +1,13 @@
+ir_path: 'audio/synthetic_true/ir_(5.01, 2.87, 1.11).wav'
+room_dataset_path: 'resources/synthetic_dataset/bb_wgn_0000.pkl'
+sample_rate: 48000.0
+num_delay_lines: 8
+use_absorption_filters: False
+feedback_loop_config:
+  coupling_matrix_type: 'random_matrix'
+output_filter_config:
+  use_svfs: False
+trainer_config:
+  max_epochs: 10
+  train_dir: 'output/single_rir_out_gains_random_coupling_synth_data/'
+  ir_dir: 'audio/single_rir_out_gains_random_coupling_synth_data/'
