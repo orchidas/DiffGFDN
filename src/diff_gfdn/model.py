@@ -64,6 +64,9 @@ class DiffGFDN(nn.Module):
             self.delays[i:i + self.num_delay_lines_per_group] for i in range(
                 0, self.num_delay_lines, self.num_delay_lines_per_group)
         ]
+        self.band_centre_hz = band_centre_hz
+        self.common_decay_times = common_decay_times
+        self.absorption_coeffs = absorption_coeffs
 
         # frequency-dependent absorption filters
         if self.use_absorption_filters:

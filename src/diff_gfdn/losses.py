@@ -1,15 +1,15 @@
 from typing import List, Optional, Tuple
 
 import librosa
-import numpy as np
-import torch
-import torch.nn.functional as F
 from loguru import logger
+import numpy as np
 from scipy.fft import rfftfreq
+import torch
 from torch import nn
+import torch.nn.functional as F
 
 from .gain_filters import BiquadCascade, SOSFilter
-from .utils import db
+from .utils import db, ms_to_samps
 
 
 def calc_erb_filters(
@@ -138,6 +138,46 @@ class reg_loss(nn.Module):
                 loss = torch.div(torch.sum(gamma * torch.exp(gamma)),
                                  torch.sum(torch.exp(gamma)))
                 return loss
+
+
+class edc_loss(nn.Module):
+    """Broadband EDC loss in dB"""
+
+    def __init__(self, max_ir_len_ms: float, sample_rate: float):
+        """
+        Args:
+            max_ir_len_ms (float): maximum RIR length to take into account to ignore noise floor
+                                   in EDC calculation
+            sample_rate (float): sampling frequency in Hz
+        """
+        super().__init__()
+        self.max_ir_len_samps = ms_to_samps(max_ir_len_ms, sample_rate)
+
+    def schroeder_backward_integral(self, signal: torch.tensor):
+        """Schroeder backward integral to calculate energy decay curve"""
+        return torch.flip(torch.cumsum(torch.flip(signal**2, dims=[-1]),
+                                       dim=-1),
+                          dims=[-1])
+
+    def forward(self, target_response: torch.tensor,
+                achieved_response: torch.tensor) -> torch.tensor:
+        """Get the error between the EDCs of the target and achieved response"""
+        max_ir_len_samps = min(self.max_ir_len_samps,
+                               target_response.shape[-1])
+
+        target_rir = torch.fft.irfft(
+            target_response, target_response.shape[-1])[..., :max_ir_len_samps]
+        achieved_rir = torch.fft.irfft(
+            achieved_response,
+            achieved_response.shape[-1])[..., :max_ir_len_samps]
+
+        target_edc = db(self.schroeder_backward_integral(target_rir),
+                        is_squared=True)
+        achieved_edc = db(self.schroeder_backward_integral(achieved_rir),
+                          is_squared=True)
+
+        loss = torch.mean(torch.pow(target_edc - achieved_edc, 2))
+        return loss
 
 
 class edr_loss(nn.Module):

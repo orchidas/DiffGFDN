@@ -1,4 +1,4 @@
-ir_path: 'audio/synthetic_true/ir_(4.15, 2.77, 1.36).wav'
+ir_path: 'audio/synthetic_true/ir_(1.72, 3.77, 1.34).wav'
 room_dataset_path: 'resources/synthetic_dataset/bb_wgn_0000.pkl'
 sample_rate: 48000.0
 num_delay_lines: 8

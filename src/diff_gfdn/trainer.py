@@ -10,7 +10,7 @@ import torchaudio
 from tqdm import trange
 
 from .config.config import TrainerConfig
-from .losses import edr_loss, reg_loss
+from .losses import edc_loss, edr_loss, reg_loss
 from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
 from .utils import get_response, get_str_results, ms_to_samps
 
@@ -46,17 +46,22 @@ class Trainer:
                          reduced_pole_radius=self.reduced_pole_radius,
                          use_erb_grouping=trainer_config.use_erb_edr_loss,
                          use_weight_fn=trainer_config.use_frequency_weighting),
+                edc_loss(self.net.common_decay_times.max() * 1e3,
+                         self.net.sample_rate),
                 reg_loss(
                     ms_to_samps(trainer_config.output_filt_ir_len_ms,
                                 self.net.sample_rate), self.net.num_groups,
                     self.net.output_filters.num_biquads)
             ]
         else:
-            self.criterion = edr_loss(
-                self.net.sample_rate,
-                use_erb_grouping=trainer_config.use_erb_edr_loss,
-                reduced_pole_radius=self.reduced_pole_radius,
-                use_weight_fn=trainer_config.use_frequency_weighting)
+            self.criterion = [
+                edr_loss(self.net.sample_rate,
+                         use_erb_grouping=trainer_config.use_erb_edr_loss,
+                         reduced_pole_radius=self.reduced_pole_radius,
+                         use_weight_fn=trainer_config.use_frequency_weighting),
+                edc_loss(self.net.common_decay_times.max() * 1e3,
+                         self.net.sample_rate)
+            ]
 
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=10,
@@ -138,9 +143,12 @@ class VarReceiverPosTrainer(Trainer):
         if self.use_reg_loss:
             loss = self.criterion[0](
                 data['target_rir_response'], H) + self.criterion[1](
-                    self.net.output_filters.biquad_cascade)
+                    data['target_rir_response'], H) + self.criterion[2](
+                        self.net.output_filters.biquad_cascade)
         else:
-            loss = self.criterion(data['target_rir_response'], H)
+            loss = self.criterion[0](data['target_rir_response'],
+                                     H) + self.criterion[1](
+                                         data['target_rir_response'], H)
 
         loss.backward()
         self.optimizer.step()
@@ -162,9 +170,12 @@ class VarReceiverPosTrainer(Trainer):
             if self.use_reg_loss:
                 loss = self.criterion[0](
                     data['target_rir_response'], H) + self.criterion[1](
-                        self.net.output_filters.biquad_cascade)
+                        data['target_rir_response'], H) + self.criterion[2](
+                            self.net.output_filters.biquad_cascade)
             else:
-                loss = self.criterion(data['target_rir_response'], H)
+                loss = self.criterion[0](data['target_rir_response'],
+                                         H) + self.criterion[1](
+                                             data['target_rir_response'], H)
 
             cur_loss = loss.item()
             total_loss += cur_loss
@@ -281,11 +292,14 @@ class SinglePosTrainer(Trainer):
         self.optimizer.zero_grad()
         H = self.net(data)
         if self.use_reg_loss:
+            loss = self.criterion[0](
+                data['target_rir_response'], H) + self.criterion[1](
+                    data['target_rir_response'], H) + self.criterion[2](
+                        self.net.biquad_cascade)
+        else:
             loss = self.criterion[0](data['target_rir_response'],
                                      H) + self.criterion[1](
-                                         self.net.biquad_cascade)
-        else:
-            loss = self.criterion(data['target_rir_response'], H)
+                                         data['target_rir_response'], H)
         loss.backward()
         self.optimizer.step()
         return loss.item()
