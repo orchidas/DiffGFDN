@@ -9,5 +9,5 @@ output_filter_config:
   use_svfs: False
 trainer_config:
   max_epochs: 20
-  train_dir: 'output/single_rir_out_gains_random_coupling_synth_data/'
-  ir_dir: 'audio/single_rir_out_gains_random_coupling_synth_data/'
+  train_dir: 'output/single_rir_out_gains_scalar_coupling_synth_data/'
+  ir_dir: 'audio/single_rir_out_gains_scalar_coupling_synth_data/'

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src", "submodules"]
-include = ["diff_gfdn", "slope2noise.slope2noise"]
+include = ["diff_gfdn", "slope2noise.slope2noise", "slope2noise.DecayFitNet"]
 # include the name of the folder containing the library
 # eg: include = ["diff_gfdn"]
 
@@ -41,6 +41,8 @@ dependencies = [
     "soundfile",
     "librosa",
     "scikit-learn",
+    "onnx",
+    "onnxruntime"
 ]
 
 [project.optional-dependencies]

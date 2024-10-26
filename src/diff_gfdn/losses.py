@@ -141,7 +141,7 @@ class reg_loss(nn.Module):
 
 
 class edc_loss(nn.Module):
-    """Broadband EDC loss in dB"""
+    """Broadband EDC loss in linear scale (to put more focus on the beginning of the RIR)"""
 
     def __init__(self, max_ir_len_ms: float, sample_rate: float):
         """
@@ -155,9 +155,10 @@ class edc_loss(nn.Module):
 
     def schroeder_backward_integral(self, signal: torch.tensor):
         """Schroeder backward integral to calculate energy decay curve"""
-        return torch.flip(torch.cumsum(torch.flip(signal**2, dims=[-1]),
-                                       dim=-1),
-                          dims=[-1])
+        edc = torch.flip(torch.cumsum(torch.flip(signal**2, dims=[-1]),
+                                      dim=-1),
+                         dims=[-1])
+        return edc
 
     def forward(self, target_response: torch.tensor,
                 achieved_response: torch.tensor) -> torch.tensor:
@@ -171,10 +172,8 @@ class edc_loss(nn.Module):
             achieved_response,
             achieved_response.shape[-1])[..., :max_ir_len_samps]
 
-        target_edc = db(self.schroeder_backward_integral(target_rir),
-                        is_squared=True)
-        achieved_edc = db(self.schroeder_backward_integral(achieved_rir),
-                          is_squared=True)
+        target_edc = self.schroeder_backward_integral(target_rir)
+        achieved_edc = self.schroeder_backward_integral(achieved_rir)
 
         loss = torch.mean(torch.pow(target_edc - achieved_edc, 2))
         return loss
