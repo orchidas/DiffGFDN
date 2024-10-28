@@ -27,7 +27,8 @@ class Slope2NoiseUnpickler(pickle.Unpickler):
         return super().find_class(module, name)
 
 
-def convert_common_slopes_rir_to_room_dataset(data_path: str) -> RoomDataset:
+def convert_common_slopes_rir_to_room_dataset(
+        data_path: str, num_freq_bins: Optional[int] = None) -> RoomDataset:
     """Convert the dataclass CommonSlopesRIR to RoomDataset"""
     data_path = Path(data_path).resolve()
     with open(data_path, 'rb') as f:
@@ -53,6 +54,7 @@ def convert_common_slopes_rir_to_room_dataset(data_path: str) -> RoomDataset:
         room_dims=room_dims,
         room_start_coord=room_start_coords,
         amplitudes=amplitudes,
+        nfft=num_freq_bins,
     )
 
     return room_data
@@ -129,8 +131,16 @@ def save_loss(train_loss: List,
 
 
 def data_parser_var_receiver_pos(
-        config_dict: DiffGFDNConfig) -> Tuple[RoomDataset, DiffGFDNConfig]:
-    """Parse the training data for training over a grid of receiver positions (could belong to different rooms)"""
+        config_dict: DiffGFDNConfig,
+        num_freq_bins: Optional[int] = None) -> RoomDataset:
+    """
+    Parse the training data for training over a grid of receiver positions (could belong to different rooms)
+    Args:
+        config_dict (DiffGFDNConfig): config dictionary
+        num_freq_bins (int): number of frequency bins to train on
+    Returns:
+        RoomDataset: object of data type RoomDataset with all the room information
+    """
     if "3room_FDTD" in config_dict.room_dataset_path:
         # read the coupled room dataset
         room_data = ThreeRoomDataset(Path(
@@ -138,29 +148,24 @@ def data_parser_var_receiver_pos(
                                      config_dict=config_dict)
     else:
         room_data = convert_common_slopes_rir_to_room_dataset(
-            config_dict.room_dataset_path)
+            config_dict.room_dataset_path, num_freq_bins)
 
-    # add number of groups to the config dictionary
-    config_dict = config_dict.copy(update={"num_groups": room_data.num_rooms})
-    assert config_dict.num_delay_lines % config_dict.num_groups == 0, "Delay lines must be \
-    divisible by number of groups in network"
-
-    if config_dict.sample_rate != room_data.sample_rate:
-        logger.warn("Config sample rate does not match data, alterning it")
-        config_dict.sample_rate = room_data.sample_rate
-
-    return room_data, config_dict
+    return room_data
 
 
 def data_parser_single_receiver_pos(
-        config_dict: DiffGFDNConfig) -> Tuple[RIRData, RoomDataset, str]:
+        config_dict: DiffGFDNConfig,
+        num_freq_bins: Optional[int] = None
+) -> Tuple[RIRData, RoomDataset, str]:
     """
     Parse the training data for a single receiver position
-    Returns
+    Args:
+        config_dict (DiffGFDNConfig): config dictionary
+        num_freq_bins (int): number of frequency bins to train on
+    Returns:
         RIRData, RoomDataset, str: single position dataset, room dataset and the name of the ir
     """
     if "3room_FDTD" in config_dict.room_dataset_path:
-
         # read the coupled room dataset
         room_data = ThreeRoomDataset(
             Path(config_dict.room_dataset_path).resolve(), config_dict)
@@ -168,7 +173,7 @@ def data_parser_single_receiver_pos(
     # from the synthetic dataset created in slope2rir
     else:
         room_data = convert_common_slopes_rir_to_room_dataset(
-            config_dict.room_dataset_path)
+            config_dict.room_dataset_path, num_freq_bins)
 
     # create a dataset for a single measured IR in the room dataset
     ir_path = Path(config_dict.ir_path).resolve()
@@ -194,7 +199,8 @@ def data_parser_single_receiver_pos(
     rir_data = RIRData(ir_path,
                        common_decay_times=room_data.common_decay_times,
                        band_centre_hz=room_data.band_centre_hz,
-                       amplitudes=amplitudes)
+                       amplitudes=amplitudes,
+                       nfft=num_freq_bins)
 
     return rir_data, room_data, ir_name
 
@@ -209,7 +215,17 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
     logger.info("Training over a grid of listener positions")
 
     # get the data
-    room_data, config_dict = data_parser_var_receiver_pos(config_dict)
+    room_data = data_parser_var_receiver_pos(
+        config_dict, num_freq_bins=config_dict.trainer_config.num_freq_bins)
+
+    # add number of groups to the config dictionary
+    config_dict = config_dict.copy(update={"num_groups": room_data.num_rooms})
+    assert config_dict.num_delay_lines % config_dict.num_groups == 0, "Delay lines must be \
+    divisible by number of groups in network"
+
+    if config_dict.sample_rate != room_data.sample_rate:
+        logger.warn("Config sample rate does not match data, alterning it")
+        config_dict.sample_rate = room_data.sample_rate
 
     # get the training config
     trainer_config = config_dict.trainer_config
@@ -284,7 +300,8 @@ def run_training_single_pos(config_dict: DiffGFDNConfig):
     logger.info("Training for a single RIR measurement")
 
     # get the data
-    rir_data, room_data, ir_name = data_parser_single_receiver_pos(config_dict)
+    rir_data, room_data, ir_name = data_parser_single_receiver_pos(
+        config_dict, num_freq_bins=config_dict.trainer_config.num_freq_bins)
 
     # add number of groups to the config dictionary
     config_dict = config_dict.copy(update={"num_groups": room_data.num_rooms})
@@ -297,6 +314,9 @@ def run_training_single_pos(config_dict: DiffGFDNConfig):
 
     # get the training config
     trainer_config = config_dict.trainer_config
+    # update num_freq_bins in pydantic class
+    trainer_config = trainer_config.model_copy(
+        update={"num_freq_bins": rir_data.num_freq_bins})
 
     # prepare the training and validation data for DiffGFDN
     if trainer_config.train_valid_split < 1.0:

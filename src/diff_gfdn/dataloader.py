@@ -75,7 +75,8 @@ class RIRData:
                  amplitudes: Optional[List] = None,
                  room_dims: Optional[List] = None,
                  absorption_coeffs: Optional[List] = None,
-                 mixing_time_ms: float = 20.0):
+                 mixing_time_ms: float = 20.0,
+                 nfft: Optional[int] = None):
         """
         Args:
             num_rooms (int): number of rooms in coupled space
@@ -88,6 +89,7 @@ class RIRData:
             room_dims (optional, List): l,w,h for each room in coupled space
             absorption_coeffs (optional, List): uniform absorption coefficients for each room
             mixing_time_ms (float): time when early reflections morph into late reverb
+            nfft (optional, int): number of frequency bins
         """
 
         assert str(wav_path).endswith(
@@ -108,13 +110,17 @@ class RIRData:
         self.mixing_time_ms = mixing_time_ms
         self.room_dims = room_dims
         self.absorption_coeffs = absorption_coeffs
+        self.nfft = nfft
         self.early_late_split()
 
     @property
     def num_freq_bins(self):
         """Number of frequency bins in the magnitude response"""
-        max_rt60_samps = self.common_decay_times.max() * self.sample_rate
-        return int(np.pow(2, np.ceil(np.log2(max_rt60_samps))))
+        if self.nfft is not None:
+            return self.nfft
+        else:
+            max_rt60_samps = self.common_decay_times.max() * self.sample_rate
+            return int(np.pow(2, np.ceil(np.log2(max_rt60_samps))))
 
     @property
     def freq_bins_rad(self):
