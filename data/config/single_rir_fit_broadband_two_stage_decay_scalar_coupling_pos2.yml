@@ -1,4 +1,4 @@
-ir_path: 'audio/synthetic_true/two_coupled_rooms/ir_(4.15, 2.77, 1.36).wav'
+ir_path: 'audio/synthetic_true/two_coupled_rooms/ir_(2.29, 5.47, 0.98).wav'
 room_dataset_path: 'resources/synthetic_dataset/two_coupled_rooms/bb_wgn_0000.pkl'
 sample_rate: 48000.0
 num_delay_lines: 8
@@ -8,6 +8,6 @@ feedback_loop_config:
 output_filter_config:
   use_svfs: False
 trainer_config:
-  max_epochs: 20
-  train_dir: 'output/single_rir_out_gains_scalar_coupling_synth_data/'
+  max_epochs: 50
+  train_dir: 'output/single_rir_out_gains_scalar_coupling_synth_data_pos2/'
   ir_dir: 'audio/single_rir_out_gains_scalar_coupling_synth_data/'

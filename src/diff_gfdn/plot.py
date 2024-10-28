@@ -1,5 +1,6 @@
 from typing import List, Optional, Tuple
 
+from matplotlib import animation
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -234,3 +235,71 @@ def plot_edr(
                      save_path=save_path,
                      log_freq_axis=log_freq_axis)
     return edr
+
+
+def animate_coupled_feedback_matrix(
+        coupled_feedback_matrix: List[NDArray],
+        coupling_matrix: Optional[List[NDArray]] = None,
+        save_path: Optional[str] = None):
+    """Animate a list of feedback matrices (as functions of epoch number)"""
+
+    def init_plots():
+        # Initialize the figure and the first matrix display
+        if coupling_matrix is None:
+            fig, ax = plt.subplots()
+            mat_plot = ax.matshow(coupled_feedback_matrix[0],
+                                  cmap='viridis')  # Initial display
+            fig.colorbar(mat_plot, ax=ax)
+            ax.set_title('Coupled feedback matrix')
+            return fig, ax, mat_plot
+
+        else:
+            fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(8, 6))
+            mat_plot = ax[0].matshow(coupled_feedback_matrix[0],
+                                     cmap='viridis')  # Initial display
+            coupled_mat_plot = ax[1].matshow(coupling_matrix[0],
+                                             cmap='viridis',
+                                             vmin=0,
+                                             vmax=1)
+            # add colorbar
+            fig.colorbar(mat_plot, ax=ax[0])
+            fig.colorbar(coupled_mat_plot, ax=ax[1])
+
+            # add titles
+            ax[0].set_title('Coupled feedback matrix')
+            ax[1].set_title('Coupling matrix')
+            return fig, ax, (mat_plot, coupled_mat_plot)
+
+    # Update function for animation
+    def update(frame: int):
+        if coupling_matrix is None:
+            mat_plot.set_array(
+                coupled_feedback_matrix[frame])  # Update matrix data
+            return [mat_plot]
+        else:
+            mat_plot.set_array(
+                coupled_feedback_matrix[frame])  # Update the first matrix
+            # pylint: disable=E0606
+            coupled_mat_plot.set_array(
+                coupling_matrix[frame])  # Update the second matrix
+            return [mat_plot, coupled_mat_plot]
+
+    # Create animation
+    fig, _, mat_plots = init_plots()
+    if len(mat_plots) == 1:
+        mat_plot = mat_plots
+    else:
+        mat_plot, coupled_mat_plot = mat_plots
+    ani = animation.FuncAnimation(fig,
+                                  update,
+                                  frames=len(coupled_feedback_matrix),
+                                  interval=500,
+                                  blit=True)
+
+    # Show the animation
+    plt.tight_layout()
+    plt.subplots_adjust(left=0.1, right=0.9, top=0.9,
+                        bottom=0.1)  # Fine-tune margins
+    if save_path is not None:
+        ani.save(save_path, writer="pillow", fps=2, dpi=300)
+    plt.show()

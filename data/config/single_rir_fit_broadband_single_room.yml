@@ -10,5 +10,5 @@ output_filter_config:
 trainer_config:
   max_epochs: 20
   num_freq_bins: 96000
-  train_dir: 'output/single_rir_out_gains_random_feedback_synth_data_single_room/'
-  ir_dir: 'audio/single_rir_out_gains_random_feedback_synth_data_single_room/'
+  train_dir: 'output/single_rir_out_gains_synth_data_single_room/'
+  ir_dir: 'audio/single_rir_out_gains_synth_data_single_room/'

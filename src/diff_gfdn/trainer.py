@@ -53,6 +53,7 @@ class Trainer:
                                 self.net.sample_rate), self.net.num_groups,
                     self.net.output_filters.num_biquads)
             ]
+            self.loss_weights = torch.tensor([1.0, 1.0, 1.0])
         else:
             self.criterion = [
                 edr_loss(self.net.sample_rate,
@@ -62,6 +63,7 @@ class Trainer:
                 edc_loss(self.net.common_decay_times.max() * 1e3,
                          self.net.sample_rate)
             ]
+            self.loss_weights = torch.tensor([1.0, 1.0])
 
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=10,
@@ -141,14 +143,17 @@ class VarReceiverPosTrainer(Trainer):
         self.optimizer.zero_grad()
         H = self.net(data)
         if self.use_reg_loss:
-            loss = self.criterion[0](
-                data['target_rir_response'], H) + self.criterion[1](
-                    data['target_rir_response'], H) + self.criterion[2](
+            loss = self.loss_weights[0] * self.criterion[0](
+                data['target_rir_response'],
+                H) + self.loss_weights[1] * self.criterion[1](
+                    data['target_rir_response'],
+                    H) + self.loss_weights[2] * self.criterion[2](
                         self.net.output_filters.biquad_cascade)
         else:
-            loss = self.criterion[0](data['target_rir_response'],
-                                     H) + self.criterion[1](
-                                         data['target_rir_response'], H)
+            loss = self.loss_weights[0] * self.criterion[0](
+                data['target_rir_response'],
+                H) + self.loss_weights[1] * self.criterion[1](
+                    data['target_rir_response'], H)
 
         loss.backward()
         self.optimizer.step()
@@ -292,14 +297,17 @@ class SinglePosTrainer(Trainer):
         self.optimizer.zero_grad()
         H = self.net(data)
         if self.use_reg_loss:
-            loss = self.criterion[0](
-                data['target_rir_response'], H) + self.criterion[1](
-                    data['target_rir_response'], H) + self.criterion[2](
+            loss = self.loss_weights[0] * self.criterion[0](
+                data['target_rir_response'],
+                H) + self.loss_weights[1] * self.criterion[1](
+                    data['target_rir_response'],
+                    H) + self.loss_weights[2] * self.criterion[2](
                         self.net.biquad_cascade)
         else:
-            loss = self.criterion[0](data['target_rir_response'],
-                                     H) + self.criterion[1](
-                                         data['target_rir_response'], H)
+            loss = self.loss_weights[0] * self.criterion[0](
+                data['target_rir_response'],
+                H) + self.loss_weights[1] * self.criterion[1](
+                    data['target_rir_response'], H)
         loss.backward()
         self.optimizer.step()
         return loss.item()
