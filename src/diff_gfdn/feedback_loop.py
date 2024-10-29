@@ -217,9 +217,13 @@ class FeedbackLoop(nn.Module):
             if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
                 # Nroom choose 2 rotation angles for getting an Nroom x Nroom unitary coupling matrix
                 # these are randomly distributed between 0 and pi/4
+                # self.alpha = nn.Parameter(
+                #     torch.rand((self.num_groups *
+                #                 (self.num_groups - 1)) // 2) / (0.25 * np.pi))
+
+                # no coupling initialisation
                 self.alpha = nn.Parameter(
-                    torch.rand((self.num_groups *
-                                (self.num_groups - 1)) // 2) / (0.25 * np.pi))
+                    torch.zeros(self.num_groups * (self.num_groups - 1) // 2))
 
                 self.nd_unitary = ND_Unitary()
 

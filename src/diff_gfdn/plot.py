@@ -286,7 +286,7 @@ def animate_coupled_feedback_matrix(
 
     # Create animation
     fig, _, mat_plots = init_plots()
-    if len(mat_plots) == 1:
+    if not isinstance(mat_plots, tuple):
         mat_plot = mat_plots
     else:
         mat_plot, coupled_mat_plot = mat_plots
@@ -301,5 +301,5 @@ def animate_coupled_feedback_matrix(
     plt.subplots_adjust(left=0.1, right=0.9, top=0.9,
                         bottom=0.1)  # Fine-tune margins
     if save_path is not None:
-        ani.save(save_path, writer="pillow", fps=2, dpi=300)
+        ani.save(save_path, writer="pillow", fps=2, dpi=100)
     plt.show()

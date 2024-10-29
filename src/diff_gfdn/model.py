@@ -345,7 +345,8 @@ class DiffGFDNSinglePos(DiffGFDN):
             self.num_delay_lines)
         # each delay line should have a unique scalar gain
         self.output_gains = nn.Parameter(
-            torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
+            (2 * torch.randn(self.num_delay_lines, 1) - 1) /
+            self.num_delay_lines)
 
         self.compress_pole_factor = output_filter_config.compress_pole_factor
 
@@ -465,6 +466,7 @@ class DiffGFDNSinglePos(DiffGFDN):
         param_np['gains_per_sample'] = self.gain_per_sample.squeeze().cpu(
         ).numpy()
         param_np['input_gains'] = self.input_gains.squeeze().cpu().numpy()
+        param_np['output_gains'] = self.output_gains.squeeze().cpu().numpy()
 
         try:
             if self.feedback_loop.coupling_matrix_type in (
@@ -512,8 +514,6 @@ class DiffGFDNSinglePos(DiffGFDN):
                           dim=-1).squeeze().cpu().numpy()
                 for n in range(self.num_groups)
             ]
-            param_np['output_gains'] = self.output_gains.squeeze().cpu().numpy(
-            )
         except Exception as e:
             logger.warning(e)
 

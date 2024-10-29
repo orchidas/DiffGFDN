@@ -34,9 +34,6 @@ class Trainer:
         if not os.path.exists(self.ir_dir):
             os.makedirs(self.ir_dir)
 
-        self.optimizer = torch.optim.Adam(net.parameters(),
-                                          lr=trainer_config.lr)
-
         if trainer_config.use_reg_loss:
             logger.info(
                 'Using regularisation loss to reduce time domain aliasing in output filters'
@@ -53,7 +50,7 @@ class Trainer:
                                 self.net.sample_rate), self.net.num_groups,
                     self.net.output_filters.num_biquads)
             ]
-            self.loss_weights = torch.tensor([1.0, 1.0, 1.0])
+            self.loss_weights = torch.tensor([1.0, 10.0, 1.0])
         else:
             self.criterion = [
                 edr_loss(self.net.sample_rate,
@@ -63,8 +60,37 @@ class Trainer:
                 edc_loss(self.net.common_decay_times.max() * 1e3,
                          self.net.sample_rate)
             ]
-            self.loss_weights = torch.tensor([1.0, 1.0])
+            self.loss_weights = torch.tensor([1.0, 10.0])
+            self.init_scheduler(trainer_config.lr)
 
+    def init_scheduler(self, lr_config: float):
+        """
+        Initialise scheduler, set faster learning rate for coupling matrix 
+        specified learning rate for all other params
+        """
+        param_groups = [
+            {
+                'params': [
+                    param for name, param in self.net.named_parameters()
+                    if 'feedback_loop.alpha' in name
+                ],
+                'lr':
+                0.1
+            },
+            # Add more groups as needed
+        ]
+
+        # Gather parameters that are not in the specified groups
+        other_params = [
+            param for name, param in self.net.named_parameters()
+            if not ('feedback_loop.alpha' in name)
+        ]
+
+        # Add the other parameters with a learning rate of 0.01
+        if other_params:
+            param_groups.append({'params': other_params, 'lr': lr_config})
+
+        self.optimizer = torch.optim.Adam(param_groups)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=10,
                                                          gamma=0.1)
@@ -273,7 +299,7 @@ class SinglePosTrainer(Trainer):
 
             # early stopping
             if epoch >= 1:
-                if abs(self.train_loss[-2] - self.train_loss[-1]) <= 0.0001:
+                if abs(self.train_loss[-2] - self.train_loss[-1]) <= 1e-4:
                     self.early_stop += 1
                 else:
                     self.early_stop = 0
