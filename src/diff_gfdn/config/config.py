@@ -71,6 +71,10 @@ class TrainerConfig(BaseModel):
     max_epochs: int = 5
     # learning rate for Adam optimiser
     lr: float = 0.01
+    # learning rate for input output gains
+    io_lr: float = 0.01
+    # learning rate for coupling angles
+    coupling_angle_lr: float = 0.01
     # length of IR filters (needed for calculating reguralisation loss)
     output_filt_ir_len_ms: float = 500
     # whether to use regularisation loss to reduce time domain aliasing

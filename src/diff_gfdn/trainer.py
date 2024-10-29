@@ -61,11 +61,11 @@ class Trainer:
                          self.net.sample_rate)
             ]
             self.loss_weights = torch.tensor([1.0, 10.0])
-            self.init_scheduler(trainer_config.lr)
+            self.init_scheduler(trainer_config)
 
-    def init_scheduler(self, lr_config: float):
+    def init_scheduler(self, trainer_config: TrainerConfig):
         """
-        Initialise scheduler, set faster learning rate for coupling matrix 
+        Initialise scheduler, set faster learning rate for input-output gains
         specified learning rate for all other params
         """
         param_groups = [
@@ -75,7 +75,23 @@ class Trainer:
                     if 'feedback_loop.alpha' in name
                 ],
                 'lr':
-                0.1
+                trainer_config.coupling_angle_lr,
+            },
+            {
+                'params': [
+                    param for name, param in self.net.named_parameters()
+                    if 'output_gains' in name
+                ],
+                'lr':
+                trainer_config.io_lr,
+            },
+            {
+                'params': [
+                    param for name, param in self.net.named_parameters()
+                    if 'input_gains' in name
+                ],
+                'lr':
+                trainer_config.io_lr
             },
             # Add more groups as needed
         ]
@@ -83,12 +99,16 @@ class Trainer:
         # Gather parameters that are not in the specified groups
         other_params = [
             param for name, param in self.net.named_parameters()
-            if not ('feedback_loop.alpha' in name)
+            if not ('feedback_loop.alpha' in name or 'input_gains' in name
+                    or 'output_gains' in name)
         ]
 
         # Add the other parameters with a learning rate of 0.01
         if other_params:
-            param_groups.append({'params': other_params, 'lr': lr_config})
+            param_groups.append({
+                'params': other_params,
+                'lr': trainer_config.lr
+            })
 
         self.optimizer = torch.optim.Adam(param_groups)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
