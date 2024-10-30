@@ -13,7 +13,7 @@ from .absorption_filters import (
 from .config.config import CouplingMatrixType, FeedbackLoopConfig, OutputFilterConfig
 from .feedback_loop import FeedbackLoop
 from .filters.geq import eq_freqs
-from .gain_filters import BiquadCascade, ScaledSigmoid, ScaledSoftPlus, SOSFilter, SVF, SVF_from_MLP
+from .gain_filters import BiquadCascade, Gains_from_MLP, ScaledSigmoid, ScaledSoftPlus, SOSFilter, SVF, SVF_from_MLP
 from .utils import to_complex
 
 # pylint: disable=W0718, E1136, E1137
@@ -187,23 +187,39 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
                          room_dims, absorption_coeffs, common_decay_times,
                          band_centre_hz)
 
+        self.use_svf_in_output = output_filter_config.use_svfs
+
         # unique to the network
         self.input_gains = nn.Parameter(
-            torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
+            (2 * torch.randn(self.num_delay_lines, 1) - 1) /
+            self.num_delay_lines)
 
-        self.output_gains = nn.Parameter(
-            torch.randn(self.num_delay_lines, 1) / self.num_delay_lines)
+        if self.use_svf_in_output:
+            logger.info("Using filters in output")
+            self.output_filters = SVF_from_MLP(
+                self.sample_rate,
+                self.num_groups,
+                self.num_delay_lines_per_group,
+                output_filter_config.num_fourier_features,
+                output_filter_config.num_hidden_layers,
+                output_filter_config.num_neurons_per_layer,
+                output_filter_config.encoding_type,
+                output_filter_config.compress_pole_factor,
+            )
 
-        self.output_filters = SVF_from_MLP(
-            self.sample_rate,
-            self.num_groups,
-            self.num_delay_lines_per_group,
-            output_filter_config.num_fourier_features,
-            output_filter_config.num_hidden_layers,
-            output_filter_config.num_neurons_per_layer,
-            output_filter_config.encoding_type,
-            output_filter_config.compress_pole_factor,
-        )
+            self.output_gains = nn.Parameter(
+                (2 * torch.randn(self.num_delay_lines, 1) - 1) /
+                self.num_delay_lines)
+        else:
+            logger.info("Using gains in output")
+            self.output_gains = Gains_from_MLP(
+                self.num_groups,
+                self.num_delay_lines_per_group,
+                output_filter_config.num_fourier_features,
+                output_filter_config.num_hidden_layers,
+                output_filter_config.num_neurons_per_layer,
+                output_filter_config.encoding_type,
+            )
 
     def forward(self, x: Dict) -> torch.tensor:
         """
@@ -216,9 +232,13 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
 
         num_freq_pts = len(z)
         # this is of size B x Ndel x num_freq_points
-        C = self.output_filters(x) * to_complex(
-            self.output_gains.expand(self.batch_size, self.num_delay_lines,
-                                     num_freq_pts))
+        if self.use_svf_in_output:
+            C = self.output_filters(x) * to_complex(
+                self.output_gains.expand(self.batch_size, self.num_delay_lines,
+                                         num_freq_pts))
+        else:
+            C = to_complex(self.output_gains(x))
+
         # this is also of size B x Ndel x num_freq_points
         B = to_complex(
             self.input_gains.expand(self.batch_size, self.num_delay_lines,
@@ -256,7 +276,6 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
         param_np['gains_per_sample'] = self.gain_per_sample.squeeze().cpu(
         ).numpy()
         param_np['input_gains'] = self.input_gains.squeeze().cpu().numpy()
-        param_np['output_gains'] = self.output_gains.squeeze().cpu().numpy()
 
         try:
             if self.feedback_loop.coupling_matrix_type in (
@@ -289,16 +308,23 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
             logger.warning('Parameter not initialised yet in FeedbackLoop!')
 
         try:
-            param_np[
-                'output_svf_params'] = self.output_filters.svf_params.squeeze(
+            if self.use_svf_in_output:
+                param_np[
+                    'output_svf_params'] = self.output_filters.svf_params.squeeze(
+                    ).cpu().numpy()
+                param_np['output_biquad_coeffs'] = [[
+                    torch.cat(
+                        (self.output_filters.biquad_cascade[b][n].num_coeffs,
+                         self.output_filters.biquad_cascade[b][n].den_coeffs),
+                        dim=-1).squeeze().cpu().numpy()
+                    for n in range(self.num_groups)
+                ] for b in range(self.batch_size)]
+                param_np['output_gains'] = self.output_gains.squeeze().cpu(
+                ).numpy()
+            else:
+                param_np['output_gains'] = self.output_gains.gains.squeeze(
                 ).cpu().numpy()
-            param_np['output_biquad_coeffs'] = [[
-                torch.cat(
-                    (self.output_filters.biquad_cascade[b][n].num_coeffs,
-                     self.output_filters.biquad_cascade[b][n].den_coeffs),
-                    dim=-1).squeeze().cpu().numpy()
-                for n in range(self.num_groups)
-            ] for b in range(self.batch_size)]
+
         except Exception as e:
             logger.warning(e)
 

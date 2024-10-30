@@ -428,8 +428,8 @@ class OneHotEncoding(nn.Module):
 class MLP(nn.Module):
 
     def __init__(self, num_pos_features: int, num_hidden_layers: int,
-                 num_neurons: int, num_biquads_in_cascade: int,
-                 num_groups: int, num_svf_params: int):
+                 num_neurons: int, num_groups: int,
+                 num_biquads_in_cascade: int, num_params: int):
         """
         Initialize the MLP.
 
@@ -439,7 +439,7 @@ class MLP(nn.Module):
             num_neurons (int): Number of neurons in each hidden layer.
             num_biquads_in_cascaed (int): Number of biquads in cascade
             num_groups (int): number of groups in GFDN
-            num_svf_params (int): number of learnable parameters in each SVF
+            num_params (int): number of learnable parameters in each SVF
         """
         super().__init__()
 
@@ -447,9 +447,9 @@ class MLP(nn.Module):
         input_size = num_pos_features
         self.num_biquads = num_biquads_in_cascade
         self.num_groups = num_groups
-        self.num_svf_params = num_svf_params
-        # Output layer has (num_del * num_SVF_params * num_biquads) features
-        output_size = self.num_groups * self.num_svf_params * self.num_biquads
+        self.num_params = num_params
+        # Output layer has (num_del * num_params * num_biquads) features
+        output_size = self.num_groups * self.num_params * self.num_biquads
 
         # Create a list of layers for the MLP
         layers = []
@@ -480,7 +480,7 @@ class MLP(nn.Module):
         batch_size = x.shape[0]
         x = self.model(x)
         x = x.view(batch_size, self.num_groups, self.num_biquads,
-                   self.num_svf_params)
+                   self.num_params)
         return x
 
 
@@ -545,9 +545,9 @@ class SVF_from_MLP(nn.Module):
         self.mlp = MLP(num_input_features,
                        num_hidden_layers,
                        num_neurons,
-                       self.num_biquads,
                        self.num_groups,
-                       num_svf_params=2)
+                       self.num_biquads,
+                       num_params=2)
 
         self.sos_filter = SOSFilter(self.num_biquads)
         # constraints on PEQ resonance
@@ -662,4 +662,122 @@ class SVF_from_MLP(nn.Module):
                       dim=-1).squeeze().cpu().numpy()
             for n in range(self.num_groups)
         ] for b in range(self.batch_size)]
+        return param_np
+
+
+class Gains_from_MLP(nn.Module):
+
+    def __init__(
+        self,
+        num_groups: int,
+        num_delay_lines_per_group: int,
+        num_fourier_features: int,
+        num_hidden_layers: int,
+        num_neurons: int,
+        encoding_type: FeatureEncodingType,
+        position_type: str = "output_gains",
+    ):
+        """
+        Train the MLP to get scalar gains for each delay line
+        Args:
+            num_groups (int): number of groups in the GFDN
+            num_delay_lines_per_group: number of delay lines in each group in the GFDN
+            num_fourier_features (int): how much will the spatial locations expand as a feature
+            num_hidden_layers (int): Number of hidden layers.
+            num_neurons (int): Number of neurons in each hidden layer.
+            position_type (str): whether the SVF is driving the input or output gains
+            encoding_type (str): whether to use one-hot encoding with the grid geometry information, 
+                                 or directly use the sinusoidal encodings of the position 
+                                 coordinates of the receiversas inputs to the MLP
+            compress_pole_factor (float): number between 0 and 1 that reduces the pole radii of the biquads and
+                                    prevents time domain aliasing
+        """
+        super().__init__()
+        self.num_groups = num_groups
+        self.num_delay_lines_per_group = num_delay_lines_per_group
+        self.num_delay_lines = self.num_groups * self.num_delay_lines_per_group
+        self.position_type = position_type
+        self.encoding_type = encoding_type
+
+        if self.encoding_type == FeatureEncodingType.SINE:
+            # if we were feeding the spatial coordinates directly, then the
+            # number of input features would be 3. Since we are encoding them,
+            # the number of features is 3 * num_fourier_features * 2
+            num_input_features = 3 * num_fourier_features * 2
+            self.encoder = SinusoidalEncoding(num_fourier_features)
+
+        elif self.encoding_type == FeatureEncodingType.MESHGRID:
+            # in this case, the (x,y,z) locations of the meshgrid and the
+            # corresponding one-hot vector (1s where all the receiver locations are)
+            # are inputs to the MLP
+            num_input_features = 4
+            self.encoder = OneHotEncoding()
+
+        self.mlp = MLP(num_input_features,
+                       num_hidden_layers,
+                       num_neurons,
+                       self.num_delay_lines,
+                       num_biquads_in_cascade=1,
+                       num_params=1)
+
+        # constraints on output gains
+        self.scaled_sigmoid = ScaledSigmoid(lower_limit=-1.0, upper_limit=1.0)
+
+    def forward(self, x: Dict) -> torch.tensor:
+        """
+        Run the input features through the MLP, gets the filter coefficients as output of the MLP
+        Then returns the frequency response of the cascade of SVF filters
+        """
+        z_values = x['z_values']
+        position = x[
+            'listener_position'] if self.position_type == "output_gains" else x[
+                'source_position']
+        self.batch_size = position.shape[0]
+        mesh_3D = x['mesh_3D']
+
+        # encode the position coordinates only
+        if self.encoding_type == FeatureEncodingType.SINE:
+            encoded_position = self.encoder(position)
+        elif self.encoding_type == FeatureEncodingType.MESHGRID:
+            encoded_position, _, rec_idx = self.encoder(mesh_3D, position)
+
+        # run the MLP, output of the MLP are the state variable filter coefficients
+        self.gains = self.mlp(encoded_position)
+
+        # if meshgrid encoding is used, the size of svf_params is (Lx*Ly*Lz, N, K, 2).
+        # instead, we want the size to be (B, N, K, 2). So, we only take the filters
+        # corresponding to the position of the receivers in the meshgrid
+        if self.encoding_type == FeatureEncodingType.MESHGRID:
+            self.gains = self.gains[rec_idx, ...]  # pylint: disable=E0601
+            assert self.gains.shape[0] == self.batch_size
+
+        # always ensure that the filter parameters are constrained
+        reshape_size = (self.batch_size, self.num_delay_lines)
+        self.gains = self.scaled_sigmoid(
+            self.gains.view(-1)).view(reshape_size)
+
+        # fill the output gains of size B x N x K
+        C = self.gains.unsqueeze(-1).repeat(1, 1, len(z_values))
+
+        return C
+
+    def print(self):
+        """Print the value of the parameters"""
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                print(name, param.data)
+
+    def get_parameters(self) -> Tuple:
+        """Return the parameters as tuple"""
+        gains = self.gains
+        return gains
+
+    @torch.no_grad()
+    def get_param_dict(self) -> Dict:
+        """Return the parameters as a dict"""
+        param_np = {}
+        self.gains = self.scaled_sigmoid(self.gains.view(-1)).view(
+            self.batch_size, self.num_delay_lines)
+
+        param_np['gains'] = self.gains.squeeze().cpu().numpy()
         return param_np

@@ -217,6 +217,8 @@ class RoomDataset(ABC):
         self.mixing_time_ms = mixing_time_ms
         self.nfft = nfft
         self.early_late_split()
+        # create 3D mesh
+        self.mesh_3D = self.get_3D_meshgrid(grid_spacing_m=0.3)
 
     @property
     def num_freq_bins(self):
@@ -407,9 +409,6 @@ class ThreeRoomDataset(RoomDataset):
                          absorption_coeffs,
                          nfft=nfft)
 
-        # how far apart the receivers are placed
-        mic_spacing_m = 0.3
-        self.mesh_3D = super().get_3D_meshgrid(mic_spacing_m)
         if config_dict.trainer_config.save_true_irs:
             logger.info("Saving RIRs")
             self.save_omni_irs()
@@ -453,6 +452,9 @@ class MultiRIRDataset(data.Dataset):
         """
         # spatial data
         self.source_position = torch.tensor(room_data.source_position)
+        # source position has to be 2D for proper length calculation
+        self.source_position = self.source_position.unsqueeze(
+            0) if self.source_position.dim() == 1 else self.source_position
         self.listener_positions = torch.tensor(room_data.receiver_position)
         self.mesh_3D = room_data.mesh_3D
         self.device = device

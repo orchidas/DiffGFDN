@@ -124,6 +124,11 @@ class Trainer:
         """Print results of training"""
         print(get_str_results(epoch=e, train_loss=self.train_loss,
                               time=e_time))
+        # # for debugging
+        # for name, param in self.net.named_parameters():
+        #     if name == 'input_gains' and param.requires_grad:
+        #         print(f"Parameter {name}: {param.data}")
+        #         print(f"Parameter {name} gradient: {param.grad.norm()}")
 
     def save_model(self, e: int):
         """Save the model at epoch number e"""
@@ -219,14 +224,17 @@ class VarReceiverPosTrainer(Trainer):
                              filename_prefix="valid_ir")
 
             if self.use_reg_loss:
-                loss = self.criterion[0](
-                    data['target_rir_response'], H) + self.criterion[1](
-                        data['target_rir_response'], H) + self.criterion[2](
+                loss = self.loss_weights[0] * self.criterion[0](
+                    data['target_rir_response'],
+                    H) + self.loss_weights[1] * self.criterion[1](
+                        data['target_rir_response'],
+                        H) + self.loss_weights[2] * self.criterion[2](
                             self.net.output_filters.biquad_cascade)
             else:
-                loss = self.criterion[0](data['target_rir_response'],
-                                         H) + self.criterion[1](
-                                             data['target_rir_response'], H)
+                loss = self.loss_weights[0] * self.criterion[0](
+                    data['target_rir_response'],
+                    H) + self.loss_weights[1] * self.criterion[1](
+                        data['target_rir_response'], H)
 
             cur_loss = loss.item()
             total_loss += cur_loss
