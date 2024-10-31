@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -6,9 +6,35 @@ from scipy.signal import fftconvolve
 from slope2noise.DecayFitNet.python.toolbox.DecayFitNetToolbox import DecayFitNetToolbox
 from slope2noise.DecayFitNet.python.toolbox.core import decay_model, discard_last_n_percent, PreprocessRIR
 from slope2noise.DecayFitNet.python.toolbox.utils import calc_mse
+from slope2noise.slope2noise.utils import octave_filtering
 import torch
 
-from .utils import ms_to_samps
+from .filters.geq import octave_bands
+from .utils import db2lin, ms_to_samps
+
+
+def get_edc_params(rir: ArrayLike,
+                   n_slopes: int,
+                   fs: float,
+                   use_octave_freqs: bool = True):
+    """
+    Get decay time, amplitudes, noise level and fitted EDC
+    Args:
+        RIR (ArrayLike): single dimension RIR of length rir_len
+        n_slopes (int): number of slopes in RIR
+        fs (float): sampling frequency
+        use_octave_freqs (bool): if true, then the RIR will be filtered in octave bands
+    Returns:
+        NDArray, NDArray, NDArray, ArrayLike, NDArray: the T60s, amplitudes and noise level for 
+        n_slopes and n_subbands. The normalisation values and the fitted EDC per subband 
+    """
+    filter_frequencies = octave_bands() if use_octave_freqs else None
+    est_params_decay_net, norm_vals, fitted_edc_subband = get_decay_fit_net_params(
+        rir, filter_frequencies, n_slopes, fs)
+    est_t60 = est_params_decay_net[0]
+    est_amp = est_params_decay_net[1]
+    est_noise_level = est_params_decay_net[2]
+    return est_t60, est_amp, est_noise_level, norm_vals, fitted_edc_subband
 
 
 def get_decay_fit_net_params(
@@ -70,6 +96,58 @@ def get_decay_fit_net_params(
 
     return estimated_parameters_decayfitnet, norm_vals_decayfitnet.numpy(
     ), fitted_edc_decayfitnet
+
+
+def amplitudes_to_initial_level(
+        decay_times: NDArray,
+        amplitudes: NDArray,
+        fs: float,
+        ir_len: int,
+        max_freq: float = 16e3,
+        uses_decay_fit_net: bool = False,
+        norm_vals: Optional[ArrayLike] = None) -> NDArray:
+    """
+    Convert decatFitNet estimation to initial level as used in FDN tone correction filter.
+    Adapted from FDNToolbox by SJS.
+    Args:
+        decay_times (NDArray): decay times of size n_bands x n_slopes
+        amplitudes (NDArray): amplitudes of size n_bands x n_slopes
+        fs (float): sampling frequency
+        ir_len (int): length of the RIR in samples
+        max_freq (float): maximum frequency when doing octave filtering
+        uses_decay_fit_net: where the decay times and amplitudes calculated using DecayFitNet?
+        norm_vals (ArrayLike): normalisation values, only needs to be specified if DecayFitNet was used
+    Retunrs:
+        NDArray: normalised initial level of size n_bands x n_slopes
+    """
+    if norm_vals is None and not uses_decay_fit_net:
+        norm_vals = np.ones_like(amplitudes)
+
+    n_slopes = amplitudes.shape[-1]
+    amplitudes = amplitudes * norm_vals
+
+    # estimate energy of the octave filters
+    impulse = np.zeros((ir_len))
+    impulse[0] = 1
+    f_bands = octave_bands(end_freq=max_freq)
+
+    ir_octave_filter = octave_filtering(impulse, fs, f_bands, get_filter=True)
+    # the input inpulse will not be used in this case actually, get_filter argument is just a quick fix
+    band_energy = np.sum(ir_octave_filter**2, axis=0)
+    band_energy = np.tile(band_energy[:, np.newaxis], (1, n_slopes))
+
+    # Cumulative energy is a geometric series of the gain per sample
+    slope = -60.0 / (decay_times * fs)
+    gain_per_sample = db2lin(slope)
+    decay_energy = 1 / (1 - gain_per_sample**2)
+
+    # initial level
+    norm_factor = ir_len if uses_decay_fit_net else 1.0
+    level = np.sqrt(amplitudes / band_energy / decay_energy * norm_factor)
+    # there is an offset because, the FDN is not energy normalized
+    # the ir_len factor is due to the normalization in schroederInt (in DecayFitNet)
+
+    return level
 
 
 def calculate_energy_envelope(sig: ArrayLike, fs: float,
