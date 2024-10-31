@@ -26,6 +26,7 @@ class SVF:
     m_HP: Optional[float] = 1.0
     m_BP: Optional[float] = 1.0
     G_db: Optional[float] = None
+    device: Optional[torch.device] = 'cpu'
 
     def __post_init__(self):
         """Fix the mixing coefficients based on the type of filter"""
@@ -44,7 +45,7 @@ class SVF:
                     torch.zeros_like(self.G).unsqueeze(-1),
                 ),
                 dim=-1,
-            )
+            ).to(self.device)
         elif self.filter_type == "highpass":
             m = torch.cat(
                 (
@@ -53,7 +54,7 @@ class SVF:
                     torch.ones_like(self.G).unsqueeze(-1),
                 ),
                 dim=-1,
-            )
+            ).to(self.device)
         elif self.filter_type == "bandpass":
             m = torch.cat(
                 (
@@ -62,7 +63,7 @@ class SVF:
                     torch.zeros_like(self.G).unsqueeze(-1),
                 ),
                 dim=-1,
-            )
+            ).to(self.device)
         elif self.filter_type == "lowshelf":
             m = torch.cat(
                 (
@@ -71,7 +72,7 @@ class SVF:
                     (torch.ones_like(self.G)).unsqueeze(-1),
                 ),
                 dim=-1,
-            )
+            ).to(self.device)
         elif self.filter_type == "highshelf":
             m = torch.cat(
                 (
@@ -80,7 +81,7 @@ class SVF:
                     (self.G * torch.ones_like(self.G)).unsqueeze(-1),
                 ),
                 dim=-1,
-            )
+            ).to(self.device)
         elif self.filter_type in ("peaking", "notch"):
             m = torch.cat(
                 (
@@ -89,7 +90,7 @@ class SVF:
                     (torch.ones_like(self.G)).unsqueeze(-1),
                 ),
                 dim=-1,
-            )
+            ).to(self.device)
         else:
             print(
                 "The filter type not specified or not in the list. Using the given mixing coefficents."
@@ -112,7 +113,8 @@ class BiquadCascade:
 
     @staticmethod
     def from_svf_coeffs(svf_coeffs: List[SVF],
-                        compress_pole_factor: float = 1.0):
+                        compress_pole_factor: float = 1.0,
+                        device: Optional[torch.device] = 'cpu'):
         """
         Get the biquad cascade from a list of SVF coefficients
         Args:
@@ -121,7 +123,7 @@ class BiquadCascade:
                                 prevents time domain aliasing
         """
         num_sos = len(svf_coeffs)
-        num_coeffs = torch.zeros((num_sos, 3))
+        num_coeffs = torch.zeros((num_sos, 3), device=device)
         den_coeffs = torch.zeros_like(num_coeffs)
         for i in range(num_sos):
             cur_svf = svf_coeffs[i]
@@ -167,12 +169,14 @@ class IIRFilter(nn.Module):
         assert self.filter_numerator.shape == (self.num_filters,
                                                self.filt_order)
 
-    def forward(self, z: torch.tensor):
+    def forward(self, z: torch.tensor, device: Optional[torch.device] = 'cpu'):
         """
         Calculate 
         Here, z represents the input frequency sampling points
         """
-        H = torch.ones((self.num_filters, len(z)), dtype=torch.complex64)
+        H = torch.ones((self.num_filters, len(z)),
+                       dtype=torch.complex64,
+                       device=device)
         Hnum = torch.zeros_like(H)
         Hden = torch.zeros_like(H)
 
@@ -192,6 +196,7 @@ class SOSFilter(nn.Module):
         self,
         num_biquads: int,
         biquad_cascade: Optional[BiquadCascade] = None,
+        device: Optional[torch.device] = 'cpu',
     ):
         """
         Filter input with a cascade of second order sections (either in the time of frequency domain)
@@ -200,6 +205,7 @@ class SOSFilter(nn.Module):
 
         """
         super().__init__()
+        self.device = device
         self.num_biquads = num_biquads
         if biquad_cascade is not None:
             self.biquad_cascade = biquad_cascade
@@ -214,7 +220,7 @@ class SOSFilter(nn.Module):
         if biquad_cascade is None:
             biquad_cascade = self.biquad_cascade
 
-        H = torch.ones(len(z), dtype=torch.complex64)
+        H = torch.ones(len(z), dtype=torch.complex64, device=self.device)
         for k in range(self.num_biquads):
             H *= torch.div(
                 biquad_cascade.num_coeffs[k, 0] +
@@ -486,18 +492,17 @@ class MLP(nn.Module):
 
 class SVF_from_MLP(nn.Module):
 
-    def __init__(
-        self,
-        sample_rate: float,
-        num_groups: int,
-        num_delay_lines_per_group: int,
-        num_fourier_features: int,
-        num_hidden_layers: int,
-        num_neurons: int,
-        encoding_type: FeatureEncodingType,
-        compress_pole_factor: Optional[float] = 1.0,
-        position_type: str = "output_gains",
-    ):
+    def __init__(self,
+                 sample_rate: float,
+                 num_groups: int,
+                 num_delay_lines_per_group: int,
+                 num_fourier_features: int,
+                 num_hidden_layers: int,
+                 num_neurons: int,
+                 encoding_type: FeatureEncodingType,
+                 compress_pole_factor: Optional[float] = 1.0,
+                 position_type: str = "output_gains",
+                 device: Optional[torch.device] = 'cpu'):
         """
         Train the MLP to get SVF coefficients for a biquad cascade
         Args:
@@ -521,11 +526,13 @@ class SVF_from_MLP(nn.Module):
         self.position_type = position_type
         self.encoding_type = encoding_type
         self.compress_pole_factor = compress_pole_factor
+        self.device = device
 
-        centre_freq, shelving_crossover = eq_freqs()
+        centre_freq, shelving_crossover = eq_freqs().to(self.device)
         self.svf_cutoff_freqs = torch.pi * torch.cat(
             (torch.tensor([shelving_crossover[0]]), centre_freq,
-             torch.tensor([shelving_crossover[-1]]))) / sample_rate
+             torch.tensor([shelving_crossover[-1]]))).to(
+                 self.device) / sample_rate
         self.num_biquads = len(self.svf_cutoff_freqs)
 
         if self.encoding_type == FeatureEncodingType.SINE:
@@ -549,7 +556,7 @@ class SVF_from_MLP(nn.Module):
                        self.num_biquads,
                        num_params=2)
 
-        self.sos_filter = SOSFilter(self.num_biquads)
+        self.sos_filter = SOSFilter(self.num_biquads, device=self.device)
         # constraints on PEQ resonance
         self.scaled_sigmoid = ScaledSigmoid(lower_limit=1e-6, upper_limit=1.0)
         # constraints on PEQ gains
@@ -569,7 +576,8 @@ class SVF_from_MLP(nn.Module):
 
         # this will be the output tensor
         H = torch.zeros((self.batch_size, self.num_delay_lines, len(z_values)),
-                        dtype=torch.complex64)
+                        dtype=torch.complex64,
+                        device=self.device)
 
         # encode the position coordinates only
         if self.encoding_type == FeatureEncodingType.SINE:
@@ -614,11 +622,11 @@ class SVF_from_MLP(nn.Module):
                         filter_type=("lowshelf" if k == 0 else
                                      "highshelf" if k == self.num_biquads -
                                      1 else "peaking"),
-                        G_db=svf_params_del_line[k, 1])
-                    for k in range(self.num_biquads)
+                        G_db=svf_params_del_line[k, 1],
+                        device=self.device) for k in range(self.num_biquads)
                 ]
                 self.biquad_cascade[b][i] = BiquadCascade.from_svf_coeffs(
-                    svf_cascade, self.compress_pole_factor)
+                    svf_cascade, self.compress_pole_factor, device=self.device)
 
                 # all delay lines in a group have the same output filter
                 H[b, i * self.num_delay_lines_per_group:(i + 1) *

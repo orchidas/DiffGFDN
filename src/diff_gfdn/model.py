@@ -205,7 +205,7 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
                 output_filter_config.num_neurons_per_layer,
                 output_filter_config.encoding_type,
                 output_filter_config.compress_pole_factor,
-            )
+                device=self.device)
 
             self.output_gains = nn.Parameter(
                 (2 * torch.randn(self.num_delay_lines, 1) - 1) /
@@ -379,10 +379,11 @@ class DiffGFDNSinglePos(DiffGFDN):
         # check if the output gains are filters or scalars
         self.use_svf_in_output = output_filter_config.use_svfs
         if self.use_svf_in_output:
-            centre_freq, shelving_crossover = eq_freqs()
+            centre_freq, shelving_crossover = eq_freqs().to(self.device)
             self.svf_cutoff_freqs = torch.pi * torch.cat(
                 (torch.tensor([shelving_crossover[0]]), centre_freq,
-                 torch.tensor([shelving_crossover[-1]]))) / self.sample_rate
+                 torch.tensor([shelving_crossover[-1]]))).to(
+                     self.device) / self.sample_rate
             self.num_biquads = len(self.svf_cutoff_freqs)
 
             # resonance distributed randomly between 0 and 1
