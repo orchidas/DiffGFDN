@@ -111,7 +111,7 @@ class DiffGFDN(nn.Module):
                     ],
                                  device=self.device))
 
-        logger.info(f"Gains in delay lines: {self.gain_per_sample}")
+        # logger.info(f"Gains in delay lines: {self.gain_per_sample}")
 
         self.delays = torch.tensor(delays,
                                    dtype=torch.float32,
@@ -379,7 +379,7 @@ class DiffGFDNSinglePos(DiffGFDN):
         # check if the output gains are filters or scalars
         self.use_svf_in_output = output_filter_config.use_svfs
         if self.use_svf_in_output:
-            centre_freq, shelving_crossover = eq_freqs().to(self.device)
+            centre_freq, shelving_crossover = eq_freqs()
             self.svf_cutoff_freqs = torch.pi * torch.cat(
                 (torch.tensor([shelving_crossover[0]]), centre_freq,
                  torch.tensor([shelving_crossover[-1]]))).to(

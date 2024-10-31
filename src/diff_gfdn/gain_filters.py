@@ -528,7 +528,7 @@ class SVF_from_MLP(nn.Module):
         self.compress_pole_factor = compress_pole_factor
         self.device = device
 
-        centre_freq, shelving_crossover = eq_freqs().to(self.device)
+        centre_freq, shelving_crossover = eq_freqs()
         self.svf_cutoff_freqs = torch.pi * torch.cat(
             (torch.tensor([shelving_crossover[0]]), centre_freq,
              torch.tensor([shelving_crossover[-1]]))).to(
