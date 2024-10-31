@@ -30,6 +30,7 @@ class Trainer:
         self.ir_dir = Path(trainer_config.ir_dir).resolve()
         self.use_reg_loss = trainer_config.use_reg_loss
         self.reduced_pole_radius = trainer_config.reduced_pole_radius
+        self.init_scheduler(trainer_config)
 
         if not os.path.exists(self.ir_dir):
             os.makedirs(self.ir_dir)
@@ -61,7 +62,6 @@ class Trainer:
                          self.net.sample_rate)
             ]
             self.loss_weights = torch.tensor([1.0, 10.0])
-            self.init_scheduler(trainer_config)
 
     def init_scheduler(self, trainer_config: TrainerConfig):
         """
