@@ -1,15 +1,18 @@
+from pathlib import Path
 from typing import List, Optional, Tuple
 
+from IPython import display
 from matplotlib import animation
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.fft import rfftfreq
 from scipy.signal import freqz, sosfreqz
+from slope2noise.slope2noise.utils import octave_filtering
 import torch
 
 from .losses import get_edr_from_stft, get_stft_torch
-from .utils import db
+from .utils import db, ms_to_samps
 
 
 def plot_t60_filter_response(
@@ -56,7 +59,7 @@ def plot_t60_filter_response(
         plt.legend([line0[0], line1[0]], ["Measured", "GEQ fit"])
     plt.xlabel('Frequency(Hz)')
     plt.ylabel('Magnitude (dB)')
-    plt.ylim([-10, 5])
+    plt.ylim([-30, 5])
     plt.tight_layout()
 
 
@@ -302,4 +305,86 @@ def animate_coupled_feedback_matrix(
                         bottom=0.1)  # Fine-tune margins
     if save_path is not None:
         ani.save(save_path, writer="pillow", fps=2, dpi=100)
+    plt.show()
+
+
+def plot_subband_edc(h_true: ArrayLike,
+                     h_approx: List[ArrayLike],
+                     fs: float,
+                     band_centre_hz: ArrayLike,
+                     pos_to_investigate: List,
+                     mixing_time_ms: float = 20.0,
+                     crop_end_ms: float = 5.0,
+                     save_path: Optional[str] = None):
+    """
+    Plot true and synthesised EDC curves for each frequency band, as a function of epoch number
+    Args:
+        h_true (ArrayLike): true (desired) RIR at a particular position
+        h_approx (List[ArrayLike]): synthesized RIRs, one for each epoch
+        fs (float): sampling rate
+        band_centre_hz (ArrayLike): centre frequencies of the octave filters
+        pos_to_investigate (List): cartesian coordinate of position where RIR was measured
+        mixing_time_ms (float): truncate RIR before this time
+        crop_end_ms (float): truncate last few samples of RIR
+        save_path (optional, str): where to save figure
+    """
+    mixing_time_samp = ms_to_samps(mixing_time_ms, fs)
+    crop_end_samp = ms_to_samps(crop_end_ms, fs)
+
+    trunc_true_ir = h_true[mixing_time_samp:-crop_end_samp]
+    filtered_true_ir = octave_filtering(trunc_true_ir, fs, band_centre_hz)
+    time = np.linspace(0, (len(trunc_true_ir) - 1) / fs, len(trunc_true_ir))
+
+    num_bands = len(band_centre_hz)
+    time = np.linspace(0, (len(trunc_true_ir) - 1) / fs, len(trunc_true_ir))
+    fig, ax = plt.subplots(num_bands, 1, figsize=(6, 12))
+    fig.subplots_adjust(hspace=0.7)
+    leg = []
+
+    num_epochs = len(h_approx)
+    for epoch in range(num_epochs):
+        approx_ir = h_approx[epoch]
+        trunc_approx_ir = approx_ir[mixing_time_samp:mixing_time_samp +
+                                    len(trunc_true_ir)]
+        filtered_approx_ir = octave_filtering(trunc_approx_ir, fs,
+                                              band_centre_hz)
+        leg.append(f'Epoch = {epoch}')
+
+        for k in range(num_bands):
+            if epoch == 0:
+                true_edf = np.flipud(
+                    np.cumsum(np.flipud(filtered_true_ir[:, k]**2), axis=-1))
+                ax[k].plot(time,
+                           db(true_edf, is_squared=True),
+                           label='True EDF')
+
+            synth_edf = np.flipud(
+                np.cumsum(np.flipud(filtered_approx_ir[:, k]**2), axis=-1))
+            ax[k].plot(time,
+                       db(synth_edf, is_squared=True),
+                       label=f'Epoch={epoch}')
+            ax[k].set_title(f'{band_centre_hz[k]: .0f} Hz')
+            ax[k].set_ylim([-100, 0])
+
+        display.display(fig)  # Display the updated figure
+        display.clear_output(
+            wait=True)  # Clear the previous output to keep updates in place
+
+    # Collect handles and labels from all axes
+    handles, labels = [], []
+    for handle, label in zip(*ax[-1].get_legend_handles_labels()):
+        handles.append(handle)
+        labels.append(label)
+    fig.legend(handles,
+               labels,
+               loc="upper right",
+               ncol=1,
+               frameon=False,
+               bbox_to_anchor=(1.2, 0.5))
+    fig.suptitle(
+        'Truncated EDF at position ' +
+        f'{pos_to_investigate[0]: .2f}, {pos_to_investigate[1]: .2f}, {pos_to_investigate[2]: .2f} m'
+    )
+    if save_path is not None:
+        fig.savefig(Path(save_path).resolve())
     plt.show()

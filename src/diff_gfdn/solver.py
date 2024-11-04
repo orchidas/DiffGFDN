@@ -39,7 +39,8 @@ def convert_common_slopes_rir_to_room_dataset(
     room_start_coords = rir_data.room_start_coords
     source_locs = rir_data.source_locs
     receiver_locs = rir_data.receiver_locs
-    common_decay_times = np.array(rir_data.t_vals)
+    common_decay_times = np.array(rir_data.t_vals).T
+    band_centre_hz = np.array(rir_data.f_bands)
     amplitudes = rir_data.a_vals
     rirs = rir_data.rir
     sample_rate = rir_data.sample_rate
@@ -54,6 +55,7 @@ def convert_common_slopes_rir_to_room_dataset(
         room_dims=room_dims,
         room_start_coord=room_start_coords,
         amplitudes=amplitudes,
+        band_centre_hz=band_centre_hz,
         nfft=num_freq_bins,
     )
 

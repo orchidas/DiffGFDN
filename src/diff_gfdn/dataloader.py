@@ -191,7 +191,8 @@ class RoomDataset(ABC):
             receiver_position (NDArray): position of receivers in cartesian coordinate
             rirs (NDArray): omni-rirs at all source and receiver positions
             band_centre_hz (optinal, ArrayLike): octave band centres where common T60s are calculated
-            common_decay_times (List[Union[ArrayLike, float]]): common decay times for the different rooms
+            common_decay_times (List[Union[ArrayLike, float]]): common decay times for the different rooms of 
+                                                                num_freq_bands x num_rooms
             amplitudes (NDArray): the amplitudes of the common slopes of size 
                                   (num_freq_bands x  num_rooms x num_rec_pos)
             room_dims (List): l,w,h for each room in coupled space

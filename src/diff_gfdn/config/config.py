@@ -4,8 +4,9 @@ from enum import Enum
 from typing import List, Optional
 
 import numpy as np
-from pydantic import BaseModel, computed_field, ConfigDict, Field, model_validator
+from pydantic import BaseModel, computed_field, ConfigDict, Field, field_validator, model_validator
 import sympy as sp
+import torch
 
 from ..utils import ms_to_samps
 
@@ -95,7 +96,16 @@ class TrainerConfig(BaseModel):
     reduced_pole_radius: float = Field(
         default=1.0)  # Default value, to be set dynamically
 
-    # Validator for the 'reduced_pole_radius' field
+    # validator for training on GPU
+    @field_validator('device', mode='after')
+    @classmethod
+    def validate_training_device(cls, value):
+        """Validate GPU, if it is used for training"""
+        if value == 'cuda':
+            assert torch.cuda.is_available(
+            ), "CUDA is not available for training"
+
+    # validator for the 'reduced_pole_radius' field
     @model_validator(mode='after')
     @classmethod
     def calculate_reduced_pole_radius(cls, model):

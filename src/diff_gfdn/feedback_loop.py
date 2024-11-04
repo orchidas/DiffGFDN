@@ -157,7 +157,7 @@ class FeedbackLoop(nn.Module):
             num_groups (int): number of groups in the GFDN
             num_delay_lines_per_group (int): number of delay lines in each group
             delays (List): delay line lengths in samples
-            gains (List): delay line absorption gains
+            gains (List): delay line absorption gains / filters
             use_absorption_filters (bool): whether the delay line gains are gains or filters
             coupling_matrix_type (CouplingMatrixType): scalar or filter coupling
             coupling_matrix_order (optional, int): order of the PU filter coupling matrix
@@ -215,6 +215,7 @@ class FeedbackLoop(nn.Module):
                                self.num_delay_lines_per_group) - 1) /
                                   np.sqrt(self.num_delay_lines_per_group))
             if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
+
                 # Nroom choose 2 rotation angles for getting an Nroom x Nroom unitary coupling matrix
                 # these are randomly distributed between 0 and pi/4
                 # self.alpha = nn.Parameter(

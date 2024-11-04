@@ -36,6 +36,7 @@ class SVF:
             self.G = 1.0
         else:
             self.G = db2lin(self.G_db)
+        # assert (self.G <= 1.0), "gain cannot be greater than unity!"
 
         if self.filter_type == "lowpass":
             m = torch.cat(
@@ -96,8 +97,8 @@ class SVF:
                 "The filter type not specified or not in the list. Using the given mixing coefficents."
             )
         self.m_LP = m[0]
-        self.m_HP = m[1]
-        self.m_BP = m[2]
+        self.m_BP = m[1]
+        self.m_HP = m[2]
 
 
 @dataclass
@@ -146,7 +147,6 @@ class BiquadCascade:
                        2] = (cur_svf.cutoff_frequency**2 -
                              2 * cur_svf.resonance * cur_svf.cutoff_frequency +
                              1) * compress_pole_factor**2
-
         return BiquadCascade(num_sos, num_coeffs, den_coeffs)
 
 
@@ -300,11 +300,13 @@ class ScaledSoftPlus(nn.Module):
         """
         super().__init__()
         self.soft_plus = SoftPlus()
+        self.sigmoid = Sigmoid()
         self.lower_limit = lower_limit
         self.upper_limit = upper_limit
 
     def forward(self, x: torch.Tensor):
         """Scaled softplus function to get values between lowr_lmit and upper limit"""
+
         return self.lower_limit + (self.upper_limit -
                                    self.lower_limit) * self.soft_plus(x) / (
                                        1 + self.soft_plus(x))
@@ -324,6 +326,26 @@ class TanSigmoid(nn.Module):
     def forward(self, x: torch.Tensor):
         """Tan-sigmoid ensures positive output for SVF frequency"""
         return torch.tan(np.pi * self.sigmoid(x) * 0.5)
+
+
+class InvertedReLU(nn.Module):
+    """ReLU activation between min_value (negative) and 0"""
+
+    def __init__(self, min_value: float):
+        super().__init__()
+        assert min_value < 0.0
+        self.min_value = min_value
+
+    def forward(self, x):
+        linear_part = torch.where((x > self.min_value) & (x < 0), x,
+                                  torch.tensor(0.0, device=x.device))
+
+        # Apply saturation
+        return torch.where(
+            x >= 0, torch.tensor(0.0, device=x.device),
+            torch.where(x <= self.min_value,
+                        torch.tensor(self.min_value, device=x.device),
+                        linear_part))
 
 
 #######################################MLP-RELATED###########################################
@@ -558,9 +580,9 @@ class SVF_from_MLP(nn.Module):
 
         self.sos_filter = SOSFilter(self.num_biquads, device=self.device)
         # constraints on PEQ resonance
-        self.scaled_sigmoid = ScaledSigmoid(lower_limit=1e-6, upper_limit=1.0)
+        self.scaled_res = ScaledSigmoid(lower_limit=1e-6, upper_limit=1.0)
         # constraints on PEQ gains
-        self.soft_plus = ScaledSoftPlus(lower_limit=-6, upper_limit=6)
+        self.scaled_gains = ScaledSigmoid(lower_limit=-6, upper_limit=6)
 
     def forward(self, x: Dict) -> torch.tensor:
         """
@@ -597,9 +619,9 @@ class SVF_from_MLP(nn.Module):
 
         # always ensure that the filter parameters are constrained
         reshape_size = (self.batch_size, self.num_groups, self.num_biquads)
-        self.svf_params[..., 0] = self.scaled_sigmoid(
+        self.svf_params[..., 0] = self.scaled_res(
             self.svf_params[..., 0].view(-1)).view(reshape_size)
-        self.svf_params[..., 1] = self.soft_plus(
+        self.svf_params[..., 1] = self.scaled_gains(
             self.svf_params[..., 1].view(-1)).view(reshape_size)
 
         # initialise empty filters
@@ -657,10 +679,10 @@ class SVF_from_MLP(nn.Module):
     def get_param_dict(self) -> Dict:
         """Return the parameters as a dict"""
         param_np = {}
-        self.svf_params[..., 0] = self.scaled_sigmoid(
+        self.svf_params[..., 0] = self.scaled_res(
             self.svf_params[..., 0].view(-1)).view(self.num_groups,
                                                    self.num_biquads)
-        self.svf_params[..., 1] = self.soft_plus(
+        self.svf_params[..., 1] = self.scaled_gains(
             self.svf_params[..., 1].view(-1)).view(self.num_groups,
                                                    self.num_biquads)
         param_np['svf_params'] = self.svf_params.squeeze().cpu().numpy()
@@ -684,6 +706,7 @@ class Gains_from_MLP(nn.Module):
         num_neurons: int,
         encoding_type: FeatureEncodingType,
         position_type: str = "output_gains",
+        device: Optional[torch.device] = 'cpu',
     ):
         """
         Train the MLP to get scalar gains for each delay line
@@ -706,6 +729,7 @@ class Gains_from_MLP(nn.Module):
         self.num_delay_lines = self.num_groups * self.num_delay_lines_per_group
         self.position_type = position_type
         self.encoding_type = encoding_type
+        self.device = device
 
         if self.encoding_type == FeatureEncodingType.SINE:
             # if we were feeding the spatial coordinates directly, then the

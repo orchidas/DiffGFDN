@@ -93,6 +93,14 @@ class Trainer:
                 'lr':
                 trainer_config.io_lr
             },
+            {
+                'params': [
+                    param for name, param in self.net.named_parameters()
+                    if 'output_svf_params' in name
+                ],
+                'lr':
+                trainer_config.io_lr
+            },
             # Add more groups as needed
         ]
 
@@ -100,7 +108,7 @@ class Trainer:
         other_params = [
             param for name, param in self.net.named_parameters()
             if not ('feedback_loop.alpha' in name or 'input_gains' in name
-                    or 'output_gains' in name)
+                    or 'output_gains' in name or 'output_svf_params' in name)
         ]
 
         # Add the other parameters with a learning rate of 0.01
@@ -377,16 +385,6 @@ class SinglePosTrainer(Trainer):
         for name, prm in self.net.named_parameters():
             if name in ('input_gains', 'output_gains'):
                 prm.data.copy_(torch.div(prm.data, torch.pow(energyH, 1 / 4)))
-
-            if name == 'output_svf_params':
-                # to scale the magnitude response, the numerator coefficients
-                # in each biquad cascade need to be scaled
-                scaling_factor = torch.pow(torch.pow(energyH, 1 / 4),
-                                           1.0 / float(self.net.num_biquads))
-                # m_i^{LP}, m_i{HP}, m_i^{BP} need to be divided by the scaling factor for all i
-                tmp_filters = prm.data.clone()
-                tmp_filters[..., 2:] /= scaling_factor
-                prm.data.copy_(tmp_filters)
 
     @torch.no_grad()
     def save_ir(self,
