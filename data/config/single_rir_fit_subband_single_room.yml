@@ -1,0 +1,15 @@
+ir_path: 'audio/synthetic_true/single_room_freq_dep/ir_(3.19, 4.92, 0.82).wav'
+room_dataset_path: 'resources/synthetic_dataset/single_room_freq_dep/bb_wgn_0000.pkl'
+sample_rate: 48000.0
+num_delay_lines: 8
+use_absorption_filters: True
+feedback_loop_config:
+  coupling_matrix_type: 'random_matrix'
+output_filter_config:
+  use_svfs: True
+trainer_config:
+  max_epochs: 20
+  num_freq_bins: 96000
+  io_lr: 0.1
+  train_dir: 'output/single_rir_out_gains_synth_data_single_room_freq_dep/'
+  ir_dir: 'audio/single_rir_out_gains_synth_data_single_room_freq_dep/'

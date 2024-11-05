@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 from IPython import display
 from matplotlib import animation
@@ -7,12 +7,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.fft import rfftfreq
-from scipy.signal import freqz, sosfreqz
+from scipy.signal import freqz, sos2zpk, sosfreqz
 from slope2noise.slope2noise.utils import octave_filtering
 import torch
 
+from .analysis import get_amps_for_rir
+from .filters.geq import eq_freqs
 from .losses import get_edr_from_stft, get_stft_torch
-from .utils import db, ms_to_samps
+from .utils import db, db2lin, ms_to_samps
 
 
 def plot_t60_filter_response(
@@ -388,3 +390,190 @@ def plot_subband_edc(h_true: ArrayLike,
     if save_path is not None:
         fig.savefig(Path(save_path).resolve())
     plt.show()
+
+
+def plot_subband_amplitudes(h_true: Union[ArrayLike, torch.Tensor],
+                            h_approx: Union[ArrayLike, torch.Tensor],
+                            sample_rate: float,
+                            num_groups: int,
+                            amplitudes: NDArray,
+                            common_decay_times: NDArray,
+                            band_centre_hz: ArrayLike,
+                            mixing_time_ms: float = 20.0,
+                            crop_end_ms: float = 5.0,
+                            save_path: Optional[str] = None):
+    """
+    Plot the true and estimated amplitudes in subbands using least squares and common decay times
+    Args:
+        h_true (ArrayLike): true (desired) RIR
+        h_approx (ArrayLike): approximate synthesized RIR
+        sample_rate (float): sampling rate
+        num_groups (int): number of groups in GFDN
+        amplitudes (NDArray): theoretical amplitudes at position, of size n_bands x n_groups
+        common_decay_times (NDArray): common decay times, of size n_bands x n_groups
+        band_centre_hz (ArrayLike): octave band frequencies
+        save_path (str, optional): path to save file
+    """
+    # get the actual RIR levels
+    if num_groups == 1:
+        expanded_amplitudes = amplitudes[..., np.newaxis]
+    else:
+        expanded_amplitudes = np.moveaxis(amplitudes, -1, 1)
+
+    # get the estimated levels of the original RIR
+    og_estimated_amps = get_amps_for_rir(h_true,
+                                         common_decay_times.T,
+                                         band_centre_hz,
+                                         sample_rate,
+                                         mixing_time_ms=mixing_time_ms,
+                                         leave_out_ms=crop_end_ms)
+
+    # get the estimated levels of the approx RIR
+    estimated_amps = get_amps_for_rir(h_approx, common_decay_times.T,
+                                      band_centre_hz, sample_rate)
+
+    fig, ax = plt.subplots(num_groups, figsize=(6, 3 * num_groups))
+    for n in range(num_groups):
+        cur_ax = ax if num_groups == 1 else ax[n]
+        cur_ax.semilogx(band_centre_hz,
+                        db(np.squeeze(expanded_amplitudes[..., n]),
+                           is_squared=True),
+                        marker='o',
+                        label='Actual amplitudes (theoretical)')
+        cur_ax.semilogx(band_centre_hz,
+                        db(np.squeeze(og_estimated_amps[..., n]),
+                           is_squared=True),
+                        marker='d',
+                        label='Actual amplitudes, est. with LS')
+        cur_ax.semilogx(band_centre_hz,
+                        db(np.squeeze(estimated_amps[..., n]),
+                           is_squared=True),
+                        marker='x',
+                        label='Estimated amplitudes')
+
+        cur_ax.set_xlabel('Frequency Hz')
+        cur_ax.set_ylabel('Magnitude dB')
+        cur_ax.set_ylim([-80, 10])
+        cur_ax.set_title(f'Group {n + 1}')
+        cur_ax.grid()
+    cur_ax.legend(loc='upper right', bbox_to_anchor=(1.0, 1.9))
+    fig.subplots_adjust(hspace=0.5)
+    if save_path is not None:
+        fig.savefig(Path(save_path).resolve())
+
+
+def plot_learned_svf_response(
+        num_groups: int,
+        fs: float,
+        output_biquad_coeffs: Union[List[List], List[NDArray]],
+        pos_to_investigate: List,
+        verbose: bool = False,
+        svf_params: Optional[Union[List[List], List[NDArray]]] = None,
+        save_path: Optional[str] = None):
+    """
+    Plot the magnitude response and the pole-zero plot of the learned SVF
+    at position pos_to_investigate.
+    Args:
+        num_groups (int): number of groups in the GFDN
+        fs (float): sampling frequency
+        output_biquad_coeffs: output filter biquad coefficients, list containing num_group filters. 
+                              Can also be a list of lists containing filters for each epoch
+        pos_to_investigate (List): cartesian coordinates of the position under invesigation
+        verbose (bool): whether to print theoretical SVF poles
+        svf_params (optional): list containing learned SVF params for each group. 
+                               Can also be a list of lists containing params for each epoch.
+        save_path (str): where to save the figure
+    """
+    if verbose:
+        centre_freq, shelving_crossover = eq_freqs()
+        svf_freqs = torch.pi * torch.cat(
+            (torch.tensor([shelving_crossover[0]]), centre_freq,
+             torch.tensor([shelving_crossover[-1]]))) / fs
+        svf_freqs = svf_freqs.numpy()
+
+    fig, ax = plt.subplots()
+    fig2, ax2 = plt.subplots(subplot_kw={'projection': 'polar'})
+
+    # are the output_biquad_coeffs also a function of epoch number?
+    is_list_of_lists = all(
+        isinstance(item, list) for item in output_biquad_coeffs)
+    num_epochs = len(output_biquad_coeffs) if is_list_of_lists else 1
+
+    # loop over epochs
+    for i in range(0, num_epochs):
+
+        if is_list_of_lists:
+            opt_output_biquad_coeffs = output_biquad_coeffs[i]
+
+            if svf_params is not None:
+                opt_svf_params = svf_params[i]
+                opt_svf_params = opt_svf_params[
+                    np.newaxis, ...] if num_groups == 1 else opt_svf_params
+        else:
+            opt_output_biquad_coeffs = output_biquad_coeffs
+            opt_svf_params = svf_params
+
+        # loop over groups
+        for n in range(num_groups):
+            cur_biquad_coeffs = opt_output_biquad_coeffs[n]
+            num_biquads = cur_biquad_coeffs.shape[0]
+
+            # ensure a0 = 1 (needed by scipy)
+            for k in range(num_biquads):
+                cur_biquad_coeffs[k, :] /= cur_biquad_coeffs[k, 3]
+
+            freqs, filt_response = sosfreqz(cur_biquad_coeffs,
+                                            worN=2**9,
+                                            fs=fs)
+            ax.semilogx(freqs,
+                        db(filt_response),
+                        label=f'Group {n}, epoch {i}')
+
+            # also plot the poles and zeros
+            zeros, poles, _ = sos2zpk(cur_biquad_coeffs)
+            ax2.plot(np.angle(zeros),
+                     np.abs(zeros),
+                     'o',
+                     label=f'Group {n}, epoch {i}')
+            ax2.plot(np.angle(poles),
+                     np.abs(poles),
+                     'x',
+                     label=f'Group {n}, epoch {i}')
+
+            if verbose:
+
+                # print the theoretical poles and zeros
+                cur_svf_params = opt_svf_params[n, ...]
+                svf_res = cur_svf_params[:, 0]
+                svf_gain = cur_svf_params[:, 1]
+                pole_radius = np.sqrt(
+                    (1 - svf_freqs**2)**2 + 4 * (svf_freqs**2) *
+                    (1 - svf_res**2)) / (svf_freqs**2 + 1 +
+                                         2 * svf_freqs * svf_res)
+                pole_freqs = np.atan2(2 * svf_freqs * np.sqrt(1 - svf_res**2),
+                                      (1 - svf_freqs**2))
+
+                print(f'Pole frequencies (exp): {pole_freqs / np.pi * fs / 2}')
+                print(
+                    f'Pole frequencies (est): {np.angle(poles[np.angle(poles) > 0]) / np.pi * fs / 2}'
+                )
+                print(f'Pole radius (exp): {pole_radius}')
+                print(f'Pole radius (est): {np.abs(poles)}')
+
+                print(f'SVF gain: {db2lin(svf_gain)}')
+                print(f'SVF Q factor: {svf_res}')
+
+    ax.set_xlabel('Frequency (Hz)')
+    ax.set_ylabel('Magnitude (dB)')
+    ax.set_title(f'Output filter for position {pos_to_investigate}')
+    ax.legend(loc='upper right', bbox_to_anchor=(1.5, 1.0))
+    ax.grid(True)
+
+    ax2.set_rmax(1)
+    ax2.set_rticks([0.25, 0.5, 1])  # Less radial ticks
+    ax2.set_rlabel_position(-22.5)  # Move radial labels away from plotted line
+    ax2.grid(True)
+
+    if save_path is not None:
+        fig.savefig(Path(f'{save_path}_output_filter_response.png').resolve())
+        fig2.savefig(Path(f'{save_path}_output_filter_pz_plot.png').resolve())
