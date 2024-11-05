@@ -8,10 +8,12 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.fft import rfftfreq
 from scipy.signal import freqz, sos2zpk, sosfreqz
-from slope2noise.slope2noise.utils import octave_filtering
+from slope2noise.slope2noise.rooms import RoomGeometry
+from slope2noise.slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering
 import torch
 
 from .analysis import get_amps_for_rir
+from .dataloader import RoomDataset
 from .filters.geq import eq_freqs
 from .losses import get_edr_from_stft, get_stft_torch
 from .utils import db, db2lin, ms_to_samps
@@ -460,6 +462,82 @@ def plot_subband_amplitudes(h_true: Union[ArrayLike, torch.Tensor],
     fig.subplots_adjust(hspace=0.5)
     if save_path is not None:
         fig.savefig(Path(save_path).resolve())
+
+
+def plot_amps_in_space(room_data: RoomDataset,
+                       all_rirs: List,
+                       all_pos: List,
+                       freq_to_plot: Optional[float] = 1000.0,
+                       scatter: bool = False,
+                       save_path: Optional[str] = None):
+    """Plot the amplitudes as a function of spatial location at frequency 'freq_to_plot' Hz"""
+    num_rooms = room_data.num_rooms
+    room_dims = room_data.room_dims
+    start_coordinates = room_data.room_start_coord
+    aperture_coordinates = room_data.aperture_coords
+    t_vals = room_data.common_decay_times.T
+    room = RoomGeometry(room_data.sample_rate,
+                        num_rooms,
+                        np.array(room_dims),
+                        np.array(start_coordinates),
+                        aperture_coords=aperture_coordinates)
+    rec_points = np.array(room_data.receiver_position)
+    src_pos = np.array(room_data.source_position)
+
+    est_rirs = np.asarray(all_rirs)
+    num_rirs = est_rirs.shape[0]
+
+    # do subband filterings
+    if freq_to_plot is not None:
+        est_rirs_filtered = octave_filtering(est_rirs, room_data.sample_rate,
+                                             room_data.band_centre_hz)
+        t_vals_expanded = np.tile(t_vals[np.newaxis, ...], (num_rirs, 1, 1))
+        band_centre_hz = room_data.band_centre_hz
+        save_name = f'{save_path}_{freq_to_plot / 1000: .0f}kHz'
+
+    else:
+        est_rirs_filtered = est_rirs[..., np.newaxis]
+        t_vals_expanded = np.tile(t_vals, (num_rirs, 1))[..., np.newaxis]
+        band_centre_hz = None
+        save_name = f'{save_path}'
+
+    est_rec_pos = np.asarray(all_pos)
+    est_amps = calculate_amplitudes_least_squares(t_vals_expanded,
+                                                  room_data.sample_rate,
+                                                  est_rirs_filtered,
+                                                  band_centre_hz)
+
+    # if amplitudes are specified in subbands
+    if freq_to_plot is not None:
+        idx = np.argwhere(
+            np.array(room_data.band_centre_hz) == freq_to_plot)[0][0]
+        # if amplitudes are of shape num_rec x num_slope x num_fbands
+        if room_data.amplitudes.shape[0] == rec_points.shape[0]:
+            amps_mid_band = room_data.amplitudes[..., idx].T
+        # if amplitudes are of shape num_freq_bands x num_receivers x num_slopes
+        else:
+            amps_mid_band = room_data.amplitudes[idx, ...]
+        est_amps_mid_band = est_amps[..., idx].T
+    # if amplitudes are broadband
+    else:
+        amps_mid_band = room_data.amplitudes.T
+        est_amps_mid_band = np.squeeze(est_amps).T
+
+    room.plot_amps_at_receiver_points(
+        rec_points,
+        np.squeeze(src_pos),
+        amps_mid_band,
+        scatter_plot=scatter,
+        save_path=Path(
+            f'{save_name}_actual_amplitudes_in_space.png').resolve())
+
+    room.plot_amps_at_receiver_points(
+        est_rec_pos,
+        np.squeeze(src_pos),
+        est_amps_mid_band,
+        scatter_plot=scatter,
+        save_path=Path(
+            f'{save_name}_learnt_amplitudes_in_space.png').resolve())
 
 
 def plot_learned_svf_response(
