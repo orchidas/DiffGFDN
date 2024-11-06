@@ -101,6 +101,14 @@ class Trainer:
                 'lr':
                 trainer_config.io_lr
             },
+            {
+                'params': [
+                    param for name, param in self.net.named_parameters()
+                    if 'output_scalars' in name
+                ],
+                'lr':
+                trainer_config.io_lr
+            },
             # Add more groups as needed
         ]
 
@@ -108,7 +116,8 @@ class Trainer:
         other_params = [
             param for name, param in self.net.named_parameters()
             if not ('feedback_loop.alpha' in name or 'input_gains' in name
-                    or 'output_gains' in name or 'output_svf_params' in name)
+                    or 'output_gains' in name or 'output_svf_params' in name
+                    or 'output_scalars' in name)
         ]
 
         # Add the other parameters with a learning rate of 0.01
@@ -370,7 +379,7 @@ class SinglePosTrainer(Trainer):
                 data['target_rir_response'],
                 H) + self.loss_weights[1] * self.criterion[1](
                     data['target_rir_response'], H)
-        loss.backward()
+        loss.backward(retain_graph=True)
         self.optimizer.step()
         return loss.item()
 

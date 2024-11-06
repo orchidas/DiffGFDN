@@ -635,9 +635,6 @@ class SVF_from_MLP(nn.Module):
         for b in range(self.batch_size):
             for i in range(self.num_groups):
                 svf_params_del_line = self.svf_params[b, i, :]
-                # logger.info(
-                #     f'Batch={b}, group={i}, resonance={svf_params_del_line[:, 0]}'
-                # )
                 svf_cascade = [
                     SVF(cutoff_frequency=self.svf_cutoff_freqs[k],
                         resonance=svf_params_del_line[k, 0],
@@ -726,7 +723,6 @@ class Gains_from_MLP(nn.Module):
         super().__init__()
         self.num_groups = num_groups
         self.num_delay_lines_per_group = num_delay_lines_per_group
-        self.num_delay_lines = self.num_groups * self.num_delay_lines_per_group
         self.position_type = position_type
         self.encoding_type = encoding_type
         self.device = device
@@ -748,7 +744,7 @@ class Gains_from_MLP(nn.Module):
         self.mlp = MLP(num_input_features,
                        num_hidden_layers,
                        num_neurons,
-                       self.num_delay_lines,
+                       self.num_groups,
                        num_biquads_in_cascade=1,
                        num_params=1)
 
@@ -776,20 +772,24 @@ class Gains_from_MLP(nn.Module):
         # run the MLP, output of the MLP are the state variable filter coefficients
         self.gains = self.mlp(encoded_position)
 
-        # if meshgrid encoding is used, the size of svf_params is (Lx*Ly*Lz, N, K, 2).
-        # instead, we want the size to be (B, N, K, 2). So, we only take the filters
+        # if meshgrid encoding is used, the size of svf_params is (Lx*Ly*Lz, Ngroup, K, 2).
+        # instead, we want the size to be (B, Ngroup, K, 2). So, we only take the filters
         # corresponding to the position of the receivers in the meshgrid
         if self.encoding_type == FeatureEncodingType.MESHGRID:
             self.gains = self.gains[rec_idx, ...]  # pylint: disable=E0601
             assert self.gains.shape[0] == self.batch_size
 
         # always ensure that the filter parameters are constrained
-        reshape_size = (self.batch_size, self.num_delay_lines)
+        reshape_size = (self.batch_size, self.num_groups)
         self.gains = self.scaled_sigmoid(
             self.gains.view(-1)).view(reshape_size)
 
+        # expand the gains to have shape (B, Ngroup x N_del_per_group, K, 2)
+        expanded_gains = self.gains.repeat_interleave(
+            self.num_delay_lines_per_group, dim=1)
+
         # fill the output gains of size B x N x K
-        C = self.gains.unsqueeze(-1).repeat(1, 1, len(z_values))
+        C = expanded_gains.unsqueeze(-1).repeat(1, 1, len(z_values))
 
         return C
 
@@ -809,7 +809,7 @@ class Gains_from_MLP(nn.Module):
         """Return the parameters as a dict"""
         param_np = {}
         self.gains = self.scaled_sigmoid(self.gains.view(-1)).view(
-            self.batch_size, self.num_delay_lines)
+            self.batch_size, self.num_groups)
 
         param_np['gains'] = self.gains.squeeze().cpu().numpy()
         return param_np

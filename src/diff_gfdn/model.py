@@ -119,6 +119,15 @@ class DiffGFDN(nn.Module):
 
         self.delays = self.delays.to(self.device)
 
+        # learnable input and output gains
+        self.input_gains = nn.Parameter(
+            (2 * torch.randn(self.num_delay_lines, 1) - 1) /
+            self.num_delay_lines)
+
+        self.output_gains = nn.Parameter(
+            (2 * torch.randn(self.num_delay_lines, 1) - 1) /
+            self.num_delay_lines)
+
         self.feedback_loop = FeedbackLoop(
             self.num_groups, self.num_delay_lines_per_group, self.delays,
             self.gain_per_sample, self.use_absorption_filters,
@@ -190,11 +199,6 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
 
         self.use_svf_in_output = output_filter_config.use_svfs
 
-        # unique to the network
-        self.input_gains = nn.Parameter(
-            (2 * torch.randn(self.num_delay_lines, 1) - 1) /
-            self.num_delay_lines)
-
         if self.use_svf_in_output:
             logger.info("Using filters in output")
             self.output_filters = SVF_from_MLP(
@@ -208,12 +212,9 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
                 output_filter_config.compress_pole_factor,
                 device=self.device)
 
-            self.output_gains = nn.Parameter(
-                (2 * torch.randn(self.num_delay_lines, 1) - 1) /
-                self.num_delay_lines)
         else:
             logger.info("Using gains in output")
-            self.output_gains = Gains_from_MLP(
+            self.output_scalars = Gains_from_MLP(
                 self.num_groups,
                 self.num_delay_lines_per_group,
                 output_filter_config.num_fourier_features,
@@ -232,13 +233,15 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
         self.batch_size = x['listener_position'].shape[0]
 
         num_freq_pts = len(z)
+        C_init = to_complex(
+            self.output_gains.expand(self.batch_size, self.num_delay_lines,
+                                     num_freq_pts))
         # this is of size B x Ndel x num_freq_points
         if self.use_svf_in_output:
-            C = self.output_filters(x) * to_complex(
-                self.output_gains.expand(self.batch_size, self.num_delay_lines,
-                                         num_freq_pts))
+            C = self.output_filters(x) * C_init
+
         else:
-            C = to_complex(self.output_gains(x))
+            C = to_complex(self.output_scalars(x)) * C_init
 
         # this is also of size B x Ndel x num_freq_points
         B = to_complex(
@@ -277,6 +280,7 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
         param_np['gains_per_sample'] = self.gain_per_sample.squeeze().cpu(
         ).numpy()
         param_np['input_gains'] = self.input_gains.squeeze().cpu().numpy()
+        param_np['output_gains'] = self.output_gains.squeeze().cpu().numpy()
 
         try:
             if self.feedback_loop.coupling_matrix_type in (
@@ -320,10 +324,9 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
                         dim=-1).squeeze().cpu().numpy()
                     for n in range(self.num_groups)
                 ] for b in range(self.batch_size)]
-                param_np['output_gains'] = self.output_gains.squeeze().cpu(
-                ).numpy()
+
             else:
-                param_np['output_gains'] = self.output_gains.gains.squeeze(
+                param_np['output_scalars'] = self.output_scalars.gains.squeeze(
                 ).cpu().numpy()
 
         except Exception as e:
@@ -366,15 +369,6 @@ class DiffGFDNSinglePos(DiffGFDN):
                          room_dims, absorption_coeffs, common_decay_times,
                          band_centre_hz)
 
-        # unique to the network - same gains for each group
-        self.input_gains = nn.Parameter(
-            (2 * torch.randn(self.num_delay_lines, 1) - 1) /
-            self.num_delay_lines)
-        # each delay line should have a unique scalar gain
-        self.output_gains = nn.Parameter(
-            (2 * torch.randn(self.num_delay_lines, 1) - 1) /
-            self.num_delay_lines)
-
         self.compress_pole_factor = output_filter_config.compress_pole_factor
 
         # check if the output gains are filters or scalars
@@ -403,6 +397,10 @@ class DiffGFDNSinglePos(DiffGFDN):
             # SVF gain range in dB
             self.scaled_gains = ScaledSigmoid(lower_limit=-6.0,
                                               upper_limit=6.0)
+        # each group will have a unique scalar gain
+        else:
+            self.output_scalars = nn.Parameter(
+                2 * torch.randn(self.num_groups, 1) - 1) / self.num_groups
 
     def forward(self, x: Dict) -> torch.tensor:
         """
@@ -412,12 +410,20 @@ class DiffGFDNSinglePos(DiffGFDN):
         """
         z = x['z_values']
         num_freq_pts = len(z)
-        output_gains = to_complex(
+        C_init = to_complex(
             self.output_gains.expand(self.num_delay_lines, num_freq_pts))
 
-        # this is of size Ndel x num_freq_points
-        C = output_gains * self.get_output_filter(
-            z) if self.use_svf_in_output else output_gains
+        if not self.use_svf_in_output:
+            output_scalars_expanded = self.output_scalars.expand(
+                self.num_groups, num_freq_pts)
+            output_scalars_expanded = output_scalars_expanded.repeat_interleave(
+                self.num_delay_lines_per_group, dim=0)
+            C = to_complex(output_scalars_expanded)
+        else:
+            # this is of size Ndel x num_freq_points
+            C = self.get_output_filter(z)
+
+        C *= C_init
 
         # this is also of size Ndel x 1
         B = to_complex(self.input_gains)
@@ -537,21 +543,27 @@ class DiffGFDNSinglePos(DiffGFDN):
             param_np['absorption_coeffs'] = self.gain_per_sample
 
         try:
-            self.output_svf_params[..., 1] = self.scaled_gains(
-                self.output_svf_params[..., 1].view(-1)).view(
-                    self.num_groups, self.num_biquads)
-            self.output_svf_params[..., 0] = self.scaled_res(
-                self.output_svf_params[..., 0].view(-1)).view(
-                    self.num_groups, self.num_biquads)
+            if self.use_svf_in_output:
 
-            param_np['output_svf_params'] = self.output_svf_params.squeeze(
-            ).cpu().numpy()
-            param_np['output_biquad_coeffs'] = [
-                torch.cat((self.biquad_cascade[n].num_coeffs,
-                           self.biquad_cascade[n].den_coeffs),
-                          dim=-1).squeeze().cpu().numpy()
-                for n in range(self.num_groups)
-            ]
+                self.output_svf_params[..., 1] = self.scaled_gains(
+                    self.output_svf_params[..., 1].view(-1)).view(
+                        self.num_groups, self.num_biquads)
+                self.output_svf_params[..., 0] = self.scaled_res(
+                    self.output_svf_params[..., 0].view(-1)).view(
+                        self.num_groups, self.num_biquads)
+
+                param_np['output_svf_params'] = self.output_svf_params.squeeze(
+                ).cpu().numpy()
+                param_np['output_biquad_coeffs'] = [
+                    torch.cat((self.biquad_cascade[n].num_coeffs,
+                               self.biquad_cascade[n].den_coeffs),
+                              dim=-1).squeeze().cpu().numpy()
+                    for n in range(self.num_groups)
+                ]
+            else:
+                param_np['output_scalars'] = self.output_scalars.squeeze().cpu(
+                ).numpy()
+
         except Exception as e:
             logger.warning(e)
 

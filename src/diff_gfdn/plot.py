@@ -499,7 +499,7 @@ def plot_amps_in_space(room_data: RoomDataset,
         # Identify the receiver axis based on matching dimension
         desired_axis = None
         for i, dim in enumerate(array_shape):
-            if dim == desired_dim:  # Checking if dimension matches N_rec
+            if dim == desired_dim:
                 desired_axis = i
                 break
 
