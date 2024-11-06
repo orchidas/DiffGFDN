@@ -35,7 +35,9 @@ def db(x: Union[ArrayLike, torch.tensor],
 
 
 def db2lin(
-        x: Union[torch.tensor, ArrayLike]) -> Union[torch.tensor, ArrayLike]:
+    x: Union[torch.tensor, ArrayLike],
+    is_squared: bool = False,
+) -> Union[torch.tensor, ArrayLike]:
     """Convert from decibels to linear
 
     Args:
@@ -44,10 +46,11 @@ def db2lin(
     Returns:
         (ArrayLike): values converted to linear
     """
+    exp_factor = 0.1 if is_squared else 0.05
     if torch.is_tensor(x):
-        return torch.pow(10.0, x * 0.05)
+        return torch.pow(10.0, x * exp_factor)
     else:
-        return np.power(10.0, x * 0.05)
+        return np.power(10.0, x * exp_factor)
 
 
 def ms_to_samps(ms: Union[float, ArrayLike],

@@ -2,12 +2,14 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
 from IPython import display
+from loguru import logger
 from matplotlib import animation
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.fft import rfftfreq
 from scipy.signal import freqz, sos2zpk, sosfreqz
+from scipy.spatial.distance import cdist
 from slope2noise.slope2noise.rooms import RoomGeometry
 from slope2noise.slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering
 import torch
@@ -470,11 +472,56 @@ def plot_amps_in_space(room_data: RoomDataset,
                        freq_to_plot: Optional[float] = 1000.0,
                        scatter: bool = False,
                        save_path: Optional[str] = None):
-    """Plot the amplitudes as a function of spatial location at frequency 'freq_to_plot' Hz"""
+    """
+    Plot the amplitudes as a function of spatial location at frequency 'freq_to_plot' Hz
+    Args:
+        room_data (RoomDataset): object containing information of room geometry, decay times and amplitudes
+        all_rirs (List): list of RIRs at all positions synthesized by the GFDN
+        all_pos (List): list of positions at which the RIRs are synthesized
+        freq_to_plot (optional, float): which frequency to plot the amplitudes at
+        scatter (bool): whether to make a scatter plot (discrete), or a surface plot (continuous)
+        save_path (optional, str): path to save the file
+
+    """
+
+    def order_position_matrices(pos1: NDArray, pos2: NDArray) -> ArrayLike:
+        """Arrange 3D coordinates in pos1 and pos2 so that they are in the same order"""
+        # Step 1: Compute pairwise distances
+        distances = cdist(pos1, pos2)
+
+        # Step 2: Find the closest matches for each point in array1
+        matching_indices = np.argmin(distances, axis=1)
+
+        return matching_indices
+
+    def find_correct_axis(desired_dim: int, array_shape: Tuple):
+        """Find the axis having the desired dimension from array_shape"""
+        # Identify the receiver axis based on matching dimension
+        desired_axis = None
+        for i, dim in enumerate(array_shape):
+            if dim == desired_dim:  # Checking if dimension matches N_rec
+                desired_axis = i
+                break
+
+        return desired_axis
+
+    def get_amplitude_error(original_amps: NDArray, original_points: NDArray,
+                            estimated_amps: NDArray, est_points: NDArray):
+        """Get MSE error between the amplitude mismatch"""
+        ordered_pos_idx = order_position_matrices(original_points, est_points)
+        est_amps_ordered = estimated_amps[ordered_pos_idx, ...]
+        error_db = np.abs(
+            db(original_amps, is_squared=True) -
+            db(est_amps_ordered, is_squared=True))
+        error_mse = np.linalg.norm(error_db, axis=(0, 1)) / np.sqrt(
+            original_points.shape[0])
+        return error_db, error_mse
+
     num_rooms = room_data.num_rooms
     room_dims = room_data.room_dims
     start_coordinates = room_data.room_start_coord
     aperture_coordinates = room_data.aperture_coords
+    original_amps = room_data.amplitudes.copy()
     t_vals = room_data.common_decay_times.T
     room = RoomGeometry(room_data.sample_rate,
                         num_rooms,
@@ -483,61 +530,95 @@ def plot_amps_in_space(room_data: RoomDataset,
                         aperture_coords=aperture_coordinates)
     rec_points = np.array(room_data.receiver_position)
     src_pos = np.array(room_data.source_position)
+    is_in_subbands = t_vals.ndim == 2
 
     est_rirs = np.asarray(all_rirs)
-    num_rirs = est_rirs.shape[0]
+    num_est_rirs = est_rirs.shape[0]
+    num_og_rirs = rec_points.shape[0]
 
     # do subband filterings
-    if freq_to_plot is not None:
+    if is_in_subbands:
         est_rirs_filtered = octave_filtering(est_rirs, room_data.sample_rate,
                                              room_data.band_centre_hz)
-        t_vals_expanded = np.tile(t_vals[np.newaxis, ...], (num_rirs, 1, 1))
+        t_vals_expanded = np.tile(t_vals[np.newaxis, ...],
+                                  (num_est_rirs, 1, 1))
         band_centre_hz = room_data.band_centre_hz
         save_name = f'{save_path}_{freq_to_plot / 1000: .0f}kHz'
+        num_bands = len(room_data.band_centre_hz)
 
     else:
         est_rirs_filtered = est_rirs[..., np.newaxis]
-        t_vals_expanded = np.tile(t_vals, (num_rirs, 1))[..., np.newaxis]
+        t_vals_expanded = np.tile(t_vals, (num_est_rirs, 1))[..., np.newaxis]
         band_centre_hz = None
         save_name = f'{save_path}'
 
     est_rec_pos = np.asarray(all_pos)
+    # these are of shape num_rec x num_slope x num_fbands
     est_amps = calculate_amplitudes_least_squares(t_vals_expanded,
                                                   room_data.sample_rate,
                                                   est_rirs_filtered,
                                                   band_centre_hz)
 
     # if amplitudes are specified in subbands
-    if freq_to_plot is not None:
+    if is_in_subbands:
+
+        # amplitudes should be of shape num_og_rirs x num_slope x num_fbands
+        if original_amps.shape != (num_og_rirs, num_rooms, num_bands):
+            original_shape = original_amps.shape
+            rec_axis = find_correct_axis(num_og_rirs, original_shape)
+            slope_axis = find_correct_axis(num_rooms, original_shape)
+            freq_axis = find_correct_axis(num_bands, original_shape)
+
+            original_amps = np.transpose(original_amps,
+                                         (rec_axis, slope_axis, freq_axis))
+
         idx = np.argwhere(
             np.array(room_data.band_centre_hz) == freq_to_plot)[0][0]
-        # if amplitudes are of shape num_rec x num_slope x num_fbands
-        if room_data.amplitudes.shape[0] == rec_points.shape[0]:
-            amps_mid_band = room_data.amplitudes[..., idx].T
-        # if amplitudes are of shape num_freq_bands x num_receivers x num_slopes
-        else:
-            amps_mid_band = room_data.amplitudes[idx, ...]
+        amps_mid_band = original_amps[..., idx].T
         est_amps_mid_band = est_amps[..., idx].T
     # if amplitudes are broadband
     else:
-        amps_mid_band = room_data.amplitudes.T
-        est_amps_mid_band = np.squeeze(est_amps).T
+        amps_mid_band = original_amps.T
+        est_amps = np.squeeze(est_amps)
+        est_amps_mid_band = est_amps.T
 
     room.plot_amps_at_receiver_points(
         rec_points,
         np.squeeze(src_pos),
         amps_mid_band,
         scatter_plot=scatter,
-        save_path=Path(
-            f'{save_name}_actual_amplitudes_in_space.png').resolve())
+        save_path=Path(f'{save_name}_actual_amplitudes_in_space.png').resolve(
+        ) if save_path is not None else None)
 
     room.plot_amps_at_receiver_points(
         est_rec_pos,
         np.squeeze(src_pos),
         est_amps_mid_band,
         scatter_plot=scatter,
-        save_path=Path(
-            f'{save_name}_learnt_amplitudes_in_space.png').resolve())
+        save_path=Path(f'{save_name}_learnt_amplitudes_in_space.png').resolve(
+        ) if save_path is not None else None)
+
+    # get error metrics
+    error_func, error_mse = get_amplitude_error(original_amps, rec_points,
+                                                est_amps, est_rec_pos)
+    if is_in_subbands:
+        for k in range(len(room_data.band_centre_hz)):
+            logger.info(
+                f'The RMSE in matching amplitudes at frequency {room_data.band_centre_hz[k]: .0f}Hz'
+                f' is {error_mse[k]: .3f} dB')
+            var_to_plot = db2lin(error_func[..., idx].T)
+    else:
+        logger.info(f'The RMSE in matching amplitudes is {error_mse} dB')
+        var_to_plot = db2lin(error_func.T)
+
+    # plot the error in amplitude matching
+    room.plot_amps_at_receiver_points(
+        rec_points,
+        np.squeeze(src_pos),
+        var_to_plot,
+        scatter_plot=scatter,
+        save_path=Path(f'{save_name}_amplitude_error_in_space.png').resolve()
+        if save_path is not None else None)
 
 
 def plot_learned_svf_response(
