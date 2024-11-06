@@ -1,9 +1,12 @@
+# pylint: disable=relative-beyond-top-level
+
 from enum import Enum
 from typing import List, Optional
 
 import numpy as np
-from pydantic import BaseModel, computed_field, ConfigDict, Field, model_validator
+from pydantic import BaseModel, computed_field, ConfigDict, Field, field_validator, model_validator
 import sympy as sp
+import torch
 
 from ..utils import ms_to_samps
 
@@ -69,6 +72,10 @@ class TrainerConfig(BaseModel):
     max_epochs: int = 5
     # learning rate for Adam optimiser
     lr: float = 0.01
+    # learning rate for input output gains
+    io_lr: float = 0.01
+    # learning rate for coupling angles
+    coupling_angle_lr: float = 0.01
     # length of IR filters (needed for calculating reguralisation loss)
     output_filt_ir_len_ms: float = 500
     # whether to use regularisation loss to reduce time domain aliasing
@@ -78,9 +85,9 @@ class TrainerConfig(BaseModel):
     # whether to use frequency-based weighting in loss
     use_frequency_weighting: bool = False
     # directory to save results
-    train_dir: str = "../output/cpu/"
+    train_dir: str = "output/cpu/"
     # where to save the IRs
-    ir_dir: str = "../audio/cpu/"
+    ir_dir: str = "audio/cpu/"
     # whether to save the true measured IRs as wave files
     save_true_irs: bool = False
     # attenuation in dB that the anti aliasing envelope should be reduced by
@@ -89,7 +96,16 @@ class TrainerConfig(BaseModel):
     reduced_pole_radius: float = Field(
         default=1.0)  # Default value, to be set dynamically
 
-    # Validator for the 'reduced_pole_radius' field
+    # validator for training on GPU
+    @field_validator('device', mode='after')
+    @classmethod
+    def validate_training_device(cls, value):
+        """Validate GPU, if it is used for training"""
+        if value == 'cuda':
+            assert torch.cuda.is_available(
+            ), "CUDA is not available for training"
+
+    # validator for the 'reduced_pole_radius' field
     @model_validator(mode='after')
     @classmethod
     def calculate_reduced_pole_radius(cls, model):
@@ -106,7 +122,7 @@ class DiffGFDNConfig(BaseModel):
     """Config file for training the DiffGFDN"""
 
     # path to three room dataset
-    room_dataset_path: str = '../resources/Georg_3room_FDTD/srirs.pkl'
+    room_dataset_path: str = 'resources/Georg_3room_FDTD/srirs.pkl'
     # if a single measurement is being used
     ir_path: Optional[str] = None
     # sampling rate of the FDN

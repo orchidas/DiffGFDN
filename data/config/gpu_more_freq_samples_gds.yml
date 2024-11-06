@@ -1,6 +1,6 @@
 trainer_config:
     device: 'cuda'
     num_epochs: 10
-    train_dir: '../output/'
-    ir_dir: '../audio/'
+    train_dir: 'output/'
+    ir_dir: 'audio/'
 room_dataset_path: '/scratch/elec/t412-asp/Georg_3room_FDTD/srirs.pkl'

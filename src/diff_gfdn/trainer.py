@@ -10,7 +10,7 @@ import torchaudio
 from tqdm import trange
 
 from .config.config import TrainerConfig
-from .losses import edr_loss, reg_loss
+from .losses import edc_loss, edr_loss, reg_loss
 from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
 from .utils import get_response, get_str_results, ms_to_samps
 
@@ -30,12 +30,10 @@ class Trainer:
         self.ir_dir = Path(trainer_config.ir_dir).resolve()
         self.use_reg_loss = trainer_config.use_reg_loss
         self.reduced_pole_radius = trainer_config.reduced_pole_radius
+        self.init_scheduler(trainer_config)
 
         if not os.path.exists(self.ir_dir):
             os.makedirs(self.ir_dir)
-
-        self.optimizer = torch.optim.Adam(net.parameters(),
-                                          lr=trainer_config.lr)
 
         if trainer_config.use_reg_loss:
             logger.info(
@@ -46,18 +44,81 @@ class Trainer:
                          reduced_pole_radius=self.reduced_pole_radius,
                          use_erb_grouping=trainer_config.use_erb_edr_loss,
                          use_weight_fn=trainer_config.use_frequency_weighting),
+                edc_loss(self.net.common_decay_times.max() * 1e3,
+                         self.net.sample_rate),
                 reg_loss(
                     ms_to_samps(trainer_config.output_filt_ir_len_ms,
                                 self.net.sample_rate), self.net.num_groups,
                     self.net.output_filters.num_biquads)
             ]
+            self.loss_weights = torch.tensor([1.0, 10.0, 1.0])
         else:
-            self.criterion = edr_loss(
-                self.net.sample_rate,
-                use_erb_grouping=trainer_config.use_erb_edr_loss,
-                reduced_pole_radius=self.reduced_pole_radius,
-                use_weight_fn=trainer_config.use_frequency_weighting)
+            self.criterion = [
+                edr_loss(self.net.sample_rate,
+                         use_erb_grouping=trainer_config.use_erb_edr_loss,
+                         reduced_pole_radius=self.reduced_pole_radius,
+                         use_weight_fn=trainer_config.use_frequency_weighting),
+                edc_loss(self.net.common_decay_times.max() * 1e3,
+                         self.net.sample_rate)
+            ]
+            self.loss_weights = torch.tensor([1.0, 10.0])
 
+    def init_scheduler(self, trainer_config: TrainerConfig):
+        """
+        Initialise scheduler, set faster learning rate for input-output gains
+        specified learning rate for all other params
+        """
+        param_groups = [
+            {
+                'params': [
+                    param for name, param in self.net.named_parameters()
+                    if 'feedback_loop.alpha' in name
+                ],
+                'lr':
+                trainer_config.coupling_angle_lr,
+            },
+            {
+                'params': [
+                    param for name, param in self.net.named_parameters()
+                    if 'output_gains' in name
+                ],
+                'lr':
+                trainer_config.io_lr,
+            },
+            {
+                'params': [
+                    param for name, param in self.net.named_parameters()
+                    if 'input_gains' in name
+                ],
+                'lr':
+                trainer_config.io_lr
+            },
+            {
+                'params': [
+                    param for name, param in self.net.named_parameters()
+                    if 'output_svf_params' in name
+                ],
+                'lr':
+                trainer_config.io_lr
+            },
+            # Add more groups as needed
+        ]
+
+        # Gather parameters that are not in the specified groups
+        other_params = [
+            param for name, param in self.net.named_parameters()
+            if not ('feedback_loop.alpha' in name or 'input_gains' in name
+                    or 'output_gains' in name or 'output_svf_params' in name)
+        ]
+
+        # Add the other parameters with a learning rate of 0.01
+        if other_params:
+            param_groups.append({
+                'params': other_params,
+                'lr': trainer_config.lr
+            })
+
+        self.optimizer = torch.optim.Adam(param_groups)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=10,
                                                          gamma=0.1)
@@ -71,6 +132,11 @@ class Trainer:
         """Print results of training"""
         print(get_str_results(epoch=e, train_loss=self.train_loss,
                               time=e_time))
+        # # for debugging
+        # for name, param in self.net.named_parameters():
+        #     if name == 'input_gains' and param.requires_grad:
+        #         print(f"Parameter {name}: {param.data}")
+        #         print(f"Parameter {name} gradient: {param.grad.norm()}")
 
     def save_model(self, e: int):
         """Save the model at epoch number e"""
@@ -136,11 +202,17 @@ class VarReceiverPosTrainer(Trainer):
         self.optimizer.zero_grad()
         H = self.net(data)
         if self.use_reg_loss:
-            loss = self.criterion[0](
-                data['target_rir_response'], H) + self.criterion[1](
-                    self.net.output_filters.biquad_cascade)
+            loss = self.loss_weights[0] * self.criterion[0](
+                data['target_rir_response'],
+                H) + self.loss_weights[1] * self.criterion[1](
+                    data['target_rir_response'],
+                    H) + self.loss_weights[2] * self.criterion[2](
+                        self.net.output_filters.biquad_cascade)
         else:
-            loss = self.criterion(data['target_rir_response'], H)
+            loss = self.loss_weights[0] * self.criterion[0](
+                data['target_rir_response'],
+                H) + self.loss_weights[1] * self.criterion[1](
+                    data['target_rir_response'], H)
 
         loss.backward()
         self.optimizer.step()
@@ -160,11 +232,17 @@ class VarReceiverPosTrainer(Trainer):
                              filename_prefix="valid_ir")
 
             if self.use_reg_loss:
-                loss = self.criterion[0](
-                    data['target_rir_response'], H) + self.criterion[1](
-                        self.net.output_filters.biquad_cascade)
+                loss = self.loss_weights[0] * self.criterion[0](
+                    data['target_rir_response'],
+                    H) + self.loss_weights[1] * self.criterion[1](
+                        data['target_rir_response'],
+                        H) + self.loss_weights[2] * self.criterion[2](
+                            self.net.output_filters.biquad_cascade)
             else:
-                loss = self.criterion(data['target_rir_response'], H)
+                loss = self.loss_weights[0] * self.criterion[0](
+                    data['target_rir_response'],
+                    H) + self.loss_weights[1] * self.criterion[1](
+                        data['target_rir_response'], H)
 
             cur_loss = loss.item()
             total_loss += cur_loss
@@ -257,7 +335,7 @@ class SinglePosTrainer(Trainer):
 
             # early stopping
             if epoch >= 1:
-                if abs(self.train_loss[-2] - self.train_loss[-1]) <= 0.0001:
+                if abs(self.train_loss[-2] - self.train_loss[-1]) <= 1e-4:
                     self.early_stop += 1
                 else:
                     self.early_stop = 0
@@ -281,11 +359,17 @@ class SinglePosTrainer(Trainer):
         self.optimizer.zero_grad()
         H = self.net(data)
         if self.use_reg_loss:
-            loss = self.criterion[0](data['target_rir_response'],
-                                     H) + self.criterion[1](
-                                         self.net.biquad_cascade)
+            loss = self.loss_weights[0] * self.criterion[0](
+                data['target_rir_response'],
+                H) + self.loss_weights[1] * self.criterion[1](
+                    data['target_rir_response'],
+                    H) + self.loss_weights[2] * self.criterion[2](
+                        self.net.biquad_cascade)
         else:
-            loss = self.criterion(data['target_rir_response'], H)
+            loss = self.loss_weights[0] * self.criterion[0](
+                data['target_rir_response'],
+                H) + self.loss_weights[1] * self.criterion[1](
+                    data['target_rir_response'], H)
         loss.backward()
         self.optimizer.step()
         return loss.item()
@@ -301,16 +385,6 @@ class SinglePosTrainer(Trainer):
         for name, prm in self.net.named_parameters():
             if name in ('input_gains', 'output_gains'):
                 prm.data.copy_(torch.div(prm.data, torch.pow(energyH, 1 / 4)))
-
-            if name == 'output_svf_params':
-                # to scale the magnitude response, the numerator coefficients
-                # in each biquad cascade need to be scaled
-                scaling_factor = torch.pow(torch.pow(energyH, 1 / 4),
-                                           1.0 / float(self.net.num_biquads))
-                # m_i^{LP}, m_i{HP}, m_i^{BP} need to be divided by the scaling factor for all i
-                tmp_filters = prm.data.clone()
-                tmp_filters[..., 2:] /= scaling_factor
-                prm.data.copy_(tmp_filters)
 
     @torch.no_grad()
     def save_ir(self,

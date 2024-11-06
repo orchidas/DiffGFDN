@@ -2,6 +2,7 @@ import argparse
 import os
 from pathlib import Path
 import pickle
+import shutil
 import time
 from typing import Dict
 
@@ -84,8 +85,13 @@ if __name__ == '__main__':
 
     # make output directory
     if config_dict.trainer_config.train_dir is not None:
-        if not os.path.isdir(config_dict.trainer_config.train_dir):
-            os.makedirs(config_dict.trainer_config.train_dir)
+
+        # remove directory if it already exists, we want it to be overwritten
+        if os.path.isdir(config_dict.trainer_config.train_dir):
+            shutil.rmtree(config_dict.trainer_config.train_dir)
+
+        # create the output directory
+        os.makedirs(config_dict.trainer_config.train_dir)
     else:
         args.train_dir = os.path.join('output', time.strftime("%Y%m%d-%H%M%S"))
         os.makedirs(config_dict.trainer_config.train_dir)

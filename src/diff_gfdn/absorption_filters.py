@@ -32,9 +32,19 @@ def absorption_to_gain_per_sample(room_dims: Tuple, absorption_coeff: float,
 
     # RT60 according to sabine
     rt60 = 0.161 * volume / (area * absorption_coeff)
-    gain_per_sample = db2lin(-60 * delay_length_samp / (fs * rt60))
+    gain_per_sample = db2lin(-60 * np.array(delay_length_samp) / (fs * rt60))
 
     return (rt60, gain_per_sample)
+
+
+def decay_times_to_gain_per_sample(common_decay_times: float,
+                                   delay_length_samp: List[int],
+                                   fs: float) -> List:
+    """Convert broadband decay times to delay line gains"""
+    # list should be converted to numpy array, otherwise division wont work
+    gain_per_sample = db2lin(-60 * np.array(delay_length_samp) /
+                             (fs * common_decay_times))
+    return gain_per_sample
 
 
 def decay_times_to_gain_filters_prony(band_centre_hz: List,

@@ -2,11 +2,13 @@
 requires = ["setuptools ~= 67.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+
 [tool.setuptools.packages.find]
-where = ["src"]
-include = ["diff_gfdn"]
+where = ["src", "submodules"]
+include = ["diff_gfdn", "slope2noise.config", "slope2noise.slope2noise", "slope2noise.DecayFitNet"]
 # include the name of the folder containing the library
 # eg: include = ["diff_gfdn"]
+
 
 [project]
 name = "DiffGFDN"
@@ -24,6 +26,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
+
 dependencies = [
     "loguru>=0.6.0",
     "notebook",
@@ -37,6 +40,9 @@ dependencies = [
     "torchaudio",
     "soundfile",
     "librosa",
+    "scikit-learn",
+    "onnx",
+    "onnxruntime"
 ]
 
 [project.optional-dependencies]

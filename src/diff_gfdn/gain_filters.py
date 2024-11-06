@@ -26,6 +26,7 @@ class SVF:
     m_HP: Optional[float] = 1.0
     m_BP: Optional[float] = 1.0
     G_db: Optional[float] = None
+    device: Optional[torch.device] = 'cpu'
 
     def __post_init__(self):
         """Fix the mixing coefficients based on the type of filter"""
@@ -35,6 +36,7 @@ class SVF:
             self.G = 1.0
         else:
             self.G = db2lin(self.G_db)
+        # assert (self.G <= 1.0), "gain cannot be greater than unity!"
 
         if self.filter_type == "lowpass":
             m = torch.cat(
@@ -44,7 +46,7 @@ class SVF:
                     torch.zeros_like(self.G).unsqueeze(-1),
                 ),
                 dim=-1,
-            )
+            ).to(self.device)
         elif self.filter_type == "highpass":
             m = torch.cat(
                 (
@@ -53,7 +55,7 @@ class SVF:
                     torch.ones_like(self.G).unsqueeze(-1),
                 ),
                 dim=-1,
-            )
+            ).to(self.device)
         elif self.filter_type == "bandpass":
             m = torch.cat(
                 (
@@ -62,7 +64,7 @@ class SVF:
                     torch.zeros_like(self.G).unsqueeze(-1),
                 ),
                 dim=-1,
-            )
+            ).to(self.device)
         elif self.filter_type == "lowshelf":
             m = torch.cat(
                 (
@@ -71,7 +73,7 @@ class SVF:
                     (torch.ones_like(self.G)).unsqueeze(-1),
                 ),
                 dim=-1,
-            )
+            ).to(self.device)
         elif self.filter_type == "highshelf":
             m = torch.cat(
                 (
@@ -80,7 +82,7 @@ class SVF:
                     (self.G * torch.ones_like(self.G)).unsqueeze(-1),
                 ),
                 dim=-1,
-            )
+            ).to(self.device)
         elif self.filter_type in ("peaking", "notch"):
             m = torch.cat(
                 (
@@ -89,14 +91,14 @@ class SVF:
                     (torch.ones_like(self.G)).unsqueeze(-1),
                 ),
                 dim=-1,
-            )
+            ).to(self.device)
         else:
             print(
                 "The filter type not specified or not in the list. Using the given mixing coefficents."
             )
         self.m_LP = m[0]
-        self.m_HP = m[1]
-        self.m_BP = m[2]
+        self.m_BP = m[1]
+        self.m_HP = m[2]
 
 
 @dataclass
@@ -112,7 +114,8 @@ class BiquadCascade:
 
     @staticmethod
     def from_svf_coeffs(svf_coeffs: List[SVF],
-                        compress_pole_factor: float = 1.0):
+                        compress_pole_factor: float = 1.0,
+                        device: Optional[torch.device] = 'cpu'):
         """
         Get the biquad cascade from a list of SVF coefficients
         Args:
@@ -121,7 +124,7 @@ class BiquadCascade:
                                 prevents time domain aliasing
         """
         num_sos = len(svf_coeffs)
-        num_coeffs = torch.zeros((num_sos, 3))
+        num_coeffs = torch.zeros((num_sos, 3), device=device)
         den_coeffs = torch.zeros_like(num_coeffs)
         for i in range(num_sos):
             cur_svf = svf_coeffs[i]
@@ -144,7 +147,6 @@ class BiquadCascade:
                        2] = (cur_svf.cutoff_frequency**2 -
                              2 * cur_svf.resonance * cur_svf.cutoff_frequency +
                              1) * compress_pole_factor**2
-
         return BiquadCascade(num_sos, num_coeffs, den_coeffs)
 
 
@@ -167,12 +169,14 @@ class IIRFilter(nn.Module):
         assert self.filter_numerator.shape == (self.num_filters,
                                                self.filt_order)
 
-    def forward(self, z: torch.tensor):
+    def forward(self, z: torch.tensor, device: Optional[torch.device] = 'cpu'):
         """
         Calculate 
         Here, z represents the input frequency sampling points
         """
-        H = torch.ones((self.num_filters, len(z)), dtype=torch.complex64)
+        H = torch.ones((self.num_filters, len(z)),
+                       dtype=torch.complex64,
+                       device=device)
         Hnum = torch.zeros_like(H)
         Hden = torch.zeros_like(H)
 
@@ -192,6 +196,7 @@ class SOSFilter(nn.Module):
         self,
         num_biquads: int,
         biquad_cascade: Optional[BiquadCascade] = None,
+        device: Optional[torch.device] = 'cpu',
     ):
         """
         Filter input with a cascade of second order sections (either in the time of frequency domain)
@@ -200,6 +205,7 @@ class SOSFilter(nn.Module):
 
         """
         super().__init__()
+        self.device = device
         self.num_biquads = num_biquads
         if biquad_cascade is not None:
             self.biquad_cascade = biquad_cascade
@@ -214,7 +220,7 @@ class SOSFilter(nn.Module):
         if biquad_cascade is None:
             biquad_cascade = self.biquad_cascade
 
-        H = torch.ones(len(z), dtype=torch.complex64)
+        H = torch.ones(len(z), dtype=torch.complex64, device=self.device)
         for k in range(self.num_biquads):
             H *= torch.div(
                 biquad_cascade.num_coeffs[k, 0] +
@@ -294,11 +300,13 @@ class ScaledSoftPlus(nn.Module):
         """
         super().__init__()
         self.soft_plus = SoftPlus()
+        self.sigmoid = Sigmoid()
         self.lower_limit = lower_limit
         self.upper_limit = upper_limit
 
     def forward(self, x: torch.Tensor):
         """Scaled softplus function to get values between lowr_lmit and upper limit"""
+
         return self.lower_limit + (self.upper_limit -
                                    self.lower_limit) * self.soft_plus(x) / (
                                        1 + self.soft_plus(x))
@@ -318,6 +326,26 @@ class TanSigmoid(nn.Module):
     def forward(self, x: torch.Tensor):
         """Tan-sigmoid ensures positive output for SVF frequency"""
         return torch.tan(np.pi * self.sigmoid(x) * 0.5)
+
+
+class InvertedReLU(nn.Module):
+    """ReLU activation between min_value (negative) and 0"""
+
+    def __init__(self, min_value: float):
+        super().__init__()
+        assert min_value < 0.0
+        self.min_value = min_value
+
+    def forward(self, x):
+        linear_part = torch.where((x > self.min_value) & (x < 0), x,
+                                  torch.tensor(0.0, device=x.device))
+
+        # Apply saturation
+        return torch.where(
+            x >= 0, torch.tensor(0.0, device=x.device),
+            torch.where(x <= self.min_value,
+                        torch.tensor(self.min_value, device=x.device),
+                        linear_part))
 
 
 #######################################MLP-RELATED###########################################
@@ -428,8 +456,8 @@ class OneHotEncoding(nn.Module):
 class MLP(nn.Module):
 
     def __init__(self, num_pos_features: int, num_hidden_layers: int,
-                 num_neurons: int, num_biquads_in_cascade: int,
-                 num_groups: int, num_svf_params: int):
+                 num_neurons: int, num_groups: int,
+                 num_biquads_in_cascade: int, num_params: int):
         """
         Initialize the MLP.
 
@@ -439,7 +467,7 @@ class MLP(nn.Module):
             num_neurons (int): Number of neurons in each hidden layer.
             num_biquads_in_cascaed (int): Number of biquads in cascade
             num_groups (int): number of groups in GFDN
-            num_svf_params (int): number of learnable parameters in each SVF
+            num_params (int): number of learnable parameters in each SVF
         """
         super().__init__()
 
@@ -447,9 +475,9 @@ class MLP(nn.Module):
         input_size = num_pos_features
         self.num_biquads = num_biquads_in_cascade
         self.num_groups = num_groups
-        self.num_svf_params = num_svf_params
-        # Output layer has (num_del * num_SVF_params * num_biquads) features
-        output_size = self.num_groups * self.num_svf_params * self.num_biquads
+        self.num_params = num_params
+        # Output layer has (num_del * num_params * num_biquads) features
+        output_size = self.num_groups * self.num_params * self.num_biquads
 
         # Create a list of layers for the MLP
         layers = []
@@ -480,24 +508,23 @@ class MLP(nn.Module):
         batch_size = x.shape[0]
         x = self.model(x)
         x = x.view(batch_size, self.num_groups, self.num_biquads,
-                   self.num_svf_params)
+                   self.num_params)
         return x
 
 
 class SVF_from_MLP(nn.Module):
 
-    def __init__(
-        self,
-        sample_rate: float,
-        num_groups: int,
-        num_delay_lines_per_group: int,
-        num_fourier_features: int,
-        num_hidden_layers: int,
-        num_neurons: int,
-        encoding_type: FeatureEncodingType,
-        compress_pole_factor: Optional[float] = 1.0,
-        position_type: str = "output_gains",
-    ):
+    def __init__(self,
+                 sample_rate: float,
+                 num_groups: int,
+                 num_delay_lines_per_group: int,
+                 num_fourier_features: int,
+                 num_hidden_layers: int,
+                 num_neurons: int,
+                 encoding_type: FeatureEncodingType,
+                 compress_pole_factor: Optional[float] = 1.0,
+                 position_type: str = "output_gains",
+                 device: Optional[torch.device] = 'cpu'):
         """
         Train the MLP to get SVF coefficients for a biquad cascade
         Args:
@@ -521,11 +548,13 @@ class SVF_from_MLP(nn.Module):
         self.position_type = position_type
         self.encoding_type = encoding_type
         self.compress_pole_factor = compress_pole_factor
+        self.device = device
 
         centre_freq, shelving_crossover = eq_freqs()
         self.svf_cutoff_freqs = torch.pi * torch.cat(
             (torch.tensor([shelving_crossover[0]]), centre_freq,
-             torch.tensor([shelving_crossover[-1]]))) / sample_rate
+             torch.tensor([shelving_crossover[-1]]))).to(
+                 self.device) / sample_rate
         self.num_biquads = len(self.svf_cutoff_freqs)
 
         if self.encoding_type == FeatureEncodingType.SINE:
@@ -545,15 +574,15 @@ class SVF_from_MLP(nn.Module):
         self.mlp = MLP(num_input_features,
                        num_hidden_layers,
                        num_neurons,
-                       self.num_biquads,
                        self.num_groups,
-                       num_svf_params=2)
+                       self.num_biquads,
+                       num_params=2)
 
-        self.sos_filter = SOSFilter(self.num_biquads)
+        self.sos_filter = SOSFilter(self.num_biquads, device=self.device)
         # constraints on PEQ resonance
-        self.scaled_sigmoid = ScaledSigmoid(lower_limit=1e-6, upper_limit=1.0)
+        self.scaled_res = ScaledSigmoid(lower_limit=1e-6, upper_limit=1.0)
         # constraints on PEQ gains
-        self.soft_plus = ScaledSoftPlus(lower_limit=-6, upper_limit=6)
+        self.scaled_gains = ScaledSigmoid(lower_limit=-6, upper_limit=6)
 
     def forward(self, x: Dict) -> torch.tensor:
         """
@@ -569,7 +598,8 @@ class SVF_from_MLP(nn.Module):
 
         # this will be the output tensor
         H = torch.zeros((self.batch_size, self.num_delay_lines, len(z_values)),
-                        dtype=torch.complex64)
+                        dtype=torch.complex64,
+                        device=self.device)
 
         # encode the position coordinates only
         if self.encoding_type == FeatureEncodingType.SINE:
@@ -589,9 +619,9 @@ class SVF_from_MLP(nn.Module):
 
         # always ensure that the filter parameters are constrained
         reshape_size = (self.batch_size, self.num_groups, self.num_biquads)
-        self.svf_params[..., 0] = self.scaled_sigmoid(
+        self.svf_params[..., 0] = self.scaled_res(
             self.svf_params[..., 0].view(-1)).view(reshape_size)
-        self.svf_params[..., 1] = self.soft_plus(
+        self.svf_params[..., 1] = self.scaled_gains(
             self.svf_params[..., 1].view(-1)).view(reshape_size)
 
         # initialise empty filters
@@ -614,11 +644,11 @@ class SVF_from_MLP(nn.Module):
                         filter_type=("lowshelf" if k == 0 else
                                      "highshelf" if k == self.num_biquads -
                                      1 else "peaking"),
-                        G_db=svf_params_del_line[k, 1])
-                    for k in range(self.num_biquads)
+                        G_db=svf_params_del_line[k, 1],
+                        device=self.device) for k in range(self.num_biquads)
                 ]
                 self.biquad_cascade[b][i] = BiquadCascade.from_svf_coeffs(
-                    svf_cascade, self.compress_pole_factor)
+                    svf_cascade, self.compress_pole_factor, device=self.device)
 
                 # all delay lines in a group have the same output filter
                 H[b, i * self.num_delay_lines_per_group:(i + 1) *
@@ -649,10 +679,10 @@ class SVF_from_MLP(nn.Module):
     def get_param_dict(self) -> Dict:
         """Return the parameters as a dict"""
         param_np = {}
-        self.svf_params[..., 0] = self.scaled_sigmoid(
+        self.svf_params[..., 0] = self.scaled_res(
             self.svf_params[..., 0].view(-1)).view(self.num_groups,
                                                    self.num_biquads)
-        self.svf_params[..., 1] = self.soft_plus(
+        self.svf_params[..., 1] = self.scaled_gains(
             self.svf_params[..., 1].view(-1)).view(self.num_groups,
                                                    self.num_biquads)
         param_np['svf_params'] = self.svf_params.squeeze().cpu().numpy()
@@ -662,4 +692,124 @@ class SVF_from_MLP(nn.Module):
                       dim=-1).squeeze().cpu().numpy()
             for n in range(self.num_groups)
         ] for b in range(self.batch_size)]
+        return param_np
+
+
+class Gains_from_MLP(nn.Module):
+
+    def __init__(
+        self,
+        num_groups: int,
+        num_delay_lines_per_group: int,
+        num_fourier_features: int,
+        num_hidden_layers: int,
+        num_neurons: int,
+        encoding_type: FeatureEncodingType,
+        position_type: str = "output_gains",
+        device: Optional[torch.device] = 'cpu',
+    ):
+        """
+        Train the MLP to get scalar gains for each delay line
+        Args:
+            num_groups (int): number of groups in the GFDN
+            num_delay_lines_per_group: number of delay lines in each group in the GFDN
+            num_fourier_features (int): how much will the spatial locations expand as a feature
+            num_hidden_layers (int): Number of hidden layers.
+            num_neurons (int): Number of neurons in each hidden layer.
+            position_type (str): whether the SVF is driving the input or output gains
+            encoding_type (str): whether to use one-hot encoding with the grid geometry information, 
+                                 or directly use the sinusoidal encodings of the position 
+                                 coordinates of the receiversas inputs to the MLP
+            compress_pole_factor (float): number between 0 and 1 that reduces the pole radii of the biquads and
+                                    prevents time domain aliasing
+        """
+        super().__init__()
+        self.num_groups = num_groups
+        self.num_delay_lines_per_group = num_delay_lines_per_group
+        self.num_delay_lines = self.num_groups * self.num_delay_lines_per_group
+        self.position_type = position_type
+        self.encoding_type = encoding_type
+        self.device = device
+
+        if self.encoding_type == FeatureEncodingType.SINE:
+            # if we were feeding the spatial coordinates directly, then the
+            # number of input features would be 3. Since we are encoding them,
+            # the number of features is 3 * num_fourier_features * 2
+            num_input_features = 3 * num_fourier_features * 2
+            self.encoder = SinusoidalEncoding(num_fourier_features)
+
+        elif self.encoding_type == FeatureEncodingType.MESHGRID:
+            # in this case, the (x,y,z) locations of the meshgrid and the
+            # corresponding one-hot vector (1s where all the receiver locations are)
+            # are inputs to the MLP
+            num_input_features = 4
+            self.encoder = OneHotEncoding()
+
+        self.mlp = MLP(num_input_features,
+                       num_hidden_layers,
+                       num_neurons,
+                       self.num_delay_lines,
+                       num_biquads_in_cascade=1,
+                       num_params=1)
+
+        # constraints on output gains
+        self.scaled_sigmoid = ScaledSigmoid(lower_limit=-1.0, upper_limit=1.0)
+
+    def forward(self, x: Dict) -> torch.tensor:
+        """
+        Run the input features through the MLP, gets the filter coefficients as output of the MLP
+        Then returns the frequency response of the cascade of SVF filters
+        """
+        z_values = x['z_values']
+        position = x[
+            'listener_position'] if self.position_type == "output_gains" else x[
+                'source_position']
+        self.batch_size = position.shape[0]
+        mesh_3D = x['mesh_3D']
+
+        # encode the position coordinates only
+        if self.encoding_type == FeatureEncodingType.SINE:
+            encoded_position = self.encoder(position)
+        elif self.encoding_type == FeatureEncodingType.MESHGRID:
+            encoded_position, _, rec_idx = self.encoder(mesh_3D, position)
+
+        # run the MLP, output of the MLP are the state variable filter coefficients
+        self.gains = self.mlp(encoded_position)
+
+        # if meshgrid encoding is used, the size of svf_params is (Lx*Ly*Lz, N, K, 2).
+        # instead, we want the size to be (B, N, K, 2). So, we only take the filters
+        # corresponding to the position of the receivers in the meshgrid
+        if self.encoding_type == FeatureEncodingType.MESHGRID:
+            self.gains = self.gains[rec_idx, ...]  # pylint: disable=E0601
+            assert self.gains.shape[0] == self.batch_size
+
+        # always ensure that the filter parameters are constrained
+        reshape_size = (self.batch_size, self.num_delay_lines)
+        self.gains = self.scaled_sigmoid(
+            self.gains.view(-1)).view(reshape_size)
+
+        # fill the output gains of size B x N x K
+        C = self.gains.unsqueeze(-1).repeat(1, 1, len(z_values))
+
+        return C
+
+    def print(self):
+        """Print the value of the parameters"""
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                print(name, param.data)
+
+    def get_parameters(self) -> Tuple:
+        """Return the parameters as tuple"""
+        gains = self.gains
+        return gains
+
+    @torch.no_grad()
+    def get_param_dict(self) -> Dict:
+        """Return the parameters as a dict"""
+        param_np = {}
+        self.gains = self.scaled_sigmoid(self.gains.view(-1)).view(
+            self.batch_size, self.num_delay_lines)
+
+        param_np['gains'] = self.gains.squeeze().cpu().numpy()
         return param_np

@@ -2,7 +2,6 @@ from typing import Dict, Optional, Union
 
 import numpy as np
 from numpy.typing import ArrayLike
-from scipy.signal import fftconvolve
 import torch
 from torch import nn
 import torchaudio.functional as Faudio
@@ -36,7 +35,9 @@ def db(x: Union[ArrayLike, torch.tensor],
 
 
 def db2lin(
-        x: Union[torch.tensor, ArrayLike]) -> Union[torch.tensor, ArrayLike]:
+    x: Union[torch.tensor, ArrayLike],
+    is_squared: bool = False,
+) -> Union[torch.tensor, ArrayLike]:
     """Convert from decibels to linear
 
     Args:
@@ -45,10 +46,11 @@ def db2lin(
     Returns:
         (ArrayLike): values converted to linear
     """
+    exp_factor = 0.1 if is_squared else 0.05
     if torch.is_tensor(x):
-        return torch.pow(10.0, x * 0.05)
+        return torch.pow(10.0, x * exp_factor)
     else:
-        return np.power(10.0, x * 0.05)
+        return np.power(10.0, x * exp_factor)
 
 
 def ms_to_samps(ms: Union[float, ArrayLike],
@@ -130,30 +132,6 @@ def get_response(x: Dict, net: nn.Module):
         H = net(x)
         h = torch.fft.irfft(H, dim=-1)
     return H, h
-
-
-def calculate_energy_envelope(sig: ArrayLike, fs: float,
-                              smooth_time_ms: float) -> ArrayLike:
-    """
-    Calculate the energy envelope (broadband EDC) of a RIR
-    Args:
-        sig (ArrayLike): 1D RIR signal
-        fs (float): sampling rate
-        smooth_time_ms (float): smoothing window length in ms, 
-                                longer window leads to more smoothing
-    """
-    staps = ms_to_samps(smooth_time_ms / 2, fs)
-    odd_win_len = 2 * staps - 1
-    # normalised smoothing window
-    bs = np.hanning(odd_win_len) / np.sum(np.hanning(odd_win_len))
-    # zero-pad signal on either side
-    padded_signal = np.concatenate((np.zeros(staps), sig**2, np.zeros(staps)),
-                                   axis=0)
-    # smooth signal by convolving with window
-    smoothed_signal = fftconvolve(bs, padded_signal)
-    env = np.real(np.sqrt(smoothed_signal))
-    env = env[odd_win_len + np.arange(len(sig))]
-    return env
 
 
 def get_str_results(epoch=None,

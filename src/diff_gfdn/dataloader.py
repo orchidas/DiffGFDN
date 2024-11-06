@@ -70,24 +70,26 @@ class RIRData:
 
     def __init__(self,
                  wav_path: Path,
-                 band_centre_hz: ArrayLike,
                  common_decay_times: List,
+                 band_centre_hz: Optional[ArrayLike],
                  amplitudes: Optional[List] = None,
                  room_dims: Optional[List] = None,
                  absorption_coeffs: Optional[List] = None,
-                 mixing_time_ms: float = 20.0):
+                 mixing_time_ms: float = 20.0,
+                 nfft: Optional[int] = None):
         """
         Args:
             num_rooms (int): number of rooms in coupled space
             sample_rate (float): sample rate of dataset
             wav_path (Path): path to the RIR
-            band_centre_hz (ArrayLike): octave band centres where common T60s are calculated
-            common_decay_times (List[ArrayLike]): common decay times for the different rooms
+            band_centre_hz (optional, ArrayLike): octave band centres where common T60s are calculated
+            common_decay_times (List[ArrayLike, float]): common decay times for the different rooms
             amplitudes (List[ArrayLike]): the amplitudes of the common slopes, unique to the receiver position,
                                           same size as common_decay times
             room_dims (optional, List): l,w,h for each room in coupled space
             absorption_coeffs (optional, List): uniform absorption coefficients for each room
             mixing_time_ms (float): time when early reflections morph into late reverb
+            nfft (optional, int): number of frequency bins
         """
 
         assert str(wav_path).endswith(
@@ -108,13 +110,17 @@ class RIRData:
         self.mixing_time_ms = mixing_time_ms
         self.room_dims = room_dims
         self.absorption_coeffs = absorption_coeffs
+        self.nfft = nfft
         self.early_late_split()
 
     @property
     def num_freq_bins(self):
         """Number of frequency bins in the magnitude response"""
-        max_rt60_samps = self.common_decay_times.max() * self.sample_rate
-        return int(np.pow(2, np.ceil(np.log2(max_rt60_samps))))
+        if self.nfft is not None:
+            return self.nfft
+        else:
+            max_rt60_samps = self.common_decay_times.max() * self.sample_rate
+            return int(np.pow(2, np.ceil(np.log2(max_rt60_samps))))
 
     @property
     def freq_bins_rad(self):
@@ -169,12 +175,13 @@ class RoomDataset(ABC):
                  source_position: NDArray,
                  receiver_position: NDArray,
                  rirs: NDArray,
-                 band_centre_hz: ArrayLike,
                  common_decay_times: List,
-                 amplitudes: NDArray,
                  room_dims: List,
                  room_start_coord: List,
-                 absorption_coeffs: List,
+                 band_centre_hz: Optional[ArrayLike] = None,
+                 amplitudes: Optional[NDArray] = None,
+                 absorption_coeffs: Optional[List] = None,
+                 aperture_coords: Optional[List] = None,
                  mixing_time_ms: float = 20.0,
                  nfft: Optional[int] = None):
         """
@@ -184,13 +191,15 @@ class RoomDataset(ABC):
             source_position (NDArray): position of sources in cartesian coordinate
             receiver_position (NDArray): position of receivers in cartesian coordinate
             rirs (NDArray): omni-rirs at all source and receiver positions
-            band_centre_hz (ArrayLike): octave band centres where common T60s are calculated
-            common_decay_times (List[ArrayLike]): common decay times for the different rooms
+            band_centre_hz (optinal, ArrayLike): octave band centres where common T60s are calculated
+            common_decay_times (List[Union[ArrayLike, float]]): common decay times for the different rooms of 
+                                                                num_freq_bands x num_rooms
             amplitudes (NDArray): the amplitudes of the common slopes of size 
                                   (num_freq_bands x  num_rooms x num_rec_pos)
             room_dims (List): l,w,h for each room in coupled space
             room_start_coord (List): coordinates of the room's starting vertex (first room starts at origin)
-            absorption_coeffs (List): uniform absorption coefficients for each room
+            absorption_coeffs (List, optional): uniform absorption coefficients for each room
+            aperture_coords (List, optional): coordinates of the apertures in the geometry
             mixing_time_ms (float): mixing time of the RIR for early-late split
             nfft (optional, int): number of frequency bins
         """
@@ -208,9 +217,12 @@ class RoomDataset(ABC):
         self.absorption_coeffs = absorption_coeffs
         self.room_dims = room_dims
         self.room_start_coord = room_start_coord
+        self.aperture_coords = aperture_coords
         self.mixing_time_ms = mixing_time_ms
         self.nfft = nfft
         self.early_late_split()
+        # create 3D mesh
+        self.mesh_3D = self.get_3D_meshgrid(grid_spacing_m=0.3)
 
     @property
     def num_freq_bins(self):
@@ -335,6 +347,20 @@ class RoomDataset(ABC):
         # Show the plot
         plt.show()
 
+    def save_individual_irs(self, directory: str, filename_prefix: str = "ir"):
+        """Save the RIRs for each receiver position as audio files in directory"""
+        if not os.path.isdir(directory):
+            os.makedirs(directory)
+
+        for num_pos in range(self.num_rec):
+            filename = (
+                f'{filename_prefix}_({self.receiver_position[num_pos,0]:.2f}, '
+                f'{self.receiver_position[num_pos, 1]:.2f}, {self.receiver_position[num_pos, 2]:.2f}).wav'
+            )
+
+            filepath = os.path.join(directory, filename)
+            sf.write(filepath, self.rirs[num_pos, :], int(self.sample_rate))
+
 
 class ThreeRoomDataset(RoomDataset):
     """
@@ -374,29 +400,30 @@ class ThreeRoomDataset(RoomDataset):
         room_dims = [(4.0, 8.0, 3.0), (6.0, 3.0, 3.0), (4.0, 8.0, 3.0)]
         # this denotes the 3D position of the first vertex of the floor
         room_start_coord = [(0, 0, 0), (4.0, 2.0, 0), (6.0, 5.0, 0)]
+        # coordinates of the aperture
+        aperture_coords = [[(4, 3), (4, 4.5)], [(8.5, 5), (10, 5)]]
+
         super().__init__(num_rooms,
                          sample_rate,
                          source_position,
                          receiver_position,
                          rirs,
-                         band_centre_hz,
                          common_decay_times,
-                         amplitudes,
                          room_dims,
                          room_start_coord,
+                         band_centre_hz,
+                         amplitudes,
                          absorption_coeffs,
+                         aperture_coords,
                          nfft=nfft)
 
-        # how far apart the receivers are placed
-        mic_spacing_m = 0.3
-        self.mesh_3D = super().get_3D_meshgrid(mic_spacing_m)
         if config_dict.trainer_config.save_true_irs:
             logger.info("Saving RIRs")
             self.save_omni_irs()
 
     def save_omni_irs(self,
                       filename_prefix: str = "ir",
-                      directory: str = "../audio/true/"):
+                      directory: str = "audio/true/"):
         """Save the omni RIRs for each receiver position as audio files in directory"""
         if not os.path.isdir(directory):
             os.makedirs(directory)
@@ -433,6 +460,9 @@ class MultiRIRDataset(data.Dataset):
         """
         # spatial data
         self.source_position = torch.tensor(room_data.source_position)
+        # source position has to be 2D for proper length calculation
+        self.source_position = self.source_position.unsqueeze(
+            0) if self.source_position.dim() == 1 else self.source_position
         self.listener_positions = torch.tensor(room_data.receiver_position)
         self.mesh_3D = room_data.mesh_3D
         self.device = device
