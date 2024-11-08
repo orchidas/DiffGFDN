@@ -14,8 +14,9 @@ from .losses import edc_loss, edr_loss, reg_loss
 from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
 from .utils import get_response, get_str_results, ms_to_samps
 
-
 # flake8: noqa: E231
+
+
 class Trainer:
     """Parent class for training DiffGFDN for a grid of source-listener positions and for one static position"""
 
@@ -141,11 +142,6 @@ class Trainer:
         """Print results of training"""
         print(get_str_results(epoch=e, train_loss=self.train_loss,
                               time=e_time))
-        # # for debugging
-        # for name, param in self.net.named_parameters():
-        #     if name == 'input_gains' and param.requires_grad:
-        #         print(f"Parameter {name}: {param.data}")
-        #         print(f"Parameter {name} gradient: {param.grad.norm()}")
 
     def save_model(self, e: int):
         """Save the model at epoch number e"""

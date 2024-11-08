@@ -118,6 +118,19 @@ class TrainerConfig(BaseModel):
         return model
 
 
+class ColorlessFDNConfig(BaseModel):
+    """Config file for colorless FDN training"""
+
+    # whether to use colorless FDN to get the input/output gains and feedback matrix
+    use_colorless_prototype: bool = False
+    # batch size for training
+    batch_size: int = 2000
+    # maximum epochs
+    max_epochs: int = 20
+    # training and validation split
+    train_valid_split: float = 0.8
+
+
 class DiffGFDNConfig(BaseModel):
     """Config file for training the DiffGFDN"""
 
@@ -139,6 +152,8 @@ class DiffGFDNConfig(BaseModel):
     feedback_loop_config: FeedbackLoopConfig = FeedbackLoopConfig()
     # number of biquads in SVF
     output_filter_config: OutputFilterConfig = OutputFilterConfig()
+    # colorless FDN config
+    colorless_fdn_config: ColorlessFDNConfig = ColorlessFDNConfig()
 
     @computed_field
     @property

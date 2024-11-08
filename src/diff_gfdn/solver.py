@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 import pickle
 import re
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 from loguru import logger
 import matplotlib.pyplot as plt
@@ -10,6 +10,9 @@ import numpy as np
 from scipy.io import savemat
 import torch
 
+from .colorless_fdn.dataloader import ColorlessFDNResults, load_colorless_fdn_dataset
+from .colorless_fdn.model import ColorlessFDN
+from .colorless_fdn.trainer import ColorlessFDNTrainer
 from .config.config import DiffGFDNConfig
 from .dataloader import load_dataset, RIRData, RoomDataset, ThreeRoomDataset
 from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
@@ -71,7 +74,7 @@ def convert_common_slopes_rir_to_room_dataset(
     return room_data
 
 
-def save_parameters(net: DiffGFDN, dir_path: str, filename: str):
+def save_diff_gfdn_parameters(net: DiffGFDN, dir_path: str, filename: str):
     """
     Save parameters of DiffGFDN() net to .mat file 
     Args    net (nn.Module): trained FDN() network
@@ -83,7 +86,7 @@ def save_parameters(net: DiffGFDN, dir_path: str, filename: str):
     if not os.path.exists(dir_path):
         os.makedirs(dir_path)
 
-    param = gfdn2dir(net)
+    param = fdn2dir(net)
     param_np = {}
     for name, value in param.items():
         try:
@@ -96,7 +99,38 @@ def save_parameters(net: DiffGFDN, dir_path: str, filename: str):
     return param, param_np
 
 
-def gfdn2dir(net: DiffGFDN):
+def save_colorless_fdn_parameters(net: ColorlessFDN, dir_path: str,
+                                  filename: str) -> ColorlessFDNResults:
+    """
+    Save parameters of ColorlessFDN() net to .pkl file 
+    Args    net (nn.Module): trained FDN() network
+            dir_path (string): path to output firectory
+            filename (string): name of the file 
+    Output  ColorlessFDNResults: dataclass containing the results of optimisation
+    """
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+
+    param = fdn2dir(net)
+    param_np = {}
+    for name, value in param.items():
+        try:
+            param_np[name] = value.squeeze().cpu().numpy()
+        except AttributeError:
+            param_np[name] = value
+
+    colorless_fdn_params = ColorlessFDNResults(
+        opt_input_gains=param_np['input_gains'],
+        opt_output_gains=param_np['output_gains'],
+        opt_feedback_matrix=param_np['feedback_matrix'])
+    # save parameters in numpy format
+    with open(os.path.join(dir_path, filename), "wb") as f:
+        pickle.dump(colorless_fdn_params, f)
+
+    return colorless_fdn_params
+
+
+def fdn2dir(net: Union[DiffGFDN, ColorlessFDN]):
     """
     Save learnable parameters to a dictionary  
     Args    net (nn.Module): trained FDN() network
@@ -216,6 +250,67 @@ def data_parser_single_receiver_pos(
     return rir_data, room_data, ir_name
 
 
+def run_training_colorless_fdn(
+        config_dict: DiffGFDNConfig,
+        num_freq_bins: int) -> List[ColorlessFDNResults]:
+    """
+    Run the training for a colorless prototype
+    Returns:
+        A list of ColorlessFDNResults dataclass, each for one FDN in the GFDN
+    """
+    logger.info("Training a colorless prototype")
+    trainer_config = config_dict.trainer_config
+
+    # prepare the training and validation data for DiffGFDN
+    train_dataset, valid_dataset = load_colorless_fdn_dataset(
+        num_freq_bins,
+        trainer_config.device,
+        config_dict.colorless_fdn_config.train_valid_split,
+        config_dict.colorless_fdn_config.batch_size,
+    )
+
+    params_opt = []
+    num_delay_lines_per_group = int(config_dict.num_delay_lines /
+                                    config_dict.num_groups)
+    for i in range(config_dict.num_groups):
+
+        model = ColorlessFDN(
+            config_dict.sample_rate,
+            config_dict.delay_length_samps[i *
+                                           num_delay_lines_per_group:(i + 1) *
+                                           num_delay_lines_per_group],
+            trainer_config.device)
+
+        # set default device
+        torch.set_default_device(trainer_config.device)
+        # move model to device (cuda or cpu)
+        model = model.to(trainer_config.device)
+        # create the trainer object
+        trainer = ColorlessFDNTrainer(model, trainer_config,
+                                      config_dict.colorless_fdn_config)
+
+        # save initial parameters and ir
+        save_colorless_fdn_parameters(
+            trainer.net, trainer_config.train_dir + "colorless-fdn/",
+            f'parameters_init_group={i + 1}.pkl')
+
+        # train the network
+        trainer.train(train_dataset, valid_dataset)
+        # save final trained parameters
+        params_opt.append(
+            save_colorless_fdn_parameters(
+                trainer.net, trainer_config.train_dir + "colorless-fdn/",
+                f'parameters_opt_group={i + 1}.pkl'))
+
+        # save loss evolution
+        save_loss(trainer.train_loss,
+                  trainer_config.train_dir + "colorless-fdn/",
+                  save_plot=True,
+                  filename=f'training_loss_vs_epoch_group={i + 1}')
+
+    return params_opt
+
+
 def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
     """
     Run the training for the differentiable GFDN for a grid of different receiver positions, and save
@@ -247,6 +342,12 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
     trainer_config = trainer_config.calculate_reduced_pole_radius(
         trainer_config)
 
+    if config_dict.colorless_fdn_config.use_colorless_prototype:
+        colorless_fdn_params = run_training_colorless_fdn(
+            config_dict, room_data.num_freq_bins)
+    else:
+        colorless_fdn_params = None
+
     # prepare the training and validation data for DiffGFDN
     train_dataset, valid_dataset = load_dataset(
         room_data,
@@ -265,10 +366,9 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
         config_dict.feedback_loop_config,
         config_dict.output_filter_config,
         config_dict.use_absorption_filters,
-        room_dims=room_data.room_dims,
-        absorption_coeffs=room_data.absorption_coeffs,
         common_decay_times=room_data.common_decay_times,
         band_centre_hz=room_data.band_centre_hz,
+        colorless_fdn_params=colorless_fdn_params,
     )
     # set default device
     torch.set_default_device(trainer_config.device)
@@ -278,14 +378,14 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
     trainer = VarReceiverPosTrainer(model, trainer_config)
 
     # save initial parameters and ir
-    save_parameters(trainer.net, trainer_config.train_dir,
-                    'parameters_init.mat')
+    save_diff_gfdn_parameters(trainer.net, trainer_config.train_dir,
+                              'parameters_init.mat')
 
     # train the network
     trainer.train(train_dataset)
     # save final trained parameters
-    save_parameters(trainer.net, trainer_config.train_dir,
-                    'parameters_opt.mat')
+    save_diff_gfdn_parameters(trainer.net, trainer_config.train_dir,
+                              'parameters_opt.mat')
     # save loss evolution
     save_loss(trainer.train_loss,
               trainer_config.train_dir,
@@ -338,6 +438,13 @@ def run_training_single_pos(config_dict: DiffGFDNConfig):
         trainer_config = trainer_config.copy(
             update={"batch_size": rir_data.num_freq_bins})
 
+    # whether to use a colorless FDN to get input-output gains and feedback matrix
+    if config_dict.colorless_fdn_config.use_colorless_prototype:
+        colorless_fdn_params = run_training_colorless_fdn(
+            config_dict, room_data.num_freq_bins)
+    else:
+        colorless_fdn_params = None
+
     train_dataset = load_dataset(rir_data,
                                  trainer_config.device,
                                  trainer_config.train_valid_split,
@@ -347,19 +454,16 @@ def run_training_single_pos(config_dict: DiffGFDNConfig):
                                  trainer_config.reduced_pole_radius)
 
     # initialise the model
-    model = DiffGFDNSinglePos(
-        room_data.sample_rate,
-        room_data.num_rooms,
-        config_dict.delay_length_samps,
-        trainer_config.device,
-        config_dict.feedback_loop_config,
-        config_dict.output_filter_config,
-        config_dict.use_absorption_filters,
-        room_dims=room_data.room_dims,
-        absorption_coeffs=room_data.absorption_coeffs,
-        common_decay_times=room_data.common_decay_times,
-        band_centre_hz=room_data.band_centre_hz,
-    )
+    model = DiffGFDNSinglePos(room_data.sample_rate,
+                              room_data.num_rooms,
+                              config_dict.delay_length_samps,
+                              trainer_config.device,
+                              config_dict.feedback_loop_config,
+                              config_dict.output_filter_config,
+                              config_dict.use_absorption_filters,
+                              common_decay_times=room_data.common_decay_times,
+                              band_centre_hz=room_data.band_centre_hz,
+                              colorless_fdn_params=colorless_fdn_params)
     # set default device
     torch.set_default_device(trainer_config.device)
     # move model to device (cuda or cpu)
@@ -368,14 +472,14 @@ def run_training_single_pos(config_dict: DiffGFDNConfig):
     trainer = SinglePosTrainer(model, trainer_config, filename=ir_name)
 
     # save initial parameters and ir
-    save_parameters(trainer.net, trainer_config.train_dir,
-                    'parameters_init.mat')
+    save_diff_gfdn_parameters(trainer.net, trainer_config.train_dir,
+                              'parameters_init.mat')
 
     # train the network
     trainer.train(train_dataset)
     # save final trained parameters
-    save_parameters(trainer.net, trainer_config.train_dir,
-                    'parameters_opt.mat')
+    save_diff_gfdn_parameters(trainer.net, trainer_config.train_dir,
+                              'parameters_opt.mat')
     # save loss evolution
     save_loss(trainer.train_loss,
               trainer_config.train_dir,
