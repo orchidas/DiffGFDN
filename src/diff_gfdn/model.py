@@ -148,7 +148,7 @@ class DiffGFDN(nn.Module):
             num_sos=sos_filter_coeffs.shape[0],
             num_coeffs=sos_filter_coeffs[:, :3],
             den_coeffs=sos_filter_coeffs[:, 3:])
-        self.lowpass_filter = SOSFilter(sos_filter_coeffs.shape[0])
+        self.lowpass_filter = SOSFilter(sos_filter_coeffs.shape[0], device=self.device)
 
 
 class DiffGFDNVarReceiverPos(DiffGFDN):
@@ -395,7 +395,7 @@ class DiffGFDNSinglePos(DiffGFDN):
             # the resonance and the gain of the SVFs are the parameters
             self.output_svf_params = nn.Parameter(init_params)
 
-            self.output_filters = SOSFilter(self.num_biquads)
+            self.output_filters = SOSFilter(self.num_biquads, device=self.device)
             # resonance should be between 0 and 1 for complex conjugate poles
             self.scaled_sigmoid = ScaledSigmoid(lower_limit=0.0,
                                                 upper_limit=1.0)
@@ -471,11 +471,12 @@ class DiffGFDNSinglePos(DiffGFDN):
                     filter_type=("lowshelf" if k == 0 else
                                  "highshelf" if k == self.num_biquads -
                                  1 else "peaking"),
-                    G_db=svf_params_del_line[k, 1])
+                    G_db=svf_params_del_line[k, 1],
+                    device=self.device)
                 for k in range(self.num_biquads)
             ]
             self.biquad_cascade[i] = BiquadCascade.from_svf_coeffs(
-                svf_cascade, self.compress_pole_factor)
+                svf_cascade, self.compress_pole_factor, device=self.device)
 
             # all delay lines in a group have the same output filter
             Hout[i * self.num_delay_lines_per_group:(i + 1) *

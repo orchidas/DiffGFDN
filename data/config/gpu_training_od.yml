@@ -7,4 +7,4 @@ trainer_config:
     save_irs: True
 feedback_loop_config:
     coupling_matrix_type: "scalar_matrix"
-room_dataset_path: '/resources/Georg_3room_FDTD/srirs.pkl'
+room_dataset_path: '/scratch/users/k2478454/DiffGFDN/resources/Georg_3room_FDTD/srirs.pkl'
