@@ -13,7 +13,7 @@ from .absorption_filters import (
 from .config.config import CouplingMatrixType, FeedbackLoopConfig, OutputFilterConfig
 from .feedback_loop import FeedbackLoop
 from .filters.geq import eq_freqs
-from .gain_filters import BiquadCascade, Gains_from_MLP, ScaledSigmoid, ScaledSoftPlus, SOSFilter, SVF, SVF_from_MLP
+from .gain_filters import BiquadCascade, Gains_from_MLP, ScaledSigmoid, SOSFilter, SVF, SVF_from_MLP
 from .utils import to_complex
 
 # pylint: disable=W0718, E1136, E1137
@@ -70,7 +70,8 @@ class DiffGFDN(nn.Module):
 
         # frequency-dependent absorption filters
         if self.use_absorption_filters:
-            # this will be of size (num_groups, num_del_per_group, numerator (filter_order), denominator(filter_order))
+            # this will be of size (num_groups, num_del_per_group,
+            # numerator (filter_order), denominator(filter_order))
             self.gain_per_sample = torch.tensor([
                 decay_times_to_gain_filters_geq(
                     band_centre_hz, common_decay_times[:, i],
@@ -89,7 +90,6 @@ class DiffGFDN(nn.Module):
                     0, 2, 1, 3, 4)
                 self.gain_per_sample = self.gain_per_sample.reshape(
                     self.num_delay_lines, n_filters, self.filter_order, 2)
-
         # broadband absorption gains
         else:
             if absorption_coeffs is None:
@@ -148,7 +148,8 @@ class DiffGFDN(nn.Module):
             num_sos=sos_filter_coeffs.shape[0],
             num_coeffs=sos_filter_coeffs[:, :3],
             den_coeffs=sos_filter_coeffs[:, 3:])
-        self.lowpass_filter = SOSFilter(sos_filter_coeffs.shape[0], device=self.device)
+        self.lowpass_filter = SOSFilter(sos_filter_coeffs.shape[0],
+                                        device=self.device)
 
 
 class DiffGFDNVarReceiverPos(DiffGFDN):
@@ -219,7 +220,7 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
                 output_filter_config.num_hidden_layers,
                 output_filter_config.num_neurons_per_layer,
                 output_filter_config.encoding_type,
-            )
+                device=self.device)
 
     def forward(self, x: Dict) -> torch.tensor:
         """
@@ -395,12 +396,14 @@ class DiffGFDNSinglePos(DiffGFDN):
             # the resonance and the gain of the SVFs are the parameters
             self.output_svf_params = nn.Parameter(init_params)
 
-            self.output_filters = SOSFilter(self.num_biquads, device=self.device)
+            self.output_filters = SOSFilter(self.num_biquads,
+                                            device=self.device)
+
             # resonance should be between 0 and 1 for complex conjugate poles
-            self.scaled_sigmoid = ScaledSigmoid(lower_limit=0.0,
-                                                upper_limit=1.0)
+            self.scaled_res = ScaledSigmoid(lower_limit=1e-6, upper_limit=1.0)
             # SVF gain range in dB
-            self.soft_plus = ScaledSoftPlus(lower_limit=-3.0, upper_limit=3.0)
+            self.scaled_gains = ScaledSigmoid(lower_limit=-6.0,
+                                              upper_limit=6.0)
 
     def forward(self, x: Dict) -> torch.tensor:
         """
@@ -450,10 +453,10 @@ class DiffGFDNSinglePos(DiffGFDN):
 
         flattened_svf_gains = output_svf_params[..., 1].view(-1)
         flattened_svf_res = output_svf_params[..., 0].view(-1)
-        output_svf_params[..., 1] = self.soft_plus(flattened_svf_gains).view(
+        output_svf_params[..., 1] = self.scaled_gains(
+            flattened_svf_gains).view(reshape_size)
+        output_svf_params[..., 0] = self.scaled_res(flattened_svf_res).view(
             reshape_size)
-        output_svf_params[..., 0] = self.scaled_sigmoid(
-            flattened_svf_res).view(reshape_size)
 
         # initialise empty filters
         self.biquad_cascade = [
@@ -526,11 +529,20 @@ class DiffGFDNSinglePos(DiffGFDN):
         except Exception:
             logger.warning('Parameter not initialised yet in FeedbackLoop!')
 
+        # get absorption filters
+        if self.use_absorption_filters:
+            param_np['absorption_filters'] = [
+                self.feedback_loop.delay_line_gains[n]
+                for n in range(self.num_delay_lines)
+            ]
+        else:
+            param_np['absorption_coeffs'] = self.gain_per_sample
+
         try:
-            self.output_svf_params[..., 1] = self.soft_plus(
+            self.output_svf_params[..., 1] = self.scaled_gains(
                 self.output_svf_params[..., 1].view(-1)).view(
                     self.num_groups, self.num_biquads)
-            self.output_svf_params[..., 0] = self.scaled_sigmoid(
+            self.output_svf_params[..., 0] = self.scaled_res(
                 self.output_svf_params[..., 0].view(-1)).view(
                     self.num_groups, self.num_biquads)
 

@@ -181,6 +181,7 @@ class RoomDataset(ABC):
                  band_centre_hz: Optional[ArrayLike] = None,
                  amplitudes: Optional[NDArray] = None,
                  absorption_coeffs: Optional[List] = None,
+                 aperture_coords: Optional[List] = None,
                  mixing_time_ms: float = 20.0,
                  nfft: Optional[int] = None):
         """
@@ -191,12 +192,14 @@ class RoomDataset(ABC):
             receiver_position (NDArray): position of receivers in cartesian coordinate
             rirs (NDArray): omni-rirs at all source and receiver positions
             band_centre_hz (optinal, ArrayLike): octave band centres where common T60s are calculated
-            common_decay_times (List[Union[ArrayLike, float]]): common decay times for the different rooms
+            common_decay_times (List[Union[ArrayLike, float]]): common decay times for the different rooms of 
+                                                                num_freq_bands x num_rooms
             amplitudes (NDArray): the amplitudes of the common slopes of size 
                                   (num_freq_bands x  num_rooms x num_rec_pos)
             room_dims (List): l,w,h for each room in coupled space
             room_start_coord (List): coordinates of the room's starting vertex (first room starts at origin)
             absorption_coeffs (List, optional): uniform absorption coefficients for each room
+            aperture_coords (List, optional): coordinates of the apertures in the geometry
             mixing_time_ms (float): mixing time of the RIR for early-late split
             nfft (optional, int): number of frequency bins
         """
@@ -214,6 +217,7 @@ class RoomDataset(ABC):
         self.absorption_coeffs = absorption_coeffs
         self.room_dims = room_dims
         self.room_start_coord = room_start_coord
+        self.aperture_coords = aperture_coords
         self.mixing_time_ms = mixing_time_ms
         self.nfft = nfft
         self.early_late_split()
@@ -396,6 +400,9 @@ class ThreeRoomDataset(RoomDataset):
         room_dims = [(4.0, 8.0, 3.0), (6.0, 3.0, 3.0), (4.0, 8.0, 3.0)]
         # this denotes the 3D position of the first vertex of the floor
         room_start_coord = [(0, 0, 0), (4.0, 2.0, 0), (6.0, 5.0, 0)]
+        # coordinates of the aperture
+        aperture_coords = [[(4, 3), (4, 4.5)], [(8.5, 5), (10, 5)]]
+
         super().__init__(num_rooms,
                          sample_rate,
                          source_position,
@@ -407,6 +414,7 @@ class ThreeRoomDataset(RoomDataset):
                          band_centre_hz,
                          amplitudes,
                          absorption_coeffs,
+                         aperture_coords,
                          nfft=nfft)
 
         if config_dict.trainer_config.save_true_irs:

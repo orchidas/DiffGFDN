@@ -94,13 +94,13 @@ class TrainerConfig(BaseModel):
     alias_attenuation_db: Optional[int] = None
     # by how much to reduce the radius of each pole during frequency sampling
     reduced_pole_radius: float = Field(
-        default=1.0)  # Default value, to be set dynamically    
+        default=1.0)  # Default value, to be set dynamically
 
     # validator for training on GPU
     @field_validator('device', mode='after')
     @classmethod
     def validate_training_device(cls, value):
-        """Check if GPU is available"""
+        """Validate GPU, if it is used for training"""
         if value == 'cuda':
             assert torch.cuda.is_available(
             ), "CUDA is not available for training"
