@@ -1,6 +1,6 @@
 #!/bin/bash -l
 # change current working directory
-#SBATCH --chdir=/scratch/users/k2478454/DiffGFDN/
+#SBATCH --chdir=/scratch/users/%u/DiffGFDN/
 # set output directory
 #SBATCH --output=/scratch/users/%u/%j.out
 #SBATCH --job-name=gpu
