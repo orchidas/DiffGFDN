@@ -3,6 +3,7 @@
 from enum import Enum
 from typing import List, Optional
 
+from loguru import logger
 import numpy as np
 from pydantic import BaseModel, computed_field, ConfigDict, Field, field_validator, model_validator
 import sympy as sp
@@ -104,6 +105,7 @@ class TrainerConfig(BaseModel):
         if value == 'cuda':
             assert torch.cuda.is_available(
             ), "CUDA is not available for training"
+            logger.info(f"Running on GPU: {torch.cuda.get_device_name(0)}")
 
     # validator for the 'reduced_pole_radius' field
     @model_validator(mode='after')

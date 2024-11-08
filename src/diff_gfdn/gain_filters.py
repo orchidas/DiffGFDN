@@ -154,29 +154,34 @@ class IIRFilter(nn.Module):
 
     def __init__(self, filt_order: int, num_filters: int,
                  filter_numerator: torch.tensor,
-                 filter_denominator: torch.tensor):
+                 filter_denominator: torch.tensor,
+                 device: Optional[torch.device] = 'cpu'):
         """
         Filter input with an IIR filter of order filt_order
         Args:
             filt_order (int): order of the IIR fulter
+            filter_numerator (torch.tensor): numerator coefficients
+            filter_denominator (torch.tensor): denominator coefficients
+            device (optional, torch.device): the training device, CPU or GPU
         """
         super().__init__()
         self.filt_order = filt_order
         self.num_filters = num_filters
         self.filter_numerator = filter_numerator
         self.filter_denominator = filter_denominator
+        self.device = device
 
         assert self.filter_numerator.shape == (self.num_filters,
                                                self.filt_order)
 
-    def forward(self, z: torch.tensor, device: Optional[torch.device] = 'cpu'):
+    def forward(self, z: torch.tensor):
         """
         Calculate 
         Here, z represents the input frequency sampling points
         """
         H = torch.ones((self.num_filters, len(z)),
                        dtype=torch.complex64,
-                       device=device)
+                       device=self.device)
         Hnum = torch.zeros_like(H)
         Hden = torch.zeros_like(H)
 

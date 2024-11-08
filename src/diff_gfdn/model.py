@@ -123,7 +123,8 @@ class DiffGFDN(nn.Module):
             self.num_groups, self.num_delay_lines_per_group, self.delays,
             self.gain_per_sample, self.use_absorption_filters,
             feedback_loop_config.coupling_matrix_type,
-            feedback_loop_config.pu_matrix_order)
+            feedback_loop_config.pu_matrix_order,
+            self.device)
 
         # add a lowpass filter at the end to remove high frequency artifacts
         self.design_lowpass_filter()
