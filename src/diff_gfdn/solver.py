@@ -10,9 +10,10 @@ import numpy as np
 from scipy.io import savemat
 import torch
 
-from .colorless_fdn.dataloader import ColorlessFDNResults, load_colorless_fdn_dataset
+from .colorless_fdn.dataloader import load_colorless_fdn_dataset
 from .colorless_fdn.model import ColorlessFDN
 from .colorless_fdn.trainer import ColorlessFDNTrainer
+from .colorless_fdn.utils import ColorlessFDNResults
 from .config.config import DiffGFDNConfig
 from .dataloader import load_dataset, RIRData, RoomDataset, ThreeRoomDataset
 from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
@@ -115,7 +116,8 @@ def save_colorless_fdn_parameters(net: ColorlessFDN, dir_path: str,
     param_np = {}
     for name, value in param.items():
         try:
-            param_np[name] = value.squeeze().cpu().numpy()
+            param_np[name] = value.squeeze().cpu().numpy() if isinstance(
+                value, torch.Tensor) else value
         except AttributeError:
             param_np[name] = value
 

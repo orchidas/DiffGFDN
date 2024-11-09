@@ -105,6 +105,14 @@ class Trainer:
             {
                 'params': [
                     param for name, param in self.net.named_parameters()
+                    if 'input_scalars' in name
+                ],
+                'lr':
+                trainer_config.io_lr
+            },
+            {
+                'params': [
+                    param for name, param in self.net.named_parameters()
                     if 'output_scalars' in name
                 ],
                 'lr':
@@ -118,7 +126,7 @@ class Trainer:
             param for name, param in self.net.named_parameters()
             if not ('feedback_loop.alpha' in name or 'input_gains' in name
                     or 'output_gains' in name or 'output_svf_params' in name
-                    or 'output_scalars' in name)
+                    or 'output_scalars' in name or 'input_scalars' in name)
         ]
 
         # Add the other parameters with a learning rate of 0.01
@@ -142,6 +150,13 @@ class Trainer:
         """Print results of training"""
         print(get_str_results(epoch=e, train_loss=self.train_loss,
                               time=e_time))
+
+        # for debugging
+        # for name, param in self.net.named_parameters():
+        #     if name in ('input_scalars',
+        #                 'output_scalars') and param.requires_grad:
+        #         print(f"Parameter {name}: {param.data}")
+        #         print(f"Parameter {name} gradient: {param.grad.norm()}")
 
     def save_model(self, e: int):
         """Save the model at epoch number e"""

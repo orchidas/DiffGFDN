@@ -1,15 +1,6 @@
-from dataclasses import dataclass
-
 import numpy as np
 import torch
 from torch.utils import data
-
-
-@dataclass
-class ColorlessFDNResults:
-    opt_input_gains: torch.tensor
-    opt_output_gains: torch.tensor
-    opt_feedback_matrix: torch.tensor
 
 
 class ColorlessFDNDataset(data.Dataset):

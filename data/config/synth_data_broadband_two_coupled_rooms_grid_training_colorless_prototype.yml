@@ -1,0 +1,20 @@
+room_dataset_path: 'resources/synthetic_dataset/two_coupled_rooms/bb_wgn_0000.pkl'
+sample_rate: 48000.0
+num_delay_lines: 8
+use_absorption_filters: False
+trainer_config:
+  max_epochs: 10
+  batch_size: 10
+  train_valid_split: 0.9
+  train_dir: 'output/grid_rir_scalar_coupling_synth_data_colorless_fdn/'
+  ir_dir: 'audio/grid_rir_scalar_coupling_synth_data_colorless_fdn/'
+colorless_fdn_config:
+  use_colorless_prototype: True
+  batch_size: 2000
+  max_epochs: 5
+feedback_loop_config:
+  coupling_matrix_type: 'scalar_matrix'
+output_filter_config:
+  use_svfs: False
+  num_hidden_layers: 3
+  num_neurons_per_layer: 32

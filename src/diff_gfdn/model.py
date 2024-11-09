@@ -6,7 +6,7 @@ import torch
 from torch import nn
 
 from .absorption_filters import decay_times_to_gain_filters_geq, decay_times_to_gain_per_sample
-from .colorless_fdn.dataloader import ColorlessFDNResults
+from .colorless_fdn.utils import ColorlessFDNResults
 from .config.config import CouplingMatrixType, FeedbackLoopConfig, OutputFilterConfig
 from .feedback_loop import FeedbackLoop
 from .filters.geq import eq_freqs
@@ -70,18 +70,47 @@ class DiffGFDN(nn.Module):
 
         self.delays = self.delays.to(self.device)
 
+        # initialise input-output gains
+        self._init_io_gains(colorless_fdn_params)
         # initialise absorption filters in delay lines
-        self._initialise_absorption(common_decay_times, band_centre_hz)
-        # initialise IO gains and feedback loop
-        self._initialise_io_gains_feedback(feedback_loop_config,
-                                           colorless_fdn_params)
+        self._init_absorption(common_decay_times, band_centre_hz)
+        # initialise feedback loop
+        self._init_feedback(feedback_loop_config, colorless_fdn_params)
 
         # add a lowpass filter at the end to remove high frequency artifacts
         self.design_lowpass_filter()
 
-    def _initialise_absorption(self,
-                               common_decay_times: List,
-                               band_centre_hz: Optional[List] = None):
+    def _init_io_gains(self, colorless_fdn_params: Optional[List] = None):
+        """Initialise input/output gains"""
+        if colorless_fdn_params is None:
+            logger.info('Using learnable gains and feedback matrix')
+            self.input_gains = nn.Parameter(
+                (2 * torch.randn(self.num_delay_lines, 1) - 1) /
+                self.num_delay_lines)
+
+            self.output_gains = nn.Parameter(
+                (2 * torch.randn(self.num_delay_lines, 1) - 1) /
+                self.num_delay_lines)
+        else:
+            logger.info(
+                "Using gains and feedback matrix from the colorless FDN prototype"
+            )
+            # these are from the colorless FDN prototype
+            # these should be of length Ndel x 1
+            self.input_gains = torch.tensor([
+                colorless_fdn_params[i].opt_input_gains.tolist()
+                for i in range(self.num_groups)
+            ],
+                                            device=self.device).view(-1, 1)
+            self.output_gains = torch.tensor([
+                colorless_fdn_params[i].opt_output_gains.tolist()
+                for i in range(self.num_groups)
+            ],
+                                             device=self.device).view(-1, 1)
+
+    def _init_absorption(self,
+                         common_decay_times: List,
+                         band_centre_hz: Optional[List] = None):
         """Initialise absorption gains/filters in the delay lines"""
         # frequency-dependent absorption filters
         if self.use_absorption_filters:
@@ -115,59 +144,28 @@ class DiffGFDN(nn.Module):
                     for i in range(self.num_groups)
                 ],
                              device=self.device))
-
         # logger.info(f"Gains in delay lines: {self.gain_per_sample}")
 
-    def _initialise_io_gains_feedback(
-            self,
-            feedback_loop_config: FeedbackLoopConfig,
-            colorless_fdn_params: Optional[List] = None):
+    def _init_feedback(self,
+                       feedback_loop_config: FeedbackLoopConfig,
+                       colorless_fdn_params: Optional[List] = None):
         """Initialise input-output gain vectors and the feedback matrix"""
         # learnable input and output gains
         if colorless_fdn_params is None:
-            logger.info('Using learnable gains and feedback matrix')
-            self.input_gains = nn.Parameter(
-                (2 * torch.randn(self.num_delay_lines, 1) - 1) /
-                self.num_delay_lines)
-
-            self.output_gains = nn.Parameter(
-                (2 * torch.randn(self.num_delay_lines, 1) - 1) /
-                self.num_delay_lines)
-
             self.feedback_loop = FeedbackLoop(
                 self.num_groups, self.num_delay_lines_per_group, self.delays,
                 self.gain_per_sample, self.use_absorption_filters,
                 feedback_loop_config.coupling_matrix_type,
                 feedback_loop_config.pu_matrix_order)
         else:
-            logger.info(
-                "Using gains and feedback matrix from the colorless FDN prototype"
-            )
-            # these are from the colorless FDN prototype
-            # these should be of length Ndel x 1
-            self.input_gains = torch.tensor([
-                colorless_fdn_params[i].opt_input_gains.tolist()
+            # convert list of numpy arrays to list of torch tensors
+            colorless_feedback_matrix_list = [
+                torch.from_numpy(colorless_fdn_params[i].opt_feedback_matrix)
                 for i in range(self.num_groups)
-            ],
-                                            device=self.device).view(-1, 1)
-            self.output_gains = torch.tensor([
-                colorless_fdn_params[i].opt_output_gains.tolist()
-                for i in range(self.num_groups)
-            ],
-                                             device=self.device).view(-1, 1)
-
-            colorless_feedback_matrix = torch.zeros(self.num_delay_lines,
-                                                    self.num_delay_lines,
-                                                    dtype=torch.float32)
-            # colorless FDN params contains a list of matrices which need to
-            # be embedded along the diagonals of a larger matrix
-            for k in range(self.num_groups):
-                start_idx = int(k * self.num_delay_lines_per_group)
-                end_idx = int((k + 1) * self.num_delay_lines_per_group)
-                colorless_feedback_matrix[
-                    start_idx:end_idx, start_idx:end_idx] = torch.tensor(
-                        colorless_fdn_params[k].opt_feedback_matrix,
-                        device=self.device)
+            ]
+            # convert from list of tensors to num_groups x N x N tensor
+            colorless_feedback_matrix = torch.stack(
+                colorless_feedback_matrix_list, dim=0)
 
             self.feedback_loop = FeedbackLoop(
                 self.num_groups,
@@ -175,7 +173,7 @@ class DiffGFDN(nn.Module):
                 self.delays,
                 self.gain_per_sample,
                 self.use_absorption_filters,
-                coupling_matrix_type=CouplingMatrixType.RANDOM,
+                coupling_matrix_type=feedback_loop_config.coupling_matrix_type,
                 colorless_feedback_matrix=colorless_feedback_matrix)
 
     def design_lowpass_filter(
@@ -238,6 +236,8 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
                          colorless_fdn_params)
 
         self.use_svf_in_output = output_filter_config.use_svfs
+        self.input_scalars = nn.Parameter(
+            (2 * torch.randn(self.num_groups, 1) - 1) / self.num_groups)
 
         if self.use_svf_in_output:
             logger.info("Using filters in output")
@@ -319,6 +319,7 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
         param_np['delays'] = self.delays.squeeze().cpu().numpy()
         param_np['gains_per_sample'] = self.gain_per_sample.squeeze().cpu(
         ).numpy()
+        param_np['input_scalars'] = self.input_scalars.squeeze().cpu().numpy()
         param_np['input_gains'] = self.input_gains.squeeze().cpu().numpy()
         param_np['output_gains'] = self.output_gains.squeeze().cpu().numpy()
 
@@ -409,9 +410,8 @@ class DiffGFDNSinglePos(DiffGFDN):
                          common_decay_times, band_centre_hz,
                          colorless_fdn_params)
 
-        self.compress_pole_factor = output_filter_config.compress_pole_factor
-        self.input_scalars = nn.Parameter(2 * torch.randn(self.num_groups, 1) -
-                                          1) / self.num_groups
+        self.input_scalars = nn.Parameter(
+            (2 * torch.randn(self.num_groups, 1) - 1) / self.num_groups)
 
         # check if the output gains are filters or scalars
         self.use_svf_in_output = output_filter_config.use_svfs
@@ -422,6 +422,7 @@ class DiffGFDNSinglePos(DiffGFDN):
                  torch.tensor([shelving_crossover[-1]]))).to(
                      self.device) / self.sample_rate
             self.num_biquads = len(self.svf_cutoff_freqs)
+            self.compress_pole_factor = output_filter_config.compress_pole_factor
 
             # resonance distributed randomly between 0 and 1
             init_params = torch.randn(self.num_groups, self.num_biquads, 2)
@@ -442,7 +443,7 @@ class DiffGFDNSinglePos(DiffGFDN):
         # each group will have a unique scalar gain
         else:
             self.output_scalars = nn.Parameter(
-                2 * torch.randn(self.num_groups, 1) - 1) / self.num_groups
+                (2 * torch.randn(self.num_groups, 1) - 1) / self.num_groups)
 
     def forward(self, x: Dict) -> torch.tensor:
         """

@@ -200,56 +200,51 @@ class FeedbackLoop(nn.Module):
     def _init_feedback_matrix(self,
                               colorless_feedback_matrix: Optional[
                                   torch.tensor] = None):
-        # if a pre-oprimised feedback matrix is provided
-        if colorless_feedback_matrix is not None:
-            self.coupled_feedback_matrix = colorless_feedback_matrix
-            self.is_feedback_matrix_precomputed = True
+        # orthonormal parameterisation of the matrices in M
+        self.ortho_param = nn.Sequential(Skew(), MatrixExponential())
+
+        # in this case, the coupled feedback matrix is any unitary matrix. It has no
+        # inherent structure
+        if self.coupling_matrix_type == CouplingMatrixType.RANDOM:
+            self.random_feedback_matrix = nn.Parameter(
+                (2 * torch.rand(self.num_delays, self.num_delays) - 1) /
+                np.sqrt(self.num_delay_lines_per_group))
+
+        # otherwise, use coupled matrix structure proposed in GFDN papers
+        # with individual mixing matrices and a coupling matrix connecting them
         else:
+            # these are individual feedback matrices for each group that
+            # are orthonormal and of size N=Ndel/Ngroups, each distributed
+            # uniformly in (-1/sqrt(N), +1/sqrt(N))
+            if colorless_feedback_matrix is not None:
+                self.M = colorless_feedback_matrix.clone().detach()
 
-            self.is_feedback_matrix_precomputed = False
-            # orthonormal parameterisation of the matrices in M
-            self.ortho_param = nn.Sequential(Skew(), MatrixExponential())
-
-            # in this case, the coupled feedback matrix is any unitary matrix. It has no
-            # inherent structure
-            if self.coupling_matrix_type == CouplingMatrixType.RANDOM:
-                self.random_feedback_matrix = nn.Parameter(
-                    (2 * torch.rand(self.num_delays, self.num_delays) - 1) /
-                    np.sqrt(self.num_delay_lines_per_group))
-
-            # otherwise, use coupled matrix structure proposed in GFDN papers
-            # with individual mixing matrices and a coupling matrix connecting them
             else:
-                # initialise the feedback matrices, which are learnable
-                # these are individual feedback matrices for each group that
-                # are orthonormal and of size N=Ndel/Ngroups, each distributed
-                # uniformly in (-1/sqrt(N), +1/sqrt(N))
                 self.M = nn.Parameter((2 * torch.rand(
                     self.num_groups, self.num_delay_lines_per_group,
                     self.num_delay_lines_per_group) - 1) /
                                       np.sqrt(self.num_delay_lines_per_group))
-                if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
 
-                    # no coupling initialisation
-                    self.alpha = nn.Parameter(
-                        torch.zeros(self.num_groups * (self.num_groups - 1) //
-                                    2))
+            if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
+                # no coupling initialisation
+                self.nd_unitary = ND_Unitary()
 
-                    self.nd_unitary = ND_Unitary()
+                self.alpha = nn.Parameter(
+                    torch.zeros(self.num_groups * (self.num_groups - 1) // 2))
 
-                elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
-                    self.coupling_matrix_order = self.coupling_matrix_order
-                    # order - 1 unit norm householder vectors
-                    self.unit_vectors = nn.Parameter(
-                        torch.randn(self.num_groups,
-                                    self.coupling_matrix_order - 1))
+            elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
+                self.coupling_matrix_order = self.coupling_matrix_order
+                # order - 1 unit norm householder vectors
+                self.unit_vectors = nn.Parameter(
+                    torch.randn(self.num_groups,
+                                self.coupling_matrix_order - 1))
 
-                    self.unitary_matrix = nn.Parameter(
-                        (2 * torch.rand(self.num_groups, self.num_groups) - 1)
-                        / np.sqrt(self.num_groups))
+                self.unitary_matrix = nn.Parameter(
+                    (2 * torch.rand(self.num_groups, self.num_groups) - 1) /
+                    np.sqrt(self.num_groups))
 
-                    self.fir_paraunitary = FIRParaunitary(
-                        self.num_groups, self.coupling_matrix_order)
+                self.fir_paraunitary = FIRParaunitary(
+                    self.num_groups, self.coupling_matrix_order)
 
     def forward(self, z: torch.tensor) -> torch.tensor:
         """Compute (D_m(z^{-1}) - A(z)Gamma(z))^{-1}"""
@@ -275,13 +270,11 @@ class FeedbackLoop(nn.Module):
             Gamma = to_complex(torch.diag(self.delay_line_gains))
 
         # get coupled feedback matrix of size Ndel x Ndel
-        if not self.is_feedback_matrix_precomputed:
-            if self.coupling_matrix_type == CouplingMatrixType.RANDOM:
-                self.coupled_feedback_matrix = to_complex(
-                    self.ortho_param(self.random_feedback_matrix))
-            else:
-                self.coupled_feedback_matrix = self.get_coupled_feedback_matrix(
-                )
+        if self.coupling_matrix_type == CouplingMatrixType.RANDOM:
+            self.coupled_feedback_matrix = to_complex(
+                self.ortho_param(self.random_feedback_matrix))
+        else:
+            self.coupled_feedback_matrix = self.get_coupled_feedback_matrix()
 
         # this should be of size num_freq_pts x Ndel x Ndel
         if self.coupling_matrix_type in (CouplingMatrixType.SCALAR,
@@ -309,8 +302,7 @@ class FeedbackLoop(nn.Module):
                                          dim1=0,
                                          dim2=1)
             Ddecay = D * Gamma_inv.permute(-1, 0, 1)
-            # Adecay = torch.einsum('kmn, knp -> kmp', A,
-            #                       Gamma.permute(-1, 0, 1))
+
         else:
             # invert a diagonal matrix
             Gamma_inv = torch.diag(1.0 / torch.diagonal(Gamma))
@@ -381,7 +373,6 @@ class FeedbackLoop(nn.Module):
                 coupled_feedback_matrix[..., k] += block_M * torch.kron(
                     self.phi[..., k], ones_matrix)
 
-            # assert is_paraunitary(coupled_feedback_matrix)
         return to_complex(coupled_feedback_matrix)
 
     def print(self):
