@@ -7,8 +7,8 @@ trainer_config:
   batch_size: 10
   train_valid_split: 0.9
   num_freq_bins: 96000
-  train_dir: 'output/grid_rir_random_coupling_synth_subband_data/'
-  ir_dir: 'audio/grid_rir_random_coupling_synth_subband_data/'
+  train_dir: 'output/grid_rir_single_room_synth_data_subband/'
+  ir_dir: 'audio/grid_rir_single_room_synth_data_subband/'
 feedback_loop_config:
   coupling_matrix_type: 'random_matrix'
 output_filter_config:

@@ -30,7 +30,7 @@ class SVF:
 
     def __post_init__(self):
         """Fix the mixing coefficients based on the type of filter"""
-        assert self.resonance > 0, "Resonance must be positive to ensure stability"
+        assert self.resonance >= 0, "Resonance must be positive to ensure stability"
 
         if self.G_db is None:
             self.G = 1.0
