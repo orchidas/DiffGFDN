@@ -14,5 +14,5 @@ colorless_fdn_config:
 trainer_config:
   max_epochs: 50
   io_lr: 0.1
-  train_dir: 'output/single_rir_out_gains_synth_data_lossless_prototype_pos2/'
-  ir_dir: 'audio/single_rir_out_gains_synth_data_lossless_prototype/'
+  train_dir: 'output/single_rir_out_gains_synth_data_colorless_prototype_pos2/'
+  ir_dir: 'audio/single_rir_out_gains_synth_data_colorless_prototype/'
