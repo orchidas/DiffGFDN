@@ -16,19 +16,19 @@ from .utils import db, db2lin, ms_to_samps
 def get_edc_params(rir: ArrayLike,
                    n_slopes: int,
                    fs: float,
-                   use_octave_freqs: bool = True):
+                   f_bands: Optional[List] = None):
     """
     Get decay time, amplitudes, noise level and fitted EDC
     Args:
         RIR (ArrayLike): single dimension RIR of length rir_len
         n_slopes (int): number of slopes in RIR
         fs (float): sampling frequency
-        use_octave_freqs (bool): if true, then the RIR will be filtered in octave bands
+        f_bands (List): band centre frequencies for subband processing
     Returns:
         NDArray, NDArray, NDArray, ArrayLike, NDArray: the T60s, amplitudes and noise level for 
         n_slopes and n_subbands. The normalisation values and the fitted EDC per subband 
     """
-    filter_frequencies = octave_bands() if use_octave_freqs else None
+    filter_frequencies = f_bands
     est_params_decay_net, norm_vals, fitted_edc_decayfitnet = get_decay_fit_net_params(
         rir, filter_frequencies, n_slopes, fs)
     est_t60 = est_params_decay_net[0]
@@ -129,9 +129,10 @@ def get_decay_times_for_rirs(
     trunc_rir = rir[mixing_time_samp:-crop_end_samp]
     trunc_approx_rir = approx_rir[mixing_time_samp:-crop_end_samp]
     # get subband T60s
-    true_t60, _, _, _, fitted_edc = get_edc_params(trunc_rir, n_slopes, fs)
+    true_t60, _, _, _, fitted_edc = get_edc_params(trunc_rir, n_slopes, fs,
+                                                   band_centre_hz)
     est_t60, _, _, _, fitted_approx_edc = get_edc_params(
-        trunc_approx_rir, n_slopes, fs)
+        trunc_approx_rir, n_slopes, fs, band_centre_hz)
     # filter into subbands for EDF
     filtered_rir = octave_filtering(trunc_rir, fs, band_centre_hz)
     filtered_approx_rir = octave_filtering(trunc_approx_rir, fs,

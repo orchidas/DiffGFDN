@@ -419,10 +419,7 @@ def plot_subband_amplitudes(h_true: Union[ArrayLike, torch.Tensor],
         save_path (str, optional): path to save file
     """
     # get the actual RIR levels
-    if num_groups == 1:
-        expanded_amplitudes = amplitudes[..., np.newaxis]
-    else:
-        expanded_amplitudes = np.moveaxis(amplitudes, -1, 1)
+    expanded_amplitudes = np.moveaxis(amplitudes, -1, 1)
 
     # get the estimated levels of the original RIR
     og_estimated_amps = get_amps_for_rir(h_true,
@@ -650,8 +647,11 @@ def plot_learned_svf_response(
              torch.tensor([shelving_crossover[-1]]))) / fs
         svf_freqs = svf_freqs.numpy()
 
-    fig, ax = plt.subplots()
-    fig2, ax2 = plt.subplots(subplot_kw={'projection': 'polar'})
+    fig, ax = plt.subplots(num_groups, 1)
+    fig2, ax2 = plt.subplots(num_groups,
+                             1,
+                             subplot_kw={'projection': 'polar'},
+                             figsize=(6, 6))
 
     # are the output_biquad_coeffs also a function of epoch number?
     is_list_of_lists = all(
@@ -684,20 +684,20 @@ def plot_learned_svf_response(
             freqs, filt_response = sosfreqz(cur_biquad_coeffs,
                                             worN=2**9,
                                             fs=fs)
-            ax.semilogx(freqs,
-                        db(filt_response),
-                        label=f'Group {n}, epoch {i}')
+            ax[n].semilogx(freqs,
+                           db(filt_response),
+                           label=f'Group {n}, epoch {i}')
 
             # also plot the poles and zeros
             zeros, poles, _ = sos2zpk(cur_biquad_coeffs)
-            ax2.plot(np.angle(zeros),
-                     np.abs(zeros),
-                     'o',
-                     label=f'Group {n}, epoch {i}')
-            ax2.plot(np.angle(poles),
-                     np.abs(poles),
-                     'x',
-                     label=f'Group {n}, epoch {i}')
+            ax2[n].plot(np.angle(zeros),
+                        np.abs(zeros),
+                        'o',
+                        label=f'Group {n}, epoch {i}')
+            ax2[n].plot(np.angle(poles),
+                        np.abs(poles),
+                        'x',
+                        label=f'Group {n}, epoch {i}')
 
             if verbose:
 
@@ -722,16 +722,23 @@ def plot_learned_svf_response(
                 print(f'SVF gain: {db2lin(svf_gain)}')
                 print(f'SVF Q factor: {svf_res}')
 
-    ax.set_xlabel('Frequency (Hz)')
-    ax.set_ylabel('Magnitude (dB)')
-    ax.set_title(f'Output filter for position {pos_to_investigate}')
-    ax.legend(loc='upper right', bbox_to_anchor=(1.5, 1.0))
-    ax.grid(True)
+    # set axis labels
+    ax[0].legend(loc='upper right', bbox_to_anchor=(1.5, 1.0))
+    for n in range(num_groups):
+        ax[n].set_xlabel('Frequency (Hz)')
+        ax[n].set_ylabel('Magnitude (dB)')
+        ax[n].set_title(
+            f'Output filter for group {n} at position {pos_to_investigate}')
+        ax[n].grid(True)
 
-    ax2.set_rmax(1)
-    ax2.set_rticks([0.25, 0.5, 1])  # Less radial ticks
-    ax2.set_rlabel_position(-22.5)  # Move radial labels away from plotted line
-    ax2.grid(True)
+        ax2[n].set_rmax(1)
+        ax2[n].set_rticks([0.25, 0.5, 1])  # Less radial ticks
+        ax2[n].set_rlabel_position(
+            -22.5)  # Move radial labels away from plotted line
+        ax2[n].grid(True)
+
+    fig.subplots_adjust(hspace=0.5)
+    fig2.subplots_adjust(hspace=0.5)
 
     if save_path is not None:
         fig.savefig(Path(f'{save_path}_output_filter_response.png').resolve())

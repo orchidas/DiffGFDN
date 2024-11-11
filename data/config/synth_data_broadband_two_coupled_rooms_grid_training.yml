@@ -6,8 +6,8 @@ trainer_config:
   max_epochs: 10
   batch_size: 10
   train_valid_split: 0.9
-  train_dir: 'output/grid_rir_scalar_coupling_synth_data/'
-  ir_dir: 'audio/grid_rir_scalar_coupling_synth_data/'
+  train_dir: 'output/grid_rir_two_rooms_synth_data_broadband/'
+  ir_dir: 'audio/grid_rir_two_rooms_synth_data_broadband/'
 feedback_loop_config:
   coupling_matrix_type: 'scalar_matrix'
 output_filter_config:
