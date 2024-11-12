@@ -33,7 +33,7 @@ To work with the files that we have tested on, use `git lfs`.
 - Then run `python3 src/run_model.py -c <config_file_path>`. 
 
 Several different model configurations can be trained (see [config.py](.src/diff_gfdn/config/config.py)). There are options for:
-- Training the output filters for a single position, or for a grid of positions (with deep learning).
+- Training the output filters for a single position (with stochastic gradient descent), or for a grid of positions (with deep learning).
 - Switching between output filters and gains
 - Switching between absorption filters and gains
 - Switching between different structures of feedback matrices

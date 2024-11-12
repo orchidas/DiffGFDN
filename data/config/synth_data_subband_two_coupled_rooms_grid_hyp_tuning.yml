@@ -1,0 +1,17 @@
+room_dataset_path: 'resources/synthetic_dataset/two_coupled_rooms_freq_dep/bb_wgn_0000.pkl'
+sample_rate: 48000.0
+num_delay_lines: 8
+use_absorption_filters: True
+feedback_loop_config:
+  coupling_matrix_type: 'scalar_matrix'
+trainer_config:
+  max_epochs: 20
+  batch_size: 10
+  train_valid_split: 0.9
+  num_freq_bins: 96000
+  train_dir: 'output/grid_rir_two_rooms_synth_data_subband/'
+  ir_dir: 'audio/grid_rir_two_rooms_synth_data_subband/'
+output_filter_config:
+  use_svfs: True
+  mlp_tuning_config:
+    tune_hyperparameters: True

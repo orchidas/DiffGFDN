@@ -44,6 +44,17 @@ class FeedbackLoopConfig(BaseModel):
     coupling_matrix_type: CouplingMatrixType = CouplingMatrixType.SCALAR
 
 
+class MLPTuningConfig(BaseModel):
+    # tune hyperparameters of the MLP
+    tune_hyperparameters: bool = True
+    min_layers: int = 1
+    max_layers: int = 20
+    min_neurons: int = 2**4
+    max_neurons: int = 2**7
+    step_size: int = 2**4
+    num_trials: int = 50
+
+
 class OutputFilterConfig(BaseModel):
     # config for training the output filters based on listener location
     # number of biquads in each filter
@@ -52,6 +63,8 @@ class OutputFilterConfig(BaseModel):
     # by how much to constrain the pole radii when calculating output filter coeffs
     compress_pole_factor: float = 1.0
     # used only if MLP is used for training the SVF filters
+    mlp_tuning_config: Optional[MLPTuningConfig] = None
+    # or, fix them to these numbers
     num_hidden_layers: int = 3
     num_neurons_per_layer: int = 2**7
     num_fourier_features: int = 10

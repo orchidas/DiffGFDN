@@ -42,7 +42,8 @@ dependencies = [
     "librosa",
     "scikit-learn",
     "onnx",
-    "onnxruntime"
+    "onnxruntime",
+    "optuna"
 ]
 
 [project.optional-dependencies]
