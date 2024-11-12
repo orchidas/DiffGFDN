@@ -584,6 +584,7 @@ def plot_amps_in_space(room_data: RoomDataset,
         np.squeeze(src_pos),
         amps_mid_band,
         scatter_plot=scatter,
+        cur_freq_hz=freq_to_plot,
         save_path=Path(f'{save_name}_actual_amplitudes_in_space.png').resolve(
         ) if save_path is not None else None)
 
@@ -592,6 +593,7 @@ def plot_amps_in_space(room_data: RoomDataset,
         np.squeeze(src_pos),
         est_amps_mid_band,
         scatter_plot=scatter,
+        cur_freq_hz=freq_to_plot,
         save_path=Path(f'{save_name}_learnt_amplitudes_in_space.png').resolve(
         ) if save_path is not None else None)
 
@@ -614,6 +616,7 @@ def plot_amps_in_space(room_data: RoomDataset,
         np.squeeze(src_pos),
         var_to_plot,
         scatter_plot=scatter,
+        cur_freq_hz=freq_to_plot,
         save_path=Path(f'{save_name}_amplitude_error_in_space.png').resolve()
         if save_path is not None else None)
 

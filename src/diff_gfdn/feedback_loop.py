@@ -151,7 +151,8 @@ class FeedbackLoop(nn.Module):
                  use_absorption_filters: bool,
                  coupling_matrix_type: CouplingMatrixType = None,
                  coupling_matrix_order: Optional[int] = None,
-                 colorless_feedback_matrix: Optional[torch.tensor] = None):
+                 colorless_feedback_matrix: Optional[torch.tensor] = None,
+                 device: torch.device = 'cpu'):
         """
         Class implementing the feedback loop of the FDN (D_m(z) - A(z)Gamma(z))^{-1}
         Args:
@@ -164,6 +165,7 @@ class FeedbackLoop(nn.Module):
             coupling_matrix_order (optional, int): order of the PU filter coupling matrix
             colorless_feedback_matrix (torch.tensor, optional): the block diagonal
                                 colorless feedback matrix obtained from ColorlessFDN optimisation
+            device (torch.device): the training device, CPU or CUDA
         """
         super().__init__()
         self.num_groups = num_groups
@@ -171,6 +173,7 @@ class FeedbackLoop(nn.Module):
         self.delays = delays
         self.num_delays = len(self.delays)
         self.use_absorption_filters = use_absorption_filters
+        self.device = device
 
         # whether to use absorption filters or scalar gains in delay lines
         if self.use_absorption_filters:
@@ -179,7 +182,9 @@ class FeedbackLoop(nn.Module):
             if gains.ndim == 3:
                 self.delay_line_gains = IIRFilter(filter_order,
                                                   self.num_delays,
-                                                  gains[..., 0], gains[..., 1])
+                                                  gains[..., 0],
+                                                  gains[..., 1],
+                                                  device=self.device)
             # absorption gains as SOS with GEQ fitting
             else:
                 self.delay_line_gains = []
@@ -188,7 +193,9 @@ class FeedbackLoop(nn.Module):
                                                        gains[k, :, :, 0],
                                                        gains[k, :, :, 1])
                     self.delay_line_gains.append(
-                        SOSFilter(filter_order, delay_line_biquads))
+                        SOSFilter(filter_order,
+                                  delay_line_biquads,
+                                  device=self.device))
         else:
             self.delay_line_gains = gains
 

@@ -4,9 +4,11 @@ import librosa
 from loguru import logger
 import numpy as np
 from scipy.fft import rfftfreq
+from slope2noise.slope2noise.utils import get_bandpass_filters
 import torch
 from torch import nn
 import torch.nn.functional as F
+from torchaudio.functional import lfilter
 
 from .gain_filters import BiquadCascade, SOSFilter
 from .utils import db, ms_to_samps
@@ -143,15 +145,24 @@ class reg_loss(nn.Module):
 class edc_loss(nn.Module):
     """Broadband EDC loss in linear scale (to put more focus on the beginning of the RIR)"""
 
-    def __init__(self, max_ir_len_ms: float, sample_rate: float):
+    def __init__(self,
+                 max_ir_len_ms: float,
+                 sample_rate: float,
+                 band_centre_hz: Optional[List] = None):
         """
         Args:
             max_ir_len_ms (float): maximum RIR length to take into account to ignore noise floor
                                    in EDC calculation
             sample_rate (float): sampling frequency in Hz
+            band_centre_hz (list, optional): centre frequencies of filters (if calculating subband EDC)
         """
         super().__init__()
         self.max_ir_len_samps = ms_to_samps(max_ir_len_ms, sample_rate)
+        self.band_centre_hz = band_centre_hz
+        if band_centre_hz is not None:
+            self.filter_coeffs_sos = get_bandpass_filters(
+                sample_rate, band_centre_hz)
+            self.filter_order = self.filter_coeffs_sos.shape[0]
 
     def schroeder_backward_integral(self, signal: torch.tensor):
         """Schroeder backward integral to calculate energy decay curve"""
@@ -172,10 +183,45 @@ class edc_loss(nn.Module):
             achieved_response,
             achieved_response.shape[-1])[..., :max_ir_len_samps]
 
-        target_edc = self.schroeder_backward_integral(target_rir)
-        achieved_edc = self.schroeder_backward_integral(achieved_rir)
+        if self.band_centre_hz is None:
+            # broadband EDC loss
+            target_edc = self.schroeder_backward_integral(target_rir)
+            achieved_edc = self.schroeder_backward_integral(achieved_rir)
 
-        loss = torch.mean(torch.pow(target_edc - achieved_edc, 2))
+            loss = torch.mean(torch.pow(target_edc - achieved_edc, 2))
+        else:
+            # EDC loss in subbands
+            loss = 0.0
+            use_batches = True if target_rir.dim() > 1 else True
+
+            for b_idx in range(len(self.band_centre_hz)):
+                cur_filter_sos = torch.from_numpy(
+                    self.filter_coeffs_sos[...,
+                                           b_idx].copy()).to(torch.float32)
+
+                target_rir_band = target_rir.detach().clone()
+                achieved_rir_band = achieved_rir.detach().clone()
+
+                for j in range(self.filter_order):
+                    target_rir_band = lfilter(target_rir_band.to(
+                        torch.float32),
+                                              cur_filter_sos[j, :3],
+                                              cur_filter_sos[j, 3:],
+                                              batching=use_batches)
+                    achieved_rir_band = lfilter(achieved_rir_band.to(
+                        torch.float32),
+                                                cur_filter_sos[j, :3],
+                                                cur_filter_sos[j, 3:],
+                                                batching=use_batches)
+
+                target_edc_band = self.schroeder_backward_integral(
+                    target_rir_band)
+                achieved_edc_band = self.schroeder_backward_integral(
+                    achieved_rir_band)
+
+                loss += torch.mean(
+                    torch.pow(target_edc_band - achieved_edc_band, 2))
+
         return loss
 
 

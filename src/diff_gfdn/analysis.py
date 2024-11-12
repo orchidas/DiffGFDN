@@ -133,12 +133,12 @@ def get_decay_times_for_rirs(
                                                    band_centre_hz)
     est_t60, _, _, _, fitted_approx_edc = get_edc_params(
         trunc_approx_rir, n_slopes, fs, band_centre_hz)
-    # filter into subbands for EDF
-    filtered_rir = octave_filtering(trunc_rir, fs, band_centre_hz)
-    filtered_approx_rir = octave_filtering(trunc_approx_rir, fs,
-                                           band_centre_hz)
 
     if plot_edc:
+        # filter into subbands for EDF
+        filtered_rir = octave_filtering(trunc_rir, fs, band_centre_hz)
+        filtered_approx_rir = octave_filtering(trunc_approx_rir, fs,
+                                               band_centre_hz)
         num_bands = len(band_centre_hz)
         fig, ax = plt.subplots(num_bands, 1, figsize=(6, 12))
         time = np.linspace(0, (len(trunc_rir) - 1) / fs, len(trunc_rir))
