@@ -11,7 +11,7 @@ trainer_config:
 colorless_fdn_config:
   use_colorless_prototype: True
   batch_size: 2000
-  max_epochs: 5
+  max_epochs: 15
 feedback_loop_config:
   coupling_matrix_type: 'scalar_matrix'
 output_filter_config:
