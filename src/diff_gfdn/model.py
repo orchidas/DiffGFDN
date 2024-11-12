@@ -123,7 +123,8 @@ class DiffGFDN(nn.Module):
             self.num_groups, self.num_delay_lines_per_group, self.delays,
             self.gain_per_sample, self.use_absorption_filters,
             feedback_loop_config.coupling_matrix_type,
-            feedback_loop_config.pu_matrix_order)
+            feedback_loop_config.pu_matrix_order,
+            self.device)
 
         # add a lowpass filter at the end to remove high frequency artifacts
         self.design_lowpass_filter()
@@ -398,6 +399,7 @@ class DiffGFDNSinglePos(DiffGFDN):
 
             self.output_filters = SOSFilter(self.num_biquads,
                                             device=self.device)
+
             # resonance should be between 0 and 1 for complex conjugate poles
             self.scaled_res = ScaledSigmoid(lower_limit=1e-6, upper_limit=1.0)
             # SVF gain range in dB
@@ -473,11 +475,12 @@ class DiffGFDNSinglePos(DiffGFDN):
                     filter_type=("lowshelf" if k == 0 else
                                  "highshelf" if k == self.num_biquads -
                                  1 else "peaking"),
-                    G_db=svf_params_del_line[k, 1])
+                    G_db=svf_params_del_line[k, 1],
+                    device=self.device)
                 for k in range(self.num_biquads)
             ]
             self.biquad_cascade[i] = BiquadCascade.from_svf_coeffs(
-                svf_cascade, self.compress_pole_factor)
+                svf_cascade, self.compress_pole_factor, device=self.device)
 
             # all delay lines in a group have the same output filter
             Hout[i * self.num_delay_lines_per_group:(i + 1) *
