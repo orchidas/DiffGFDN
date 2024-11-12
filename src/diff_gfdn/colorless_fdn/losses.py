@@ -45,10 +45,7 @@ class amse_loss(nn.Module):
             y_true (torch.tensor): expected output
         """
         # loss on system's output
-        loss = self.p_loss(y_pred, y_true) * torch.sqrt(
-            torch.tensor(len(y_pred)))
-
-        return loss
+        return self.p_loss(y_pred, y_true)
 
     def p_loss(self, y_pred: torch.tensor, y_true: torch.tensor):
         """Higher loss if the magnitude exceeds the desired magnitude"""
