@@ -134,6 +134,8 @@ class ColorlessFDNConfig(BaseModel):
 class DiffGFDNConfig(BaseModel):
     """Config file for training the DiffGFDN"""
 
+    # random seed for reproducibility
+    seed: int = 46434
     # path to three room dataset
     room_dataset_path: str = 'resources/Georg_3room_FDTD/srirs.pkl'
     # if a single measurement is being used
@@ -159,7 +161,6 @@ class DiffGFDNConfig(BaseModel):
     @property
     def delay_length_samps(self) -> List[int]:
         """Co-prime delay line lenghts for a given range"""
-        np.random.seed(46434)
         delay_range_samps = ms_to_samps(np.asarray(self.delay_range_ms),
                                         self.sample_rate)
         # generate prime numbers in specified range
