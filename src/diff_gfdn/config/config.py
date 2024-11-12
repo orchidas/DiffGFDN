@@ -129,6 +129,10 @@ class ColorlessFDNConfig(BaseModel):
     max_epochs: int = 20
     # training and validation split
     train_valid_split: float = 0.8
+    # learning rate for Adam optimiser
+    lr: float = 0.01
+    # weigth for the sparsity loss
+    alpha: float = 1
 
 
 class DiffGFDNConfig(BaseModel):

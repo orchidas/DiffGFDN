@@ -27,11 +27,11 @@ class ColorlessFDNTrainer:
         self.max_epochs = colorless_fdn_config.max_epochs
         self.patience = 5
         self.early_stop = 0
-        self.alpha = 1
+        self.alpha = colorless_fdn_config.alpha
         self.train_dir = trainer_config.train_dir + "colorless-fdn/"
 
         self.optimizer = torch.optim.Adam(self.net.parameters(),
-                                          lr=trainer_config.lr)
+                                          lr=colorless_fdn_config.lr)
         self.criterion = [amse_loss(), sparsity_loss()]
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=10,
