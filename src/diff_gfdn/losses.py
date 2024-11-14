@@ -145,20 +145,25 @@ class reg_loss(nn.Module):
 class edc_loss(nn.Module):
     """Broadband EDC loss in linear scale (to put more focus on the beginning of the RIR)"""
 
-    def __init__(self,
-                 max_ir_len_ms: float,
-                 sample_rate: float,
-                 band_centre_hz: Optional[List] = None):
+    def __init__(
+        self,
+        max_ir_len_ms: float,
+        sample_rate: float,
+        band_centre_hz: Optional[List] = None,
+        mixing_time_ms: float = 20.0,
+    ):
         """
         Args:
             max_ir_len_ms (float): maximum RIR length to take into account to ignore noise floor
                                    in EDC calculation
             sample_rate (float): sampling frequency in Hz
             band_centre_hz (list, optional): centre frequencies of filters (if calculating subband EDC)
+            mixing_time_ms (float): start the EDC calculation after the mixing time
         """
         super().__init__()
         self.max_ir_len_samps = ms_to_samps(max_ir_len_ms, sample_rate)
         self.band_centre_hz = band_centre_hz
+        self.mixing_time_samps = ms_to_samps(mixing_time_ms, sample_rate)
         if band_centre_hz is not None:
             self.filter_coeffs_sos = get_bandpass_filters(
                 sample_rate, band_centre_hz)
@@ -169,7 +174,7 @@ class edc_loss(nn.Module):
         edc = torch.flip(torch.cumsum(torch.flip(signal**2, dims=[-1]),
                                       dim=-1),
                          dims=[-1])
-        return edc
+        return db(edc, is_squared=True)
 
     def forward(self, target_response: torch.tensor,
                 achieved_response: torch.tensor) -> torch.tensor:
@@ -178,17 +183,19 @@ class edc_loss(nn.Module):
                                target_response.shape[-1])
 
         target_rir = torch.fft.irfft(
-            target_response, target_response.shape[-1])[..., :max_ir_len_samps]
+            target_response,
+            target_response.shape[-1])[...,
+                                       self.mixing_time_samps:max_ir_len_samps]
         achieved_rir = torch.fft.irfft(
-            achieved_response,
-            achieved_response.shape[-1])[..., :max_ir_len_samps]
+            achieved_response, achieved_response.shape[-1])[
+                ..., self.mixing_time_samps:max_ir_len_samps]
 
         if self.band_centre_hz is None:
             # broadband EDC loss
             target_edc = self.schroeder_backward_integral(target_rir)
             achieved_edc = self.schroeder_backward_integral(achieved_rir)
 
-            loss = torch.mean(torch.pow(target_edc - achieved_edc, 2))
+            loss = torch.mean(torch.abs(target_edc - achieved_edc))
         else:
             # EDC loss in subbands
             loss = 0.0
@@ -220,7 +227,7 @@ class edc_loss(nn.Module):
                     achieved_rir_band)
 
                 loss += torch.mean(
-                    torch.pow(target_edc_band - achieved_edc_band, 2))
+                    torch.abs(target_edc_band - achieved_edc_band))
 
         return loss
 

@@ -52,7 +52,7 @@ class Trainer:
                                 self.net.sample_rate), self.net.num_groups,
                     self.net.output_filters.num_biquads)
             ]
-            self.loss_weights = torch.tensor([1.0, 10.0, 1.0])
+            self.loss_weights = torch.tensor([1.0, 1.0, 1.0])
         else:
             self.criterion = [
                 edr_loss(self.net.sample_rate,
@@ -62,7 +62,7 @@ class Trainer:
                 edc_loss(self.net.common_decay_times.max() * 1e3,
                          self.net.sample_rate)
             ]
-            self.loss_weights = torch.tensor([1.0, 10.0])
+            self.loss_weights = torch.tensor([1.0, 1.0])
 
     def init_scheduler(self, trainer_config: TrainerConfig):
         """
@@ -398,12 +398,10 @@ class SinglePosTrainer(Trainer):
     def normalize(self, data: Dict):
         # average energy normalization
         H, _ = get_response(data, self.net)
-        energyH = torch.sum(torch.pow(torch.abs(H), 2)) / torch.tensor(
-            H.size(0))
-
+        energyH = torch.mean(torch.pow(torch.abs(H), 2))
         # apply energy normalization on input and output gains only
         for name, prm in self.net.named_parameters():
-            if name in ('input_gains', 'output_gains'):
+            if name in ('input_scalars', 'output_scalars'):
                 prm.data.copy_(torch.div(prm.data, torch.pow(energyH, 1 / 4)))
 
     @torch.no_grad()

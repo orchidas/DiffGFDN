@@ -54,7 +54,7 @@ class amse_loss(nn.Module):
         """Higher loss if the magnitude exceeds the desired magnitude"""
         gT = 2 * torch.ones(len(y_pred))
         gT = gT + 2 * torch.gt(
-            (torch.abs(y_pred) - torch.abs(y_true)), 0).type(torch.uint8)
+            (torch.abs(y_pred) - torch.abs(y_true)), 1).type(torch.uint8)
         loss = torch.mean(torch.pow(torch.abs(y_pred) - torch.abs(y_true), gT))
 
         return loss

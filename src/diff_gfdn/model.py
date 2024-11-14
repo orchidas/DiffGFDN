@@ -1,6 +1,7 @@
 from typing import Dict, List, Optional, Tuple
 
 from loguru import logger
+import numpy as np
 from scipy.signal import butter
 import torch
 from torch import nn
@@ -412,7 +413,7 @@ class DiffGFDNSinglePos(DiffGFDN):
                          colorless_fdn_params)
 
         self.input_scalars = nn.Parameter(
-            (2 * torch.randn(self.num_groups, 1) - 1) / self.num_groups)
+            (torch.ones(self.num_groups, 1)) / np.sqrt(self.num_groups))
 
         # check if the output gains are filters or scalars
         self.use_svf_in_output = output_filter_config.use_svfs
@@ -445,7 +446,7 @@ class DiffGFDNSinglePos(DiffGFDN):
         # each group will have a unique scalar gain
         else:
             self.output_scalars = nn.Parameter(
-                (2 * torch.randn(self.num_groups, 1) - 1) / self.num_groups)
+                (torch.ones(self.num_groups, 1)) / np.sqrt(self.num_groups))
 
     def forward(self, x: Dict) -> torch.tensor:
         """
