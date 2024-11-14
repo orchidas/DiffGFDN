@@ -139,7 +139,7 @@ class DiffGFDN(nn.Module):
         else:
             self.gain_per_sample = torch.flatten(
                 torch.tensor([
-                    decay_times_to_gain_per_sample(common_decay_times[i],
+                    decay_times_to_gain_per_sample(common_decay_times[0][i],
                                                    self.delays_by_group[i],
                                                    self.sample_rate).tolist()
                     for i in range(self.num_groups)

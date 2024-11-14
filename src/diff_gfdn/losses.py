@@ -174,7 +174,7 @@ class edc_loss(nn.Module):
         edc = torch.flip(torch.cumsum(torch.flip(signal**2, dims=[-1]),
                                       dim=-1),
                          dims=[-1])
-        return db(edc, is_squared=True)
+        return edc
 
     def forward(self, target_response: torch.tensor,
                 achieved_response: torch.tensor) -> torch.tensor:
@@ -195,7 +195,16 @@ class edc_loss(nn.Module):
             target_edc = self.schroeder_backward_integral(target_rir)
             achieved_edc = self.schroeder_backward_integral(achieved_rir)
 
-            loss = torch.mean(torch.abs(target_edc - achieved_edc))
+            # according to mezza et a
+            # loss = torch.div(
+            #     torch.sum(torch.pow(target_edc - achieved_edc, 2)),
+            #     torch.sum(torch.pow(target_edc, 2)))
+
+            # according to gotz
+            loss = torch.mean(
+                torch.abs(
+                    db(target_edc, is_squared=True) -
+                    db(achieved_edc, is_squared=True)))
         else:
             # EDC loss in subbands
             loss = 0.0

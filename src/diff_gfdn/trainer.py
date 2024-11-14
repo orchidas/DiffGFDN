@@ -396,13 +396,18 @@ class SinglePosTrainer(Trainer):
 
     @torch.no_grad()
     def normalize(self, data: Dict):
-        # average energy normalization
+        # average energy normalization - this normalises the energy
+        # of the initial FDN to the target impulse response
         H, _ = get_response(data, self.net)
         energyH = torch.mean(torch.pow(torch.abs(H), 2))
+        energyH_target = torch.mean(
+            torch.pow(torch.abs(data['target_rir_response']), 2))
+        energy_diff = torch.div(energyH, energyH_target)
         # apply energy normalization on input and output gains only
         for name, prm in self.net.named_parameters():
             if name in ('input_scalars', 'output_scalars'):
-                prm.data.copy_(torch.div(prm.data, torch.pow(energyH, 1 / 4)))
+                prm.data.copy_(
+                    torch.div(prm.data, torch.pow(energy_diff, 1 / 4)))
 
     @torch.no_grad()
     def save_ir(self,
