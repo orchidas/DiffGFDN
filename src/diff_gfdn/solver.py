@@ -290,7 +290,8 @@ def run_training_colorless_fdn(
         # create the trainer object
         trainer = ColorlessFDNTrainer(model, trainer_config,
                                       config_dict.colorless_fdn_config)
-
+        # update the training directory so that each group has its own directory
+        trainer.train_dir = trainer.train_dir + 'group' + str(i + 1) + '/'
         # save initial parameters and ir
         save_colorless_fdn_parameters(
             trainer.net, trainer_config.train_dir + "colorless-fdn/",
