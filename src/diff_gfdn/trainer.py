@@ -9,12 +9,14 @@ from torch.utils.data import DataLoader
 import torchaudio
 from tqdm import trange
 
+from .colorless_fdn.losses import amse_loss, sparsity_loss
 from .config.config import TrainerConfig
 from .losses import edc_loss, edr_loss, reg_loss
 from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
 from .utils import get_response, get_str_results, ms_to_samps
 
 # flake8: noqa: E231
+# pylint: disable=W0632, E0606
 
 
 class Trainer:
@@ -30,39 +32,39 @@ class Trainer:
         self.train_dir = Path(trainer_config.train_dir).resolve()
         self.ir_dir = Path(trainer_config.ir_dir).resolve()
         self.use_reg_loss = trainer_config.use_reg_loss
+        self.use_colorless_loss = trainer_config.use_colorless_loss
         self.reduced_pole_radius = trainer_config.reduced_pole_radius
         self.init_scheduler(trainer_config)
 
         if not os.path.exists(self.ir_dir):
             os.makedirs(self.ir_dir)
 
+        self.criterion = [
+            edr_loss(self.net.sample_rate,
+                     reduced_pole_radius=self.reduced_pole_radius,
+                     use_erb_grouping=trainer_config.use_erb_edr_loss,
+                     use_weight_fn=trainer_config.use_frequency_weighting),
+            edc_loss(self.net.common_decay_times.max() * 1e3,
+                     self.net.sample_rate)
+        ]
+        self.loss_weights = torch.tensor([1.0, 1.0])
+
         if trainer_config.use_reg_loss:
             logger.info(
                 'Using regularisation loss to reduce time domain aliasing in output filters'
             )
-            self.criterion = [
-                edr_loss(self.net.sample_rate,
-                         reduced_pole_radius=self.reduced_pole_radius,
-                         use_erb_grouping=trainer_config.use_erb_edr_loss,
-                         use_weight_fn=trainer_config.use_frequency_weighting),
-                edc_loss(self.net.common_decay_times.max() * 1e3,
-                         self.net.sample_rate),
+            self.criterion.append(
                 reg_loss(
                     ms_to_samps(trainer_config.output_filt_ir_len_ms,
                                 self.net.sample_rate), self.net.num_groups,
-                    self.net.output_filters.num_biquads)
-            ]
-            self.loss_weights = torch.tensor([1.0, 1.0, 1.0])
-        else:
-            self.criterion = [
-                edr_loss(self.net.sample_rate,
-                         use_erb_grouping=trainer_config.use_erb_edr_loss,
-                         reduced_pole_radius=self.reduced_pole_radius,
-                         use_weight_fn=trainer_config.use_frequency_weighting),
-                edc_loss(self.net.common_decay_times.max() * 1e3,
-                         self.net.sample_rate)
-            ]
-            self.loss_weights = torch.tensor([1.0, 1.0])
+                    self.net.output_filters.num_biquads))
+            self.loss_weights = torch.cat(self.loss_weights,
+                                          torch.tensor([1.0]))
+
+        if self.use_colorless_loss:
+            logger.info('Using colorless FDN loss for each sub-FDN')
+            self.colorless_criterion = [amse_loss(), sparsity_loss()]
+            self.colorless_loss_weights = torch.tensor([1.0, 1.0])
 
     def init_scheduler(self, trainer_config: TrainerConfig):
         """
@@ -146,6 +148,11 @@ class Trainer:
         for i in range(len(self.criterion)):
             self.criterion[i] = self.criterion[i].to(self.device)
 
+        if self.colorless_criterion:
+            for i in range(len(self.colorless_criterion)):
+                self.colorless_criterion[0] = self.colorless_criterion[i].to(
+                    self.device)
+
     def print_results(self, e: int, e_time):
         """Print results of training"""
         print(get_str_results(epoch=e, train_loss=self.train_loss,
@@ -220,19 +227,29 @@ class VarReceiverPosTrainer(Trainer):
     def train_step(self, data):
         """Single step of training"""
         self.optimizer.zero_grad()
-        H = self.net(data)
-        if self.use_reg_loss:
-            loss = self.loss_weights[0] * self.criterion[0](
-                data['target_rir_response'],
-                H) + self.loss_weights[1] * self.criterion[1](
-                    data['target_rir_response'],
-                    H) + self.loss_weights[2] * self.criterion[2](
-                        self.net.output_filters.biquad_cascade)
+        if self.use_colorless_loss:
+            H, H_sub_fdn = self.net(data)
         else:
-            loss = self.loss_weights[0] * self.criterion[0](
-                data['target_rir_response'],
-                H) + self.loss_weights[1] * self.criterion[1](
-                    data['target_rir_response'], H)
+            H = self.net(data)
+
+        loss = self.loss_weights[0] * self.criterion[0](
+            data['target_rir_response'],
+            H) + self.loss_weights[1] * self.criterion[1](
+                data['target_rir_response'], H)
+
+        if self.use_reg_loss:
+            loss += self.loss_weights[2] * self.criterion[2](
+                self.net.biquad_cascade)
+
+        if self.use_colorless_loss:
+            for k in range(self.net.num_groups):
+                loss += self.colorless_loss_weights[
+                    0] * self.colorless_criterion[0](
+                        H_sub_fdn[..., k], torch.ones_like(
+                            H_sub_fdn[..., k])) + self.colorless_loss_weights[
+                                1] * self.colorless_criterion[1](
+                                    self.net.feedback_loop.ortho_param(
+                                        self.net.feedback_loop.M[k]))
 
         loss.backward()
         self.optimizer.step()
@@ -246,23 +263,35 @@ class VarReceiverPosTrainer(Trainer):
         for data in valid_dataset:
             position = data['listener_position']
             logger.info("Running the network for new batch of positiions")
-            H = self.save_ir(data,
-                             directory=self.ir_dir,
-                             pos_list=position,
-                             filename_prefix="valid_ir")
+            if self.use_colorless_loss:
+                H, H_sub_fdn = self.save_ir(data,
+                                            directory=self.ir_dir,
+                                            pos_list=position,
+                                            filename_prefix="valid_ir")
+            else:
+                H = self.save_ir(data,
+                                 directory=self.ir_dir,
+                                 pos_list=position,
+                                 filename_prefix="valid_ir")
+
+            loss = self.loss_weights[0] * self.criterion[0](
+                data['target_rir_response'],
+                H) + self.loss_weights[1] * self.criterion[1](
+                    data['target_rir_response'], H)
 
             if self.use_reg_loss:
-                loss = self.loss_weights[0] * self.criterion[0](
-                    data['target_rir_response'],
-                    H) + self.loss_weights[1] * self.criterion[1](
-                        data['target_rir_response'],
-                        H) + self.loss_weights[2] * self.criterion[2](
-                            self.net.output_filters.biquad_cascade)
-            else:
-                loss = self.loss_weights[0] * self.criterion[0](
-                    data['target_rir_response'],
-                    H) + self.loss_weights[1] * self.criterion[1](
-                        data['target_rir_response'], H)
+                loss += self.loss_weights[2] * self.criterion[2](
+                    self.net.biquad_cascade)
+
+            if self.use_colorless_loss:
+                for k in range(self.net.num_groups):
+                    loss += self.colorless_loss_weights[
+                        0] * self.colorless_criterion[0](H_sub_fdn[
+                            ..., k], torch.ones_like(H_sub_fdn[
+                                ..., k])) + self.colorless_loss_weights[
+                                    1] * self.colorless_criterion[1](
+                                        self.net.feedback_loop.ortho_param(
+                                            self.net.feedback_loop.M[k]))
 
             cur_loss = loss.item()
             total_loss += cur_loss
@@ -293,7 +322,10 @@ class VarReceiverPosTrainer(Trainer):
         Returns:
             torch.tensor - the frequency response at the given input features
         """
-        H, h = get_response(input_features, self.net)
+        if self.use_colorless_loss:
+            H, H_sub_fdn, h = get_response(input_features, self.net)
+        else:
+            H, h = get_response(input_features, self.net)
 
         # undo sampling outside the unit circle by multiplying IR with an exponentiated envelope
 
@@ -317,7 +349,7 @@ class VarReceiverPosTrainer(Trainer):
                             int(self.net.sample_rate),
                             bits_per_sample=32,
                             channels_first=False)
-        return H
+        return (H, H_sub_fdn) if self.use_colorless_loss else H
 
 
 class SinglePosTrainer(Trainer):
@@ -377,19 +409,29 @@ class SinglePosTrainer(Trainer):
     def train_step(self, data: Dict):
         """Single step for training"""
         self.optimizer.zero_grad()
-        H = self.net(data)
-        if self.use_reg_loss:
-            loss = self.loss_weights[0] * self.criterion[0](
-                data['target_rir_response'],
-                H) + self.loss_weights[1] * self.criterion[1](
-                    data['target_rir_response'],
-                    H) + self.loss_weights[2] * self.criterion[2](
-                        self.net.biquad_cascade)
+        if self.use_colorless_loss:
+            H, H_sub_fdn = self.net(data)
         else:
-            loss = self.loss_weights[0] * self.criterion[0](
-                data['target_rir_response'],
-                H) + self.loss_weights[1] * self.criterion[1](
-                    data['target_rir_response'], H)
+            H = self.net(data)
+
+        loss = self.loss_weights[0] * self.criterion[0](
+            data['target_rir_response'],
+            H) + self.loss_weights[1] * self.criterion[1](
+                data['target_rir_response'], H)
+        if self.use_reg_loss:
+            loss += self.loss_weights[2] * self.criterion[2](
+                self.net.biquad_cascade)
+
+        if self.use_colorless_loss:
+            for k in range(self.net.num_groups):
+                loss += self.colorless_loss_weights[
+                    0] * self.colorless_criterion[0](
+                        H_sub_fdn[..., k], torch.ones_like(
+                            H_sub_fdn[..., k])) + self.colorless_loss_weights[
+                                1] * self.colorless_criterion[1](
+                                    self.net.feedback_loop.ortho_param(
+                                        self.net.feedback_loop.M[k]))
+
         loss.backward(retain_graph=True)
         self.optimizer.step()
         return loss.item()
@@ -398,7 +440,11 @@ class SinglePosTrainer(Trainer):
     def normalize(self, data: Dict):
         # average energy normalization - this normalises the energy
         # of the initial FDN to the target impulse response
-        H, _ = get_response(data, self.net)
+
+        if self.use_colorless_loss:
+            H, _, _ = get_response(data, self.net)
+        else:
+            H, _ = get_response(data, self.net)
         energyH = torch.mean(torch.pow(torch.abs(H), 2))
         energyH_target = torch.mean(
             torch.pow(torch.abs(data['target_rir_response']), 2))
@@ -415,7 +461,10 @@ class SinglePosTrainer(Trainer):
                 directory: str,
                 filename_prefix: str = 'ir',
                 norm=False):
-        _, h = get_response(data, self.net)
+        if self.use_colorless_loss:
+            _, _, h = get_response(data, self.net)
+        else:
+            _, h = get_response(data, self.net)
         # undo sampling outside the unit circle by multiplying IR with an exponentiated envelope
         if self.reduced_pole_radius is not None:
             h *= torch.pow(1.0 / self.reduced_pole_radius,

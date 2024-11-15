@@ -11,6 +11,8 @@ from ..utils import get_frequency_samples, get_response, get_str_results
 from .losses import amse_loss, sparsity_loss
 from .model import ColorlessFDN
 
+# pylint: disable=W0632
+
 
 class ColorlessFDNTrainer:
     """Class for training a colorless FDN"""

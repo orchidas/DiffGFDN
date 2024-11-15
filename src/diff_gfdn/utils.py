@@ -129,9 +129,14 @@ def get_response(x: Union[Dict, torch.tensor], net: nn.Module):
             H (torch.tensor): GFDN frequency response
     """
     with torch.no_grad():
-        H = net(x)
-        h = torch.fft.irfft(H, dim=-1)
-    return H, h
+        if net.use_colorless_loss:
+            H, H_sub_fdn = net(x)
+            h = torch.fft.irfft(H, dim=-1)
+            return H, H_sub_fdn, h
+        else:
+            H = net(x)
+            h = torch.fft.irfft(H, dim=-1)
+            return H, h
 
 
 def get_str_results(epoch=None,

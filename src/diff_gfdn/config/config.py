@@ -96,6 +96,8 @@ class TrainerConfig(BaseModel):
     use_reg_loss: bool = False
     # whether to use perceptual ERB loss
     use_erb_edr_loss: bool = False
+    # whether to use colorless loss in the DiffGFDN's loss itself
+    use_colorless_loss: bool = False
     # whether to use frequency-based weighting in loss
     use_frequency_weighting: bool = False
     # directory to save results
