@@ -1,5 +1,6 @@
 from typing import Dict, Optional, Union
 
+from loguru import logger
 import numpy as np
 from numpy.typing import ArrayLike
 import torch
@@ -127,13 +128,20 @@ def get_response(x: Union[Dict, torch.tensor], net: nn.Module):
             x (Dict): dictionary of features and labels
     Output  h (torch.tensor): GFDN impulse response
             H (torch.tensor): GFDN frequency response
+            H_sub_fdn (torch.tensor): frequency response of each FDN in the GFDN
     """
     with torch.no_grad():
-        if net.use_colorless_loss:
-            H, H_sub_fdn = net(x)
-            h = torch.fft.irfft(H, dim=-1)
-            return H, H_sub_fdn, h
-        else:
+        try:
+            if net.use_colorless_loss:
+                H, H_sub_fdn = net(x)
+                h = torch.fft.irfft(H, dim=-1)
+                return H, H_sub_fdn, h
+            else:
+                H = net(x)
+                h = torch.fft.irfft(H, dim=-1)
+                return H, h
+        except AttributeError as e:
+            logger.warning(e)
             H = net(x)
             h = torch.fft.irfft(H, dim=-1)
             return H, h

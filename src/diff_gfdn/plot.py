@@ -527,7 +527,7 @@ def plot_amps_in_space(room_data: RoomDataset,
                         aperture_coords=aperture_coordinates)
     rec_points = np.array(room_data.receiver_position)
     src_pos = np.array(room_data.source_position)
-    is_in_subbands = t_vals.ndim == 2
+    is_in_subbands = t_vals.shape[1] > 1
 
     est_rirs = np.asarray(all_rirs)
     num_est_rirs = est_rirs.shape[0]
@@ -545,7 +545,8 @@ def plot_amps_in_space(room_data: RoomDataset,
 
     else:
         est_rirs_filtered = est_rirs[..., np.newaxis]
-        t_vals_expanded = np.tile(t_vals, (num_est_rirs, 1))[..., np.newaxis]
+        t_vals_expanded = np.tile(np.squeeze(t_vals),
+                                  (num_est_rirs, 1))[..., np.newaxis]
         band_centre_hz = None
         save_name = f'{save_path}'
 
