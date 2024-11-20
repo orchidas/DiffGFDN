@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 import pickle
 import re
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from loguru import logger
 import matplotlib.pyplot as plt
@@ -104,7 +104,8 @@ def save_loss(train_loss: List,
               output_dir: str,
               save_plot=True,
               filename: str = '',
-              xaxis_label: Optional[str] = "epoch #"):
+              xaxis_label: Optional[str] = "epoch #",
+              individual_losses: Optional[List[Dict]] = None):
     """
     Save training and validation loss values in .mat format
     Args    train_loss (list): training loss values at each epoch
@@ -115,16 +116,41 @@ def save_loss(train_loss: List,
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
+    n_epochs = len(train_loss)
     losses = {}
     losses['train'] = train_loss
-    n_epochs = len(train_loss)
+    individual_losses_mat = {}
 
     if save_plot:
+        plt.figure()
         plt.plot(range(1, n_epochs + 1), train_loss)
         plt.xlabel(xaxis_label)
         plt.ylabel('loss')
         plt.savefig(os.path.join(output_dir, filename + '.pdf'))
+
+        if individual_losses is not None:
+            keys = individual_losses[0].keys()
+            plt.figure()
+
+            for key in keys:
+                loss_values = [
+                    d[key].detach().numpy() for d in individual_losses
+                ]
+                individual_losses_mat[key] = loss_values
+                plt.semilogy(range(1, n_epochs + 1), loss_values, label=key)
+
+            plt.xlabel(xaxis_label)
+            plt.ylabel('loss (log)')
+            plt.legend()
+            plt.savefig(
+                os.path.join(output_dir, filename + '_individual_loss.pdf'))
+
     savemat(os.path.join(output_dir, 'losses_' + filename + '.mat'), losses)
+
+    if individual_losses is not None:
+        savemat(
+            os.path.join(output_dir, 'individual_losses_' + filename + '.mat'),
+            individual_losses_mat)
 
 
 ####################################################################
@@ -541,7 +567,8 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
         save_loss(trainer.train_loss,
                   trainer_config.train_dir,
                   save_plot=True,
-                  filename='training_loss_vs_epoch')
+                  filename='training_loss_vs_epoch',
+                  individual_losses=trainer.individual_train_loss)
 
         # test the network with the validation set
         trainer.validate(valid_dataset)
@@ -550,7 +577,8 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
                   trainer_config.train_dir,
                   save_plot=True,
                   filename='test_loss_vs_position',
-                  xaxis_label='Position #')
+                  xaxis_label='Position #',
+                  individual_losses=trainer.individual_valid_loss)
 
 
 def run_training_single_pos(config_dict: DiffGFDNConfig):
@@ -642,4 +670,5 @@ def run_training_single_pos(config_dict: DiffGFDNConfig):
     save_loss(trainer.train_loss,
               trainer_config.train_dir,
               save_plot=True,
-              filename='training_loss_vs_epoch')
+              filename='training_loss_vs_epoch',
+              individual_losses=trainer.individual_train_loss)

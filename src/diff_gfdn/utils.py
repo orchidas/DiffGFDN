@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from loguru import logger
 import numpy as np
@@ -147,11 +147,10 @@ def get_response(x: Union[Dict, torch.tensor], net: nn.Module):
             return H, h
 
 
-def get_str_results(epoch=None,
-                    train_loss=None,
+def get_str_results(epoch: int = None,
+                    train_loss: float = None,
                     time=None,
-                    lossF=None,
-                    lossT=None):
+                    individual_losses: Optional[List[Dict]] = None):
     """Construct the string that has to be print at the end of the epoch"""
     to_print = ''
 
@@ -164,11 +163,10 @@ def get_str_results(epoch=None,
     if time is not None:
         to_print += '- time: {:6.4f} s'.format(time)
 
-    if lossF is not None:
-        to_print += '- lossF: {:6.4f}'.format(lossF)
-
-    if lossT is not None:
-        to_print += '- lossT: {:6.4f}'.format(lossT)
+    if individual_losses is not None:
+        last_loss = individual_losses[-1]
+        for key, value in last_loss.items():
+            to_print += f'- {key}: {value: 3f}'
 
     return to_print
 
