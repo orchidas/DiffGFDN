@@ -271,7 +271,7 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
 
         self.use_svf_in_output = output_filter_config.use_svfs
         self.input_scalars = nn.Parameter(
-            (2 * torch.randn(self.num_groups, 1) - 1) / self.num_groups)
+            (torch.ones(self.num_groups, 1)) / np.sqrt(self.num_groups))
 
         if self.use_svf_in_output:
             logger.info("Using filters in output")

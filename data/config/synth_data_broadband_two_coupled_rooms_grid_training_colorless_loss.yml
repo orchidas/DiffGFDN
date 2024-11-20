@@ -14,4 +14,4 @@ feedback_loop_config:
 output_filter_config:
   use_svfs: False
   num_hidden_layers: 3
-  num_neurons_per_layer: 64
+  num_neurons_per_layer: 32

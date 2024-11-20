@@ -158,15 +158,15 @@ def get_str_results(epoch: int = None,
         to_print += 'epoch: {:3d} '.format(epoch)
 
     if train_loss is not None:
-        to_print += '- train_loss: {:6.4f} '.format(train_loss[-1])
+        to_print += ', train_loss: {:6.4f} '.format(train_loss[-1])
 
     if time is not None:
-        to_print += '- time: {:6.4f} s'.format(time)
+        to_print += ', time: {:6.4f}s'.format(time)
 
     if individual_losses is not None:
         last_loss = individual_losses[-1]
         for key, value in last_loss.items():
-            to_print += f'- {key}: {value: 3f}'
+            to_print += f', {key}: {value: 3f}'
 
     return to_print
 
