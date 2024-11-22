@@ -69,19 +69,18 @@ class RIRData:
     """Data for a single measured/simulated RIR"""
 
     def __init__(self,
-                 wav_path: Path,
                  common_decay_times: List,
                  band_centre_hz: Optional[ArrayLike],
                  amplitudes: Optional[List] = None,
                  room_dims: Optional[List] = None,
                  absorption_coeffs: Optional[List] = None,
                  mixing_time_ms: float = 20.0,
-                 nfft: Optional[int] = None):
+                 nfft: Optional[int] = None,
+                 wav_path: Optional[Path] = None,
+                 rir: Optional[NDArray] = None,
+                 sample_rate: Optional[float] = None):
         """
         Args:
-            num_rooms (int): number of rooms in coupled space
-            sample_rate (float): sample rate of dataset
-            wav_path (Path): path to the RIR
             band_centre_hz (optional, ArrayLike): octave band centres where common T60s are calculated
             common_decay_times (List[ArrayLike, float]): common decay times for the different rooms
             amplitudes (List[ArrayLike]): the amplitudes of the common slopes, unique to the receiver position,
@@ -90,17 +89,26 @@ class RIRData:
             absorption_coeffs (optional, List): uniform absorption coefficients for each room
             mixing_time_ms (float): time when early reflections morph into late reverb
             nfft (optional, int): number of frequency bins
+            wav_path (Path, optional): path to the RIR
+            sample_rate (float, optional): sample rate of dataset
+            rir (ArrayLike, optiona): the RIR itself as an array
+
         """
+        if wav_path is None and rir is None:
+            raise AttributeError(
+                "Either the path to the wav file or the RIR itself must be specified"
+            )
 
-        assert str(wav_path).endswith(
-            '.wav'), "provide the path to the .wav file"
+        if wav_path is not None and rir is None:
+            assert str(wav_path).endswith(
+                '.wav'), "provide the path to the .wav file"
 
-        # read contents from .wav file
-        try:
-            (rir, sample_rate) = sf.read(str(wav_path))
-        except Exception as exc:
-            raise FileNotFoundError(
-                f"File was not found at {str(wav_path)}") from exc
+            # read contents from .wav file
+            try:
+                (rir, sample_rate) = sf.read(str(wav_path))
+            except Exception as exc:
+                raise FileNotFoundError(
+                    f"File was not found at {str(wav_path)}") from exc
 
         self.rir = rir
         self.sample_rate = sample_rate

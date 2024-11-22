@@ -1,5 +1,6 @@
-from typing import Dict, Optional, Union
+from typing import Dict, List, Optional, Union
 
+from loguru import logger
 import numpy as np
 from numpy.typing import ArrayLike
 import torch
@@ -127,18 +128,29 @@ def get_response(x: Union[Dict, torch.tensor], net: nn.Module):
             x (Dict): dictionary of features and labels
     Output  h (torch.tensor): GFDN impulse response
             H (torch.tensor): GFDN frequency response
+            H_sub_fdn (torch.tensor): frequency response of each FDN in the GFDN
     """
     with torch.no_grad():
-        H = net(x)
-        h = torch.fft.irfft(H, dim=-1)
-    return H, h
+        try:
+            if net.use_colorless_loss:
+                H, H_sub_fdn = net(x)
+                h = torch.fft.irfft(H, dim=-1)
+                return H, H_sub_fdn, h
+            else:
+                H = net(x)
+                h = torch.fft.irfft(H, dim=-1)
+                return H, h
+        except AttributeError as e:
+            logger.warning(e)
+            H = net(x)
+            h = torch.fft.irfft(H, dim=-1)
+            return H, h
 
 
-def get_str_results(epoch=None,
-                    train_loss=None,
+def get_str_results(epoch: int = None,
+                    train_loss: float = None,
                     time=None,
-                    lossF=None,
-                    lossT=None):
+                    individual_losses: Optional[List[Dict]] = None):
     """Construct the string that has to be print at the end of the epoch"""
     to_print = ''
 
@@ -146,16 +158,15 @@ def get_str_results(epoch=None,
         to_print += 'epoch: {:3d} '.format(epoch)
 
     if train_loss is not None:
-        to_print += '- train_loss: {:6.4f} '.format(train_loss[-1])
+        to_print += ', train_loss: {:6.4f} '.format(train_loss[-1])
 
     if time is not None:
-        to_print += '- time: {:6.4f} s'.format(time)
+        to_print += ', time: {:6.4f}s'.format(time)
 
-    if lossF is not None:
-        to_print += '- lossF: {:6.4f}'.format(lossF)
-
-    if lossT is not None:
-        to_print += '- lossT: {:6.4f}'.format(lossT)
+    if individual_losses is not None:
+        last_loss = individual_losses[-1]
+        for key, value in last_loss.items():
+            to_print += f', {key}: {value: 3f}'
 
     return to_print
 

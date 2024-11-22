@@ -13,7 +13,8 @@ class sparsity_loss(nn.Module):
             A (torch.tensor): 2D feedback matrix
         """
         N = A.shape[-1]
-        return -(torch.sum(torch.abs(A)) - N) / (N * (np.sqrt(N) - 1))
+        return -(torch.sum(torch.abs(A)) -
+                 (N * np.sqrt(N))) / (N * (np.sqrt(N) - 1))
 
 
 class mse_loss(nn.Module):
@@ -45,8 +46,7 @@ class amse_loss(nn.Module):
             y_true (torch.tensor): expected output
         """
         # loss on system's output
-        loss = self.p_loss(y_pred, y_true) * torch.sqrt(
-            torch.tensor(len(y_pred)))
+        loss = self.p_loss(y_pred, y_true)
 
         return loss
 

@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 from torch import nn
+from torch.nn import init
 from torchaudio.functional import filtfilt
 
 from .config.config import FeatureEncodingType
@@ -152,7 +153,9 @@ class BiquadCascade:
 
 class IIRFilter(nn.Module):
 
-    def __init__(self, filt_order: int, num_filters: int,
+    def __init__(self,
+                 filt_order: int,
+                 num_filters: int,
                  filter_numerator: torch.tensor,
                  filter_denominator: torch.tensor,
                  device: Optional[torch.device] = 'cpu'):
@@ -505,6 +508,18 @@ class MLP(nn.Module):
         # Combine layers into a Sequential model
         self.model = nn.Sequential(*layers)
 
+        self._initialise_weights()
+
+    def _initialise_weights(self):
+        """Initialize weights and biases of Linear layers."""
+        for layer in self.model:
+            if isinstance(layer, nn.Linear):
+                # Use He initialization for ReLU
+                init.kaiming_uniform_(layer.weight, nonlinearity='relu')
+                # Optional: Bias initialization
+                if layer.bias is not None:
+                    init.constant_(layer.bias, 0)
+
     def forward(self, x: torch.tensor):
         """
         Args:
@@ -678,15 +693,10 @@ class SVF_from_MLP(nn.Module):
         return (svf_params, biquad_coeffs)
 
     @torch.no_grad()
-    def get_param_dict(self) -> Dict:
-        """Return the parameters as a dict"""
+    def get_param_dict(self, x: Dict) -> Dict:
+        """Return the parameters as a dict for a new data position - used in inferencing"""
+        self.forward(x)
         param_np = {}
-        self.svf_params[..., 0] = self.scaled_res(
-            self.svf_params[..., 0].view(-1)).view(self.num_groups,
-                                                   self.num_biquads)
-        self.svf_params[..., 1] = self.scaled_gains(
-            self.svf_params[..., 1].view(-1)).view(self.num_groups,
-                                                   self.num_biquads)
         param_np['svf_params'] = self.svf_params.squeeze().cpu().numpy()
         param_np['biquad_coeffs'] = [[
             torch.cat((self.biquad_cascade[b][n].num_coeffs,
@@ -810,11 +820,9 @@ class Gains_from_MLP(nn.Module):
         return gains
 
     @torch.no_grad()
-    def get_param_dict(self) -> Dict:
+    def get_param_dict(self, x: Dict) -> Dict:
         """Return the parameters as a dict"""
+        self.forward(x)
         param_np = {}
-        self.gains = self.scaled_sigmoid(self.gains.view(-1)).view(
-            self.batch_size, self.num_groups)
-
         param_np['gains'] = self.gains.squeeze().cpu().numpy()
         return param_np

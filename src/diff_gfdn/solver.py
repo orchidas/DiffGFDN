@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 import pickle
 import re
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from loguru import logger
 import matplotlib.pyplot as plt
@@ -20,6 +20,7 @@ from .config.config import DiffGFDNConfig
 from .dataloader import load_dataset, RIRData, RoomDataset, ThreeRoomDataset
 from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
 from .trainer import SinglePosTrainer, VarReceiverPosTrainer
+from .utils import db
 
 # pylint: disable=W0718
 
@@ -103,7 +104,8 @@ def save_loss(train_loss: List,
               output_dir: str,
               save_plot=True,
               filename: str = '',
-              xaxis_label: Optional[str] = "epoch #"):
+              xaxis_label: Optional[str] = "epoch #",
+              individual_losses: Optional[List[Dict]] = None):
     """
     Save training and validation loss values in .mat format
     Args    train_loss (list): training loss values at each epoch
@@ -114,16 +116,41 @@ def save_loss(train_loss: List,
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
+    n_epochs = len(train_loss)
     losses = {}
     losses['train'] = train_loss
-    n_epochs = len(train_loss)
+    individual_losses_mat = {}
 
     if save_plot:
+        plt.figure()
         plt.plot(range(1, n_epochs + 1), train_loss)
         plt.xlabel(xaxis_label)
         plt.ylabel('loss')
         plt.savefig(os.path.join(output_dir, filename + '.pdf'))
+
+        if individual_losses is not None:
+            keys = individual_losses[0].keys()
+            plt.figure()
+
+            for key in keys:
+                loss_values = [
+                    d[key].detach().numpy() for d in individual_losses
+                ]
+                individual_losses_mat[key] = loss_values
+                plt.semilogy(range(1, n_epochs + 1), loss_values, label=key)
+
+            plt.xlabel(xaxis_label)
+            plt.ylabel('loss (log)')
+            plt.legend()
+            plt.savefig(
+                os.path.join(output_dir, filename + '_individual_loss.pdf'))
+
     savemat(os.path.join(output_dir, 'losses_' + filename + '.mat'), losses)
+
+    if individual_losses is not None:
+        savemat(
+            os.path.join(output_dir, 'individual_losses_' + filename + '.mat'),
+            individual_losses_mat)
 
 
 ####################################################################
@@ -146,6 +173,7 @@ def convert_common_slopes_rir_to_room_dataset(
     """Convert the dataclass CommonSlopesRIR to RoomDataset"""
     data_path = Path(data_path).resolve()
     with open(data_path, 'rb') as f:
+        # rir_data = pickle.load(f)
         rir_data = Slope2NoiseUnpickler(f).load()
 
     num_rooms = rir_data.n_slopes
@@ -207,14 +235,16 @@ def data_parser_var_receiver_pos(
 
 
 def data_parser_single_receiver_pos(
-        config_dict: DiffGFDNConfig,
-        num_freq_bins: Optional[int] = None
+    config_dict: DiffGFDNConfig,
+    num_freq_bins: Optional[int] = None,
+    debug: bool = False,
 ) -> Tuple[RIRData, RoomDataset, str]:
     """
     Parse the training data for a single receiver position
     Args:
         config_dict (DiffGFDNConfig): config dictionary
         num_freq_bins (int): number of frequency bins to train on
+        debug (bool): plots the EDC of the desired RIR, this has caused issues previously
     Returns:
         RIRData, RoomDataset, str: single position dataset, room dataset and the name of the ir
     """
@@ -241,19 +271,41 @@ def data_parser_single_receiver_pos(
 
     # find amplitudes corresponding to the receiver position
     rec_pos_idx = np.where(
-        np.all(room_data.receiver_position == rec_pos, axis=1))[0]
-    amplitudes = room_data.amplitudes[..., rec_pos_idx]
+        np.all(np.round(room_data.receiver_position, 2) == rec_pos,
+               axis=1))[0][0]
+    amplitudes = np.squeeze(room_data.amplitudes[rec_pos_idx, :])
 
     # if the reference IR does not exist, create it from the dataset
     if not os.path.isfile(str(ir_path)):
         logger.warning("RIR does not exist in path, creating it...")
         room_data.save_individual_irs(directory=Path(ir_path).parent.resolve())
 
-    rir_data = RIRData(ir_path,
+    rir_data = RIRData(rir=np.squeeze(room_data.rirs[rec_pos_idx, :]),
+                       sample_rate=room_data.sample_rate,
                        common_decay_times=room_data.common_decay_times,
                        band_centre_hz=room_data.band_centre_hz,
                        amplitudes=amplitudes,
                        nfft=num_freq_bins)
+
+    # for debugging
+    if debug:
+        true_rir = rir_data.rir
+        true_rir_room_data = np.squeeze(room_data.rirs[rec_pos_idx, :])
+        true_edf = np.flipud(np.cumsum(np.flipud(true_rir**2), axis=-1))
+        true_edf_room_data = np.flipud(
+            np.cumsum(np.flipud(true_rir_room_data**2), axis=-1))
+
+        time = np.linspace(0, (len(true_rir) - 1) / rir_data.sample_rate,
+                           len(true_rir))
+
+        plt.figure()
+        plt.plot(time, db(true_edf, is_squared=True))
+        plt.plot(time, db(true_edf_room_data, is_squared=True))
+        plt.plot(np.zeros(len(amplitudes)), db(amplitudes, is_squared=True),
+                 'kx')
+        plt.xlabel('Time (s)')
+        plt.ylabel('Magnitude (dB)')
+        plt.show()
 
     return rir_data, room_data, ir_name
 
@@ -315,7 +367,8 @@ def mlp_hyperparameter_tuning(trial, hyp_config: MLPTuningConfig):
         hyp_config.config_dict.use_absorption_filters,
         common_decay_times=hyp_config.room_data.common_decay_times,
         band_centre_hz=hyp_config.room_data.band_centre_hz,
-        colorless_fdn_params=hyp_config.colorless_fdn_params)
+        colorless_fdn_params=hyp_config.colorless_fdn_params,
+        use_colorless_loss=trainer_config.use_colorless_loss)
     # set default device
     torch.set_default_device(trainer_config.device)
     # move model to device (cuda or cpu)
@@ -433,6 +486,11 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
     trainer_config = trainer_config.calculate_reduced_pole_radius(
         trainer_config)
 
+    if config_dict.colorless_fdn_config.use_colorless_prototype and trainer_config.use_colorless_loss:
+        raise ValueError(
+            "Cannot use optimised colorless FDN parameters and colorless FDN loss together"
+        )
+
     # are we using a colorless FDN to get the feedback matrix?
     if config_dict.colorless_fdn_config.use_colorless_prototype:
         colorless_fdn_params = run_training_colorless_fdn(
@@ -487,6 +545,7 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
             common_decay_times=room_data.common_decay_times,
             band_centre_hz=room_data.band_centre_hz,
             colorless_fdn_params=colorless_fdn_params,
+            use_colorless_loss=trainer_config.use_colorless_loss,
         )
         # set default device
         torch.set_default_device(trainer_config.device)
@@ -508,7 +567,8 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
         save_loss(trainer.train_loss,
                   trainer_config.train_dir,
                   save_plot=True,
-                  filename='training_loss_vs_epoch')
+                  filename='training_loss_vs_epoch',
+                  individual_losses=trainer.individual_train_loss)
 
         # test the network with the validation set
         trainer.validate(valid_dataset)
@@ -517,7 +577,8 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
                   trainer_config.train_dir,
                   save_plot=True,
                   filename='test_loss_vs_position',
-                  xaxis_label='Position #')
+                  xaxis_label='Position #',
+                  individual_losses=trainer.individual_valid_loss)
 
 
 def run_training_single_pos(config_dict: DiffGFDNConfig):
@@ -555,6 +616,10 @@ def run_training_single_pos(config_dict: DiffGFDNConfig):
             "Cannot train in batches here. Training on the full unit circle")
         trainer_config = trainer_config.copy(
             update={"batch_size": rir_data.num_freq_bins})
+    if config_dict.colorless_fdn_config.use_colorless_prototype and trainer_config.use_colorless_loss:
+        raise ValueError(
+            "Cannot use optimised colorless FDN parameters and colorless FDN loss together"
+        )
 
     # whether to use a colorless FDN to get input-output gains and feedback matrix
     if config_dict.colorless_fdn_config.use_colorless_prototype:
@@ -572,16 +637,19 @@ def run_training_single_pos(config_dict: DiffGFDNConfig):
                                  trainer_config.reduced_pole_radius)
 
     # initialise the model
-    model = DiffGFDNSinglePos(room_data.sample_rate,
-                              room_data.num_rooms,
-                              config_dict.delay_length_samps,
-                              trainer_config.device,
-                              config_dict.feedback_loop_config,
-                              config_dict.output_filter_config,
-                              config_dict.use_absorption_filters,
-                              common_decay_times=room_data.common_decay_times,
-                              band_centre_hz=room_data.band_centre_hz,
-                              colorless_fdn_params=colorless_fdn_params)
+    model = DiffGFDNSinglePos(
+        room_data.sample_rate,
+        room_data.num_rooms,
+        config_dict.delay_length_samps,
+        trainer_config.device,
+        config_dict.feedback_loop_config,
+        config_dict.output_filter_config,
+        config_dict.use_absorption_filters,
+        common_decay_times=room_data.common_decay_times,
+        band_centre_hz=room_data.band_centre_hz,
+        colorless_fdn_params=colorless_fdn_params,
+        use_colorless_loss=trainer_config.use_colorless_loss,
+    )
     # set default device
     torch.set_default_device(trainer_config.device)
     # move model to device (cuda or cpu)
@@ -602,4 +670,5 @@ def run_training_single_pos(config_dict: DiffGFDNConfig):
     save_loss(trainer.train_loss,
               trainer_config.train_dir,
               save_plot=True,
-              filename='training_loss_vs_epoch')
+              filename='training_loss_vs_epoch',
+              individual_losses=trainer.individual_train_loss)

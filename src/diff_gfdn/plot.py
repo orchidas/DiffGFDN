@@ -11,7 +11,7 @@ from scipy.fft import rfftfreq
 from scipy.signal import freqz, sos2zpk, sosfreqz
 from scipy.spatial.distance import cdist
 from slope2noise.slope2noise.rooms import RoomGeometry
-from slope2noise.slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering
+from slope2noise.slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering, schroeder_backward_int
 import torch
 
 from .analysis import get_amps_for_rir
@@ -463,6 +463,122 @@ def plot_subband_amplitudes(h_true: Union[ArrayLike, torch.Tensor],
         fig.savefig(Path(save_path).resolve())
 
 
+def order_position_matrices(pos1: NDArray, pos2: NDArray) -> ArrayLike:
+    """Arrange 3D coordinates in pos1 and pos2 so that they are in the same order"""
+    # Step 1: Compute pairwise distances
+    distances = cdist(pos1, pos2)
+
+    # Step 2: Find the closest matches for each point in array1
+    matching_indices = np.argmin(distances, axis=1)
+
+    return matching_indices
+
+
+def find_correct_axis(desired_dim: int, array_shape: Tuple):
+    """Find the axis having the desired dimension from array_shape"""
+    # Identify the receiver axis based on matching dimension
+    desired_axis = None
+    for i, dim in enumerate(array_shape):
+        if dim == desired_dim:
+            desired_axis = i
+            break
+
+    return desired_axis
+
+
+def plot_edc_error_in_space(
+    room_data: RoomDataset,
+    all_rirs: List,
+    all_pos: List,
+    freq_to_plot: Optional[float] = 1000.0,
+    scatter: bool = False,
+    save_path: Optional[str] = None,
+):
+    """
+    Plot the EDC matching error in dB as a function of spatial location
+    Args:
+        room_data (RoomDataset): object containing information of room geometry, decay times and amplitudes
+        all_rirs (List): list of RIRs at all positions synthesized by the GFDN
+        all_pos (List): list of positions at which the RIRs are synthesized
+        freq_to_plot (optional, float): which frequency to plot the amplitudes at
+        scatter (bool): whether to make a scatter plot (discrete), or a surface plot (continuous)
+        save_path (optional, str): path to save the file
+        mixing_time_ms (float): truncate RIR before this time
+    """
+
+    def get_edc_error(original_rirs: NDArray, original_points: NDArray,
+                      estimated_rirs: NDArray, est_points: NDArray):
+        """Get MSE error between the amplitude mismatch"""
+        ordered_pos_idx = order_position_matrices(original_points, est_points)
+        est_rirs_ordered = estimated_rirs[ordered_pos_idx, ...]
+        original_edc = schroeder_backward_int(original_rirs, normalize=False)
+        est_edc = schroeder_backward_int(est_rirs_ordered, normalize=False)
+        error_db = np.mean(np.abs(
+            db(original_edc, is_squared=True) - db(est_edc, is_squared=True)),
+                           axis=-2)
+        error_mse = np.linalg.norm(error_db, axis=0) / np.sqrt(
+            original_points.shape[0])
+        return error_db, error_mse
+
+    num_rooms = room_data.num_rooms
+    room_dims = room_data.room_dims
+    start_coordinates = room_data.room_start_coord
+    aperture_coordinates = room_data.aperture_coords
+    t_vals = room_data.common_decay_times.T
+    room = RoomGeometry(room_data.sample_rate,
+                        num_rooms,
+                        np.array(room_dims),
+                        np.array(start_coordinates),
+                        aperture_coords=aperture_coordinates)
+    rec_points = np.array(room_data.receiver_position)
+    src_pos = np.array(room_data.source_position)
+    is_in_subbands = t_vals.shape[1] > 1
+
+    original_rirs = room_data.rirs
+    est_rirs = np.asarray(all_rirs)
+    est_rirs = est_rirs[..., :original_rirs.shape[-1]]
+
+    # do subband filterings
+    if is_in_subbands:
+        original_rirs_filtered = octave_filtering(original_rirs,
+                                                  room_data.sample_rate,
+                                                  room_data.band_centre_hz)
+        est_rirs_filtered = octave_filtering(est_rirs, room_data.sample_rate,
+                                             room_data.band_centre_hz)
+        save_name = f'{save_path}_{freq_to_plot / 1000: .0f}kHz'
+    else:
+        original_rirs_filtered = original_rirs[..., np.newaxis]
+        est_rirs_filtered = est_rirs[..., np.newaxis]
+        save_name = f'{save_path}'
+
+    est_rec_pos = np.asarray(all_pos)
+    # get error metrics
+    error_func, error_mse = get_edc_error(original_rirs_filtered.copy(),
+                                          rec_points, est_rirs_filtered.copy(),
+                                          est_rec_pos)
+    if is_in_subbands:
+        idx = np.argwhere(
+            np.array(room_data.band_centre_hz) == freq_to_plot)[0][0]
+        for k in range(len(room_data.band_centre_hz)):
+            logger.info(
+                f'The RMSE in matching EDC at frequency {room_data.band_centre_hz[k]: .0f}Hz'
+                f' is {error_mse[k]: .3f} dB')
+            var_to_plot = db2lin(error_func[..., idx])
+    else:
+        logger.info(f'The RMSE in EDC amplitudes is {error_mse} dB')
+        var_to_plot = db2lin(error_func)
+
+    # plot the error in amplitude matching
+    room.plot_edc_error_at_receiver_points(
+        rec_points,
+        np.squeeze(src_pos),
+        var_to_plot,
+        scatter_plot=scatter,
+        cur_freq_hz=freq_to_plot,
+        save_path=Path(f'{save_name}_edc_error_in_space.png').resolve()
+        if save_path is not None else None)
+
+
 def plot_amps_in_space(room_data: RoomDataset,
                        all_rirs: List,
                        all_pos: List,
@@ -478,29 +594,7 @@ def plot_amps_in_space(room_data: RoomDataset,
         freq_to_plot (optional, float): which frequency to plot the amplitudes at
         scatter (bool): whether to make a scatter plot (discrete), or a surface plot (continuous)
         save_path (optional, str): path to save the file
-
     """
-
-    def order_position_matrices(pos1: NDArray, pos2: NDArray) -> ArrayLike:
-        """Arrange 3D coordinates in pos1 and pos2 so that they are in the same order"""
-        # Step 1: Compute pairwise distances
-        distances = cdist(pos1, pos2)
-
-        # Step 2: Find the closest matches for each point in array1
-        matching_indices = np.argmin(distances, axis=1)
-
-        return matching_indices
-
-    def find_correct_axis(desired_dim: int, array_shape: Tuple):
-        """Find the axis having the desired dimension from array_shape"""
-        # Identify the receiver axis based on matching dimension
-        desired_axis = None
-        for i, dim in enumerate(array_shape):
-            if dim == desired_dim:
-                desired_axis = i
-                break
-
-        return desired_axis
 
     def get_amplitude_error(original_amps: NDArray, original_points: NDArray,
                             estimated_amps: NDArray, est_points: NDArray):
@@ -527,7 +621,7 @@ def plot_amps_in_space(room_data: RoomDataset,
                         aperture_coords=aperture_coordinates)
     rec_points = np.array(room_data.receiver_position)
     src_pos = np.array(room_data.source_position)
-    is_in_subbands = t_vals.ndim == 2
+    is_in_subbands = t_vals.shape[1] > 1
 
     est_rirs = np.asarray(all_rirs)
     num_est_rirs = est_rirs.shape[0]
@@ -545,7 +639,8 @@ def plot_amps_in_space(room_data: RoomDataset,
 
     else:
         est_rirs_filtered = est_rirs[..., np.newaxis]
-        t_vals_expanded = np.tile(t_vals, (num_est_rirs, 1))[..., np.newaxis]
+        t_vals_expanded = np.tile(np.squeeze(t_vals),
+                                  (num_est_rirs, 1))[..., np.newaxis]
         band_centre_hz = None
         save_name = f'{save_path}'
 
@@ -601,6 +696,8 @@ def plot_amps_in_space(room_data: RoomDataset,
     error_func, error_mse = get_amplitude_error(original_amps, rec_points,
                                                 est_amps, est_rec_pos)
     if is_in_subbands:
+        idx = np.argwhere(
+            np.array(room_data.band_centre_hz) == freq_to_plot)[0][0]
         for k in range(len(room_data.band_centre_hz)):
             logger.info(
                 f'The RMSE in matching amplitudes at frequency {room_data.band_centre_hz[k]: .0f}Hz'

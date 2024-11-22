@@ -21,17 +21,17 @@ class DiffGFDN(nn.Module):
     """Parent module to do end-to-end optimisation of a Differentiable GFDN"""
 
     def __init__(
-        self,
-        sample_rate: int,
-        num_groups: int,
-        delays: List[int],
-        device: torch.device,
-        feedback_loop_config: FeedbackLoopConfig,
-        use_absorption_filters: bool,
-        common_decay_times: List,
-        band_centre_hz: Optional[List] = None,
-        colorless_fdn_params: Optional[List[ColorlessFDNResults]] = None,
-    ):
+            self,
+            sample_rate: int,
+            num_groups: int,
+            delays: List[int],
+            device: torch.device,
+            feedback_loop_config: FeedbackLoopConfig,
+            use_absorption_filters: bool,
+            common_decay_times: List,
+            band_centre_hz: Optional[List] = None,
+            colorless_fdn_params: Optional[List[ColorlessFDNResults]] = None,
+            use_colorless_loss: bool = False):
         """
         Args:
             sample_rate (int): sampling rate of the FDN
@@ -45,6 +45,8 @@ class DiffGFDN(nn.Module):
             colorless_fdn_params (ColorlessFDNResults, optional): dataclass containing the optimised
                         input, output gains and feedback matrix from the lossless prototype for each FDN
                         in the GFDN
+            use_colorless_loss(bool): whether to use the colorless loss in the DiffGFDN cost function itself,
+                                      complementary to colorless_fdn_params, not to be used together
 
         """
         super().__init__()
@@ -59,16 +61,17 @@ class DiffGFDN(nn.Module):
                                              self.num_groups)
         self.use_absorption_filters = use_absorption_filters
         self.delays_by_group = [
-            self.delays[i:i + self.num_delay_lines_per_group] for i in range(
-                0, self.num_delay_lines, self.num_delay_lines_per_group)
+            torch.tensor(self.delays[i:i + self.num_delay_lines_per_group],
+                         device=self.device) for i in
+            range(0, self.num_delay_lines, self.num_delay_lines_per_group)
         ]
         self.band_centre_hz = band_centre_hz
         self.common_decay_times = common_decay_times
+        self.use_colorless_loss = use_colorless_loss
 
         self.delays = torch.tensor(delays,
                                    dtype=torch.float32,
                                    device=self.device)
-
         self.delays = self.delays.to(self.device)
 
         # initialise input-output gains
@@ -178,6 +181,31 @@ class DiffGFDN(nn.Module):
                 colorless_feedback_matrix=colorless_feedback_matrix,
                 device=self.device)
 
+    def sub_fdn_output(self, z: torch.Tensor) -> torch.Tensor:
+        """Get the magnitude response of each FDN (without the absorption)"""
+        num_freq_pts = len(z)
+        Hout = torch.zeros((num_freq_pts, self.num_groups),
+                           dtype=torch.complex64,
+                           device=self.device)
+        for k in range(self.num_groups):
+            group_idx = torch.arange(k * self.num_delay_lines_per_group,
+                                     (k + 1) * self.num_delay_lines_per_group,
+                                     dtype=torch.int32)
+            C = to_complex(self.output_gains[group_idx].expand(
+                self.num_delay_lines_per_group, num_freq_pts))
+
+            B = to_complex(self.input_gains[group_idx].expand(
+                self.num_delay_lines_per_group, num_freq_pts))
+
+            A = self.feedback_loop.M[k].unsqueeze(0).repeat(num_freq_pts, 1, 1)
+            D = torch.diag_embed(
+                torch.unsqueeze(z, dim=-1)**self.delays_by_group[k])
+            P = torch.linalg.inv(D - A).to(torch.complex64)
+            H = torch.einsum('kn, knm -> km', C.permute(1, 0), P).permute(1, 0)
+            Hout[..., k] = torch.einsum('mk, mk -> k', H, B)
+
+        return Hout
+
     def design_lowpass_filter(
         self,
         filter_order: int = 16,
@@ -215,7 +243,8 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
             use_absorption_filters: bool,
             common_decay_times: List = None,
             band_centre_hz: Optional[List] = None,
-            colorless_fdn_params: Optional[List[ColorlessFDNResults]] = None):
+            colorless_fdn_params: Optional[List[ColorlessFDNResults]] = None,
+            use_colorless_loss: bool = False):
         """
         Differentiable GFDN module for a grid of listener locations, where the output filter
         coefficients are learnt with deep learning.
@@ -231,15 +260,19 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
             band_centre_hz (optional, list): frequencies where common decay times are measured
             colorless_fdn_params (ColorlessFDNResults, optional): dataclass containing the optimised
                         input, output gains and feedback matrix from the lossless prototype
+            use_colorless_loss(bool): whether to use the colorless loss in the DiffGFDN cost function itself. 
+                                      Complementary to colorless_fdn_params, not to be used together
+
         """
         super().__init__(sample_rate, num_groups, delays, device,
                          feedback_loop_config, use_absorption_filters,
                          common_decay_times, band_centre_hz,
-                         colorless_fdn_params)
+                         colorless_fdn_params, use_colorless_loss)
 
         self.use_svf_in_output = output_filter_config.use_svfs
         self.input_scalars = nn.Parameter(
-            torch.ones(self.num_groups, 1) / np.sqrt(self.num_groups))
+            (2 * torch.ones(self.num_groups, 1) - 1) /
+            np.sqrt(self.num_groups))
 
         if self.use_svf_in_output:
             logger.info("Using filters in output")
@@ -301,7 +334,12 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
         # pass through a lowpass filter
         lowpass_response = self.lowpass_filter(z, self.lowpass_biquad)
         H_lp = H * lowpass_response
-        return H_lp
+
+        if self.use_colorless_loss:
+            H_sub_fdn = super().sub_fdn_output(z)
+            return H_lp, H_sub_fdn
+        else:
+            return H_lp
 
     def get_parameters(self) -> Tuple:
         """Return the parameters as a tuple"""
@@ -313,6 +351,23 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
         (svf_params, biquad_coeffs) = self.output_filters.get_parameters()
         return (delays, gain_per_sample, b, M, Phi, coupled_feedback_matrix,
                 svf_params, biquad_coeffs)
+
+    @torch.no_grad()
+    def get_param_dict_inference(self, data: Dict) -> Dict:
+        """Get output of MLP during inference"""
+        param_np = {}
+        try:
+            param_out_mlp = self.output_filters.get_param_dict(data)
+            if self.use_svf_in_output:
+                param_np['output_svf_params'] = param_out_mlp['svf_params']
+                param_np['output_biquad_coeffs'] = param_out_mlp[
+                    'biquad_coeffs']
+
+            else:
+                param_np['output_scalars'] = param_out_mlp['gains']
+        except Exception as e:
+            logger.warning(e)
+        return param_np
 
     @torch.no_grad()
     def get_param_dict(self) -> Dict:
@@ -355,26 +410,6 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
         except Exception:
             logger.warning('Parameter not initialised yet in FeedbackLoop!')
 
-        try:
-            if self.use_svf_in_output:
-                param_np[
-                    'output_svf_params'] = self.output_filters.svf_params.squeeze(
-                    ).cpu().numpy()
-                param_np['output_biquad_coeffs'] = [[
-                    torch.cat(
-                        (self.output_filters.biquad_cascade[b][n].num_coeffs,
-                         self.output_filters.biquad_cascade[b][n].den_coeffs),
-                        dim=-1).squeeze().cpu().numpy()
-                    for n in range(self.num_groups)
-                ] for b in range(self.batch_size)]
-
-            else:
-                param_np['output_scalars'] = self.output_scalars.gains.squeeze(
-                ).cpu().numpy()
-
-        except Exception as e:
-            logger.warning(e)
-
         return param_np
 
 
@@ -392,7 +427,8 @@ class DiffGFDNSinglePos(DiffGFDN):
             use_absorption_filters: bool,
             common_decay_times: List,
             band_centre_hz: Optional[List] = None,
-            colorless_fdn_params: Optional[List[ColorlessFDNResults]] = None):
+            colorless_fdn_params: Optional[List[ColorlessFDNResults]] = None,
+            use_colorless_loss: bool = False):
         """
         Args:
             sample_rate (int): sampling rate of the FDN
@@ -406,11 +442,14 @@ class DiffGFDNSinglePos(DiffGFDN):
             band_centre_hz (optional, list): frequencies where common decay times are measured
             colorless_fdn_params (ColorlessFDNResults, optional): dataclass containing the optimised
                         input, output gains and feedback matrix from the lossless prototype
+            use_colorless_loss(bool): whether to use the colorless loss in the DiffGFDN cost function itself,
+                                      complementary to colorless_fdn_params, not to be used together
+
         """
         super().__init__(sample_rate, num_groups, delays, device,
                          feedback_loop_config, use_absorption_filters,
                          common_decay_times, band_centre_hz,
-                         colorless_fdn_params)
+                         colorless_fdn_params, use_colorless_loss)
 
         self.input_scalars = nn.Parameter(
             (torch.ones(self.num_groups, 1)) / np.sqrt(self.num_groups))
@@ -490,7 +529,12 @@ class DiffGFDNSinglePos(DiffGFDN):
         # pass through a lowpass filter
         lowpass_response = self.lowpass_filter(z, self.lowpass_biquad)
         H_lp = H * lowpass_response
-        return H_lp
+
+        if self.use_colorless_loss:
+            H_sub_fdn = super().sub_fdn_output(z)
+            return H_lp, H_sub_fdn
+        else:
+            return H_lp
 
     def get_output_filter(self, z_values: torch.tensor) -> torch.tensor:
         """Get the output filter response"""

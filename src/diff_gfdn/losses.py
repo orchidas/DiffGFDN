@@ -169,11 +169,18 @@ class edc_loss(nn.Module):
                 sample_rate, band_centre_hz)
             self.filter_order = self.filter_coeffs_sos.shape[0]
 
-    def schroeder_backward_integral(self, signal: torch.tensor):
+    def schroeder_backward_integral(self,
+                                    signal: torch.tensor,
+                                    normalize: bool = False):
         """Schroeder backward integral to calculate energy decay curve"""
         edc = torch.flip(torch.cumsum(torch.flip(signal**2, dims=[-1]),
                                       dim=-1),
                          dims=[-1])
+        if normalize:
+            # Normalize to 1
+            norm_vals, _ = torch.max(edc, dim=-1, keepdims=True)  # per channel
+            edc = torch.div(edc, norm_vals)
+
         return edc
 
     def forward(self, target_response: torch.tensor,
@@ -195,12 +202,12 @@ class edc_loss(nn.Module):
             target_edc = self.schroeder_backward_integral(target_rir)
             achieved_edc = self.schroeder_backward_integral(achieved_rir)
 
-            # according to mezza et a
+            # according to Mezza et al
             # loss = torch.div(
             #     torch.sum(torch.pow(target_edc - achieved_edc, 2)),
             #     torch.sum(torch.pow(target_edc, 2)))
 
-            # according to gotz
+            # according to Gotz
             loss = torch.mean(
                 torch.abs(
                     db(target_edc, is_squared=True) -

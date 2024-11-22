@@ -7,12 +7,9 @@ feedback_loop_config:
   coupling_matrix_type: 'scalar_matrix'
 output_filter_config:
   use_svfs: False
-colorless_fdn_config:
-  use_colorless_prototype: True
-  batch_size: 2000
-  max_epochs: 5
 trainer_config:
   max_epochs: 50
   io_lr: 0.1
-  train_dir: 'output/single_rir_out_gains_synth_data_colorless_prototype_pos2/'
-  ir_dir: 'audio/single_rir_out_gains_synth_data_colorless_prototype/'
+  use_colorless_loss: True
+  train_dir: 'output/single_rir_out_gains_scalar_coupling_colorless_loss_pos2/'
+  ir_dir: 'audio/single_rir_out_gains_scalar_coupling_colorless_loss/'

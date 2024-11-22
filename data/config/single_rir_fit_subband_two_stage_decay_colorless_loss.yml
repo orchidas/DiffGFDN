@@ -11,5 +11,6 @@ trainer_config:
   max_epochs: 20
   io_lr: 0.1
   num_freq_bins: 96000
-  train_dir: 'output/single_rir_out_gains_scalar_coupling_synth_data_freq_dep/'
-  ir_dir: 'audio/single_rir_out_gains_scalar_coupling_synth_data_freq_dep/'
+  use_colorless_loss: True
+  train_dir: 'output/single_rir_out_gains_synth_data_freq_dep_colorless_loss/'
+  ir_dir: 'audio/single_rir_out_gains_synth_data_freq_dep_colorless_loss/'

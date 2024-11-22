@@ -6,12 +6,12 @@ trainer_config:
   max_epochs: 20
   batch_size: 10
   train_valid_split: 0.9
-  train_dir: 'output/grid_rir_two_rooms_synth_data_broadband/'
-  ir_dir: 'audio/grid_rir_two_rooms_synth_data_broadband/'
+  use_colorless_loss: True
+  train_dir: 'output/grid_rir_two_rooms_synth_data_broadband_colorless_loss/'
+  ir_dir: 'audio/grid_rir_two_rooms_synth_data_broadband_colorless_loss/'
 feedback_loop_config:
   coupling_matrix_type: 'scalar_matrix'
 output_filter_config:
   use_svfs: False
   num_hidden_layers: 3
   num_neurons_per_layer: 32
-
