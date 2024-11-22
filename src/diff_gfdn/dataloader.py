@@ -261,19 +261,19 @@ class RoomDataset(ABC):
         mixing_time_samps = ms_to_samps(self.mixing_time_ms, self.sample_rate)
         win_len_samps = ms_to_samps(win_len_ms, self.sample_rate)
         window = np.broadcast_to(np.hanning(win_len_samps),
-                                 (self.rirs.shape[0], win_len_samps))
+                                 self.rirs.shape[:-1] + (win_len_samps, ))
 
         # create fade in and fade out windows to avoid discontinuities
-        fade_in_win = window[:, :win_len_samps // 2]
-        fade_out_win = window[:, win_len_samps // 2:]
+        fade_in_win = window[..., :win_len_samps // 2]
+        fade_out_win = window[..., win_len_samps // 2:]
 
         # truncate rir into early and late parts
-        self.early_rirs = self.rirs[:, :mixing_time_samps]
-        self.late_rirs = self.rirs[:, mixing_time_samps:]
+        self.early_rirs = self.rirs[..., :mixing_time_samps]
+        self.late_rirs = self.rirs[..., mixing_time_samps:]
 
         # apply fade-in and fade-out windows
-        self.early_rirs[:, -win_len_samps // 2:] *= fade_out_win
-        self.late_rirs[:, :win_len_samps // 2] *= fade_in_win
+        self.early_rirs[..., -win_len_samps // 2:] *= fade_out_win
+        self.late_rirs[..., :win_len_samps // 2] *= fade_in_win
 
         # get frequency response
         self.late_rir_mag_response = rfft(self.late_rirs,
