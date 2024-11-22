@@ -3,7 +3,7 @@ sample_rate: 48000.0
 num_delay_lines: 8
 use_absorption_filters: False
 trainer_config:
-  max_epochs: 10
+  max_epochs: 20
   batch_size: 10
   train_valid_split: 0.9
   train_dir: 'output/grid_rir_two_rooms_synth_data_broadband/'

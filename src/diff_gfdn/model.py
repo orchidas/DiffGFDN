@@ -271,7 +271,8 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
 
         self.use_svf_in_output = output_filter_config.use_svfs
         self.input_scalars = nn.Parameter(
-            (torch.ones(self.num_groups, 1)) / np.sqrt(self.num_groups))
+            (2 * torch.ones(self.num_groups, 1) - 1) /
+            np.sqrt(self.num_groups))
 
         if self.use_svf_in_output:
             logger.info("Using filters in output")
@@ -352,6 +353,23 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
                 svf_params, biquad_coeffs)
 
     @torch.no_grad()
+    def get_param_dict_inference(self, data: Dict) -> Dict:
+        """Get output of MLP during inference"""
+        param_np = {}
+        try:
+            param_out_mlp = self.output_filters.get_param_dict(data)
+            if self.use_svf_in_output:
+                param_np['output_svf_params'] = param_out_mlp['svf_params']
+                param_np['output_biquad_coeffs'] = param_out_mlp[
+                    'biquad_coeffs']
+
+            else:
+                param_np['output_scalars'] = param_out_mlp['gains']
+        except Exception as e:
+            logger.warning(e)
+        return param_np
+
+    @torch.no_grad()
     def get_param_dict(self) -> Dict:
         """Return the parameters as a dict"""
         param_np = {}
@@ -391,26 +409,6 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
                     'coupled_feedback_matrix'] = self.feedback_loop.coupled_feedback_matrix
         except Exception:
             logger.warning('Parameter not initialised yet in FeedbackLoop!')
-
-        try:
-            if self.use_svf_in_output:
-                param_np[
-                    'output_svf_params'] = self.output_filters.svf_params.squeeze(
-                    ).cpu().numpy()
-                param_np['output_biquad_coeffs'] = [[
-                    torch.cat(
-                        (self.output_filters.biquad_cascade[b][n].num_coeffs,
-                         self.output_filters.biquad_cascade[b][n].den_coeffs),
-                        dim=-1).squeeze().cpu().numpy()
-                    for n in range(self.num_groups)
-                ] for b in range(self.batch_size)]
-
-            else:
-                param_np['output_scalars'] = self.output_scalars.gains.squeeze(
-                ).cpu().numpy()
-
-        except Exception as e:
-            logger.warning(e)
 
         return param_np
 

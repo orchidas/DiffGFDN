@@ -6,8 +6,9 @@ trainer_config:
   max_epochs: 10
   batch_size: 10
   train_valid_split: 0.9
-  train_dir: 'output/grid_rir_two_rooms_synth_data_broadband_colorless_fdn/'
-  ir_dir: 'audio/grid_rir_two_rooms_synth_data_broadband_colorless_fdn/'
+  edr_loss_weight: 0.0
+  train_dir: 'output/grid_rir_two_rooms_synth_data_broadband_colorless_fdn_no_edr_loss/'
+  ir_dir: 'audio/grid_rir_two_rooms_synth_data_broadband_colorless_fdn_no_edr_loss/'
 colorless_fdn_config:
   use_colorless_prototype: True
   batch_size: 2000

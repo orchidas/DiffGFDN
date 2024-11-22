@@ -47,7 +47,8 @@ class Trainer:
             edc_loss(self.net.common_decay_times.max() * 1e3,
                      self.net.sample_rate)
         ]
-        self.loss_weights = torch.tensor([1.0, 1.0])
+        self.loss_weights = torch.tensor(
+            [trainer_config.edr_loss_weight, trainer_config.edc_loss_weight])
 
         if trainer_config.use_reg_loss:
             logger.info(
@@ -64,7 +65,10 @@ class Trainer:
         if self.use_colorless_loss:
             logger.info('Using colorless FDN loss for each sub-FDN')
             self.colorless_criterion = [amse_loss(), sparsity_loss()]
-            self.colorless_loss_weights = torch.tensor([1.0, 1.0])
+            self.colorless_loss_weights = torch.tensor([
+                trainer_config.spectral_loss_weight,
+                trainer_config.sparsity_loss_weight
+            ])
 
     def init_scheduler(self, trainer_config: TrainerConfig):
         """
