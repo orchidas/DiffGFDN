@@ -47,7 +47,6 @@ class amse_loss(nn.Module):
         """
         # loss on system's output
         loss = self.p_loss(y_pred, y_true)
-
         return loss
 
     def p_loss(self, y_pred: torch.tensor, y_true: torch.tensor):

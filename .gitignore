@@ -4,3 +4,6 @@ __pycache__
 DiffGFDN.egg-info
 .DS_Store
 .vscode/
+/output/grid_rir_two_rooms_synth_data_broadband_colorless_fdn/colorless-fdn/audio
+/output/grid_rir_two_rooms_synth_data_broadband_colorless_fdn/colorless-fdn/checkpoints
+/output
