@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import pickle
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from loguru import logger
 import matplotlib.pyplot as plt
@@ -562,7 +562,7 @@ class SingleRIRDataset(data.Dataset):
         """Get length of dataset (equal to number of receiver positions)"""
         return len(self.z_values)
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> Dict:
         """Get data at a particular index"""
         return {
             'z_values': self.z_values[idx],

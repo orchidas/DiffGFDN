@@ -357,13 +357,14 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
         """Get output of MLP during inference"""
         param_np = {}
         try:
-            param_out_mlp = self.output_filters.get_param_dict(data)
             if self.use_svf_in_output:
+                param_out_mlp = self.output_filters.get_param_dict(data)
                 param_np['output_svf_params'] = param_out_mlp['svf_params']
                 param_np['output_biquad_coeffs'] = param_out_mlp[
                     'biquad_coeffs']
 
             else:
+                param_out_mlp = self.output_scalars.get_param_dict(data)
                 param_np['output_scalars'] = param_out_mlp['gains']
         except Exception as e:
             logger.warning(e)

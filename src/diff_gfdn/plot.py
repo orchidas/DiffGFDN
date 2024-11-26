@@ -540,6 +540,8 @@ def plot_edc_error_in_space(room_data: RoomDataset,
                         aperture_coords=aperture_coordinates)
     rec_points = np.array(room_data.receiver_position)
     src_pos = np.array(room_data.source_position)
+    if src_pos.ndim == 1:
+        src_pos = src_pos[np.newaxis, :]
     is_in_subbands = t_vals.shape[1] > 1
     original_rirs = room_data.rirs
 
@@ -646,6 +648,8 @@ def plot_amps_in_space(room_data: RoomDataset,
                         aperture_coords=aperture_coordinates)
     rec_points = np.array(room_data.receiver_position)
     src_pos = np.array(room_data.source_position)
+    if src_pos.ndim == 1:
+        src_pos = src_pos[np.newaxis, :]
     is_in_subbands = t_vals.shape[1] > 1
     est_amps = np.zeros_like(original_amps)
 
