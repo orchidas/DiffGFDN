@@ -331,6 +331,8 @@ class DiffGFDNVarSourceReceiverPos(DiffGFDN):
         Compute H(z) = c(z)^T (D - A(z)Gamma(z))^{-1} b(z) + d(z)
         Args:
             x(dict) : input feature dict
+        Returns:
+            H (tensor): tensor of size num_src x num_rec x num_freq_points
         """
         z = x['z_values']
         self.batch_size = x['listener_position'].shape[0]
@@ -342,6 +344,7 @@ class DiffGFDNVarSourceReceiverPos(DiffGFDN):
         B_init = to_complex(
             self.input_gains.expand(self.batch_size, self.num_delay_lines,
                                     num_freq_pts))
+
         # this is of size B x Ndel x num_freq_points
         if self.use_svf_in_output:
             C = self.output_filters(x) * C_init
@@ -358,19 +361,22 @@ class DiffGFDNVarSourceReceiverPos(DiffGFDN):
         # C.T @ P of size B x Ndel x num_freq_pts
         Htemp = torch.einsum('knb, knm -> kmb', C.permute(-1, 1, 0),
                              P).permute(-1, 1, 0)
-        # C.T @ P @ B + d(z)
+
+        # loop over different sources (input gains)
         direct_filter = x['target_early_response']
+
+        # C.T @ P @ B + d(z)
         H = torch.einsum('bmk, bmk -> bk', Htemp, B) + direct_filter
 
         # pass through a lowpass filter
-        lowpass_response = self.lowpass_filter(z, self.lowpass_biquad)
-        H_lp = H * lowpass_response
+        # lowpass_response = self.lowpass_filter(z, self.lowpass_biquad)
+        # H_lp = H * lowpass_response
 
         if self.use_colorless_loss:
             H_sub_fdn = super().sub_fdn_output(z)
-            return H_lp, H_sub_fdn
+            return H, H_sub_fdn
         else:
-            return H_lp
+            return H
 
     def get_parameters(self) -> Tuple:
         """Return the parameters as a tuple"""

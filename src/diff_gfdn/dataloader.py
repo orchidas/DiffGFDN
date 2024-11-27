@@ -641,7 +641,6 @@ def custom_collate(batch: data.Dataset):
         item['target'].late_rir_mag_response for item in batch
     ]
     target_rir_response = [item['target'].rir_mag_response for item in batch]
-
     return {
         'z_values': z_values,
         'source_position': torch.stack(source_positions),
@@ -696,6 +695,7 @@ def get_dataloader(dataset: data.Dataset,
                                      drop_last=drop_last,
                                      collate_fn=custom_collate)
 
+    logger.info(f"Number of batches : {len(dataloader)}")
     return dataloader
 
 

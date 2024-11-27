@@ -489,13 +489,15 @@ def find_correct_axis(desired_dim: int, array_shape: Tuple):
     return desired_axis
 
 
-def plot_edc_error_in_space(room_data: RoomDataset,
-                            all_rirs: Union[NDArray, List],
-                            all_pos: Union[NDArray, List],
-                            freq_to_plot: Optional[float] = 1000.0,
-                            scatter: bool = False,
-                            save_path: Optional[str] = None,
-                            pos_sorted: bool = False):
+def plot_edc_error_in_space(
+    room_data: RoomDataset,
+    all_rirs: Union[NDArray, List],
+    all_pos: Union[NDArray, List],
+    freq_to_plot: Optional[float] = 1000.0,
+    scatter: bool = False,
+    save_path: Optional[str] = None,
+    pos_sorted: bool = False,
+):
     """
     Plot the EDC matching error in dB as a function of spatial location
     Args:
@@ -506,7 +508,7 @@ def plot_edc_error_in_space(room_data: RoomDataset,
         scatter (bool): whether to make a scatter plot (discrete), or a surface plot (continuous)
         save_path (optional, str): path to save the file
         mixing_time_ms (float): truncate RIR before this time
-        pos_sorted (bool): whether the positions are sorted in all_pos
+        pos_sorted (bool): whether the positions are sorted in all_{src,rec}_pos
     """
 
     def get_edc_error(original_rirs: NDArray, original_points: NDArray,
@@ -548,7 +550,7 @@ def plot_edc_error_in_space(room_data: RoomDataset,
     for src_idx in tqdm(range(len(src_pos))):
         cur_src_pos = np.squeeze(src_pos[src_idx])
         cur_est_rirs = np.squeeze(
-            all_rirs[src_idx,
+            all_rirs[[src_idx],
                      ...]) if len(src_pos) > 1 else np.asarray(all_rirs)
         cur_original_rirs = np.squeeze(
             original_rirs[src_idx, ...]) if len(src_pos) > 1 else original_rirs
@@ -599,23 +601,25 @@ def plot_edc_error_in_space(room_data: RoomDataset,
             if save_path is not None else None)
 
 
-def plot_amps_in_space(room_data: RoomDataset,
-                       all_rirs: Union[NDArray, List],
-                       all_pos: Union[NDArray, List],
-                       freq_to_plot: Optional[float] = 1000.0,
-                       scatter: bool = False,
-                       save_path: Optional[str] = None,
-                       pos_sorted: bool = False):
+def plot_amps_in_space(
+    room_data: RoomDataset,
+    all_rirs: Union[NDArray, List],
+    all_rec_pos: Union[NDArray, List],
+    freq_to_plot: Optional[float] = 1000.0,
+    scatter: bool = False,
+    save_path: Optional[str] = None,
+    pos_sorted: bool = False,
+):
     """
     Plot the amplitudes as a function of spatial location at frequency 'freq_to_plot' Hz
     Args:
         room_data (RoomDataset): object containing information of room geometry, decay times and amplitudes
         all_rirs (List): list of RIRs at all positions synthesized by the GFDN
-        all_pos (List): list of positions at which the RIRs are synthesized
+        all_rec_pos (List): list of receiver positions at which the RIRs are synthesized
         freq_to_plot (optional, float): which frequency to plot the amplitudes at
         scatter (bool): whether to make a scatter plot (discrete), or a surface plot (continuous)
         save_path (optional, str): path to save the file
-        pos_sorted (bool): whether the positions are sorted in all_pos
+        pos_sorted (bool): whether the positions are sorted in all_{src,rec}_pos
     """
 
     def get_amplitude_error(original_amps: NDArray, original_points: NDArray,
@@ -655,6 +659,7 @@ def plot_amps_in_space(room_data: RoomDataset,
 
     for src_idx in tqdm(range(len(src_pos))):
         cur_src_pos = np.squeeze(src_pos[src_idx])
+
         est_rirs = np.squeeze(
             all_rirs[src_idx,
                      ...]) if len(src_pos) > 1 else np.asarray(all_rirs)
@@ -684,7 +689,7 @@ def plot_amps_in_space(room_data: RoomDataset,
             band_centre_hz = None
             save_name = f'{save_path}_src=({cur_src_pos[0]:.2f}, {cur_src_pos[1]:.2f}, {cur_src_pos[2]:.2f})'
 
-        est_rec_pos = np.asarray(all_pos)
+        est_rec_pos = np.asarray(all_rec_pos)
         # these are of shape num_rec x num_slope x num_fbands
         cur_est_amps = calculate_amplitudes_least_squares(
             t_vals_expanded, room_data.sample_rate, est_rirs_filtered,
