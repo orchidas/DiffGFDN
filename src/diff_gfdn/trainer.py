@@ -238,11 +238,13 @@ class VarReceiverPosTrainer(Trainer):
         # save the trained IRs
         logger.info("Saving the trained IRs...")
         for data in train_dataset:
-            position = data['listener_position']
+            src_position = data['source_position']
+            rec_position = data['listener_position']
             self.save_ir(
                 data,
                 directory=self.ir_dir,
-                pos_list=position,
+                src_pos=src_position,
+                rec_pos=rec_position,
             )
 
     def train_step(self, data):
@@ -294,18 +296,21 @@ class VarReceiverPosTrainer(Trainer):
         self.individual_valid_loss = []
 
         for data in valid_dataset:
-            position = data['listener_position']
+            rec_position = data['listener_position']
+            src_position = data['source_position']
             logger.info("Running the network for new batch of positiions")
             cur_all_losses = {}
             if self.use_colorless_loss:
                 H, H_sub_fdn = self.save_ir(data,
                                             directory=self.ir_dir,
-                                            pos_list=position,
+                                            src_pos=src_position,
+                                            rec_pos=rec_position,
                                             filename_prefix="valid_ir")
             else:
                 H = self.save_ir(data,
                                  directory=self.ir_dir,
-                                 pos_list=position,
+                                 src_pos=src_position,
+                                 rec_pos=rec_position,
                                  filename_prefix="valid_ir")
 
             edr_loss_val = self.loss_weights[0] * self.criterion[0](
@@ -357,7 +362,8 @@ class VarReceiverPosTrainer(Trainer):
         self,
         input_features: Dict,
         directory: str,
-        pos_list: torch.tensor,
+        src_pos: torch.tensor,
+        rec_pos: torch.tensor,
         filename_prefix: str = "ir",
         norm: bool = True,
     ) -> torch.tensor:
@@ -385,19 +391,30 @@ class VarReceiverPosTrainer(Trainer):
         if norm:
             h = torch.div(h, torch.max(torch.abs(h)))
 
-        for num_pos in range(pos_list.shape[0]):
-            filename = (
-                f'{filename_prefix}_({pos_list[num_pos,0]:.2f}, '
-                f'{pos_list[num_pos, 1]:.2f}, {pos_list[num_pos, 2]:.2f}).wav')
+        for src_idx in range(src_pos.shape[0]):
+            for num_pos in range(rec_pos.shape[0]):
 
-            filepath = os.path.join(directory, filename)
-            # for some reason torch audio expects a 2D tensor
-            torchaudio.save(filepath,
-                            torch.stack((h[num_pos, :], h[num_pos, :]),
-                                        dim=1).cpu(),
-                            int(self.net.sample_rate),
-                            bits_per_sample=32,
-                            channels_first=False)
+                if src_pos.shape[0] == 1:
+                    filename = (
+                        f'{filename_prefix}_({rec_pos[num_pos,0]:.2f}, '
+                        f'{rec_pos[num_pos, 1]:.2f}, {rec_pos[num_pos, 2]:.2f}).wav'
+                    )
+                else:
+                    filename = (
+                        f'{filename_prefix}_src_pos=({src_pos[src_idx,0]:.2f}, '
+                        f'{src_pos[src_idx, 1]:.2f}, {src_pos[src_idx, 2]:.2f})'
+                        f'_rec_pos=({rec_pos[num_pos,0]:.2f}, '
+                        f'{rec_pos[num_pos, 1]:.2f}, {rec_pos[num_pos, 2]:.2f}).wav'
+                    )
+
+                filepath = os.path.join(directory, filename)
+                # for some reason torch audio expects a 2D tensor
+                torchaudio.save(filepath,
+                                torch.stack((h[num_pos, :], h[num_pos, :]),
+                                            dim=1).cpu(),
+                                int(self.net.sample_rate),
+                                bits_per_sample=32,
+                                channels_first=False)
         return (H, H_sub_fdn) if self.use_colorless_loss else H
 
 

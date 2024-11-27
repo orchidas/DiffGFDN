@@ -180,6 +180,7 @@ class DiffGFDNConfig(BaseModel):
     feedback_loop_config: FeedbackLoopConfig = FeedbackLoopConfig()
     # number of biquads in SVF
     output_filter_config: OutputFilterConfig = OutputFilterConfig()
+    input_filter_config: Optional[OutputFilterConfig] = OutputFilterConfig()
     # colorless FDN config
     colorless_fdn_config: ColorlessFDNConfig = ColorlessFDNConfig()
 

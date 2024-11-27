@@ -1,10 +1,10 @@
 import os
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 from loguru import logger
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
 import soundfile as sf
 import torch
 from torch import nn
@@ -12,18 +12,95 @@ from tqdm import tqdm
 
 from .config.config import DiffGFDNConfig
 from .dataloader import load_dataset, RIRData, RoomDataset
+from .filters.geq import design_geq
+from .gain_filters import BiquadCascade, SOSFilter
 from .model import DiffGFDNSinglePos
 from .solver import data_parser_var_receiver_pos, run_training_colorless_fdn
-from .utils import get_response, ms_to_samps
+from .utils import db, get_response, ms_to_samps
 
 # pylint: disable=W0632, E1136
+
+
+def fit_filters_to_gains(target_gains: ArrayLike,
+                         band_centre_hz: ArrayLike,
+                         fs: float,
+                         device: Optional[str] = 'cpu') -> SOSFilter:
+    """Fit SOSFilters to gains in subbands"""
+    shelving_crossover_hz = [
+        band_centre_hz[0] / pow(2, 1 / 2), band_centre_hz[-1] * pow(2, 1 / 2)
+    ]
+    b, a = design_geq(db(target_gains),
+                      center_freq=torch.tensor(band_centre_hz),
+                      shelving_crossover=torch.tensor(shelving_crossover_hz),
+                      fs=fs)
+    print(b.shape, a.shape)
+    filter_order = b.shape[0]
+    biquads = BiquadCascade(filter_order, b, a)
+    return SOSFilter(filter_order, biquads, device=device)
+
+
+def get_source_receiver_filters(
+        room_data: RoomDataset
+) -> Tuple[NDArray[np.object_], NDArray[np.object_]]:
+    """
+    Do a rank-1 decomposition of the matrix of common slope amplitudes to get the source and
+    receiver filters
+    Args:
+        room_data (RoomDataset): room dataset object
+    Returns:
+        Tuple[SOSFilter, SOSFilter]: the input and output filters of size 
+                                 num_src x num_slopes, num_rec x num_slopes
+    """
+    # this is of size num_src_pos x num_rec_pos x num_slopes x nbands
+    A_matrix = room_data.amplitudes
+    A_recons = np.zeros_like(A_matrix)
+    band_centre_hz = room_data.band_centre_hz
+    num_subbands = len(room_data.band_centre_hz)
+    assert A_matrix.shape[
+        -1] == num_subbands, "Centre frequencies must be in octave bands"
+
+    g_in = np.empty((room_data.num_src, room_data.num_rooms), dtype=SOSFilter)
+    g_out = np.empty((room_data.num_rec, room_data.num_rooms), dtype=SOSFilter)
+
+    g_in = np.zeros((room_data.num_src, room_data.num_rooms, num_subbands))
+    g_out = np.zeros((room_data.num_rec, room_data.num_rooms, num_subbands))
+
+    for k in range(room_data.num_rooms):
+        cur_gin = np.zeros((room_data.num_src, num_subbands))
+        cur_gout = np.zeros((room_data.num_rec, num_subbands))
+
+        for b in range(num_subbands):
+            cur_amp_matrix = A_matrix[..., k, b]
+            [U, S, Vh] = np.linalg.svd(cur_amp_matrix)
+            max_svd_idx = np.argmax(np.abs(S), axis=0)
+            cur_gin[:, b] = np.sqrt(S[max_svd_idx]) * U[max_svd_idx, :]
+            cur_gout[:, b] = np.sqrt(S[max_svd_idx]) * Vh[:, max_svd_idx]
+            cur_recons_matrix = cur_gin[:, b] @ cur_gout[:, b].T
+            A_recons[..., k, b] = cur_recons_matrix
+            logger.info(
+                f'Variance explained by first principal component: {S[max_svd_idx] / np.sum(S)}'
+            )
+            logger.info(
+                f'Reconstruction error: {np.linalg.norm(cur_amp_matrix - cur_recons_matrix)}'
+            )
+        # fit filters to get the desired gains in octave bands
+        for src_idx in range(room_data.num_src):
+            g_in[src_idx, k] = fit_filters_to_gains(cur_gin[src_idx, :],
+                                                    band_centre_hz,
+                                                    fs=room_data.sample_rate)
+        for rec_idx in range(room_data.num_rec):
+            g_out[rec_idx, k] = fit_filters_to_gains(cur_gout[rec_idx, :],
+                                                     band_centre_hz,
+                                                     fs=room_data.sample_rate)
+
+    return g_in, g_out
 
 
 def get_source_receiver_gains(
         room_data: RoomDataset) -> Tuple[NDArray, NDArray]:
     """
     Do a rank-1 decomposition of the matrix of common slope amplitudes to get the source and
-    receiver gains (one for each centre frequency)
+    receiver gains
     Args:
         room_data (RoomDataset): room dataset object
     Returns:
@@ -77,8 +154,14 @@ def run_low_rank_decomp(config_dict: DiffGFDNConfig) -> NDArray:
         trainer_config = trainer_config.copy(
             update={"batch_size": room_data.num_freq_bins})
 
+    # are the RIRs in frequency bands?
+    is_in_subbands = room_data.band_centre_hz is not None
+
     # get the source and receiver gains
-    g_in, g_out = get_source_receiver_gains(room_data)
+    if is_in_subbands:
+        g_in, g_out = get_source_receiver_filters(room_data)
+    else:
+        g_in, g_out = get_source_receiver_gains(room_data)
 
     # get the colorless FDN params
     if config_dict.colorless_fdn_config.use_colorless_prototype:
@@ -95,9 +178,10 @@ def run_low_rank_decomp(config_dict: DiffGFDNConfig) -> NDArray:
         trainer_config.device,
         config_dict.feedback_loop_config,
         config_dict.output_filter_config,
-        use_absorption_filters=False,
+        use_absorption_filters=is_in_subbands,
         common_decay_times=room_data.common_decay_times,
         colorless_fdn_params=colorless_fdn_params,
+        input_filter_config=config_dict.output_filter_config,
     )
 
     # loop over all source and receiver positions
@@ -109,9 +193,11 @@ def run_low_rank_decomp(config_dict: DiffGFDNConfig) -> NDArray:
                                    config_dict.sample_rate)
 
     for src_idx in tqdm(range(room_data.num_src)):
+
         src_pos_to_investigate = np.squeeze(
             np.round(room_data.source_position[src_idx, :], 2))
         logger.info(f'Running GFDN for source pos: {src_pos_to_investigate}')
+
         for rec_idx in range(room_data.num_rec):
             rec_pos_to_investigate = np.squeeze(
                 np.round(room_data.receiver_position[rec_idx, :], 2))
@@ -143,10 +229,15 @@ def run_low_rank_decomp(config_dict: DiffGFDNConfig) -> NDArray:
             model.eval()
             cur_gin = g_in[src_idx, :]
             cur_gout = g_out[rec_idx, :]
-            model.input_scalars = nn.Parameter(
-                torch.tensor(cur_gin[:, np.newaxis], dtype=torch.float32))
-            model.output_scalars = nn.Parameter(
-                torch.tensor(cur_gout[:, np.newaxis], dtype=torch.float32))
+
+            if is_in_subbands:
+                model.input_filters = cur_gout
+                model.output_filters = cur_gin
+            else:
+                model.input_scalars = nn.Parameter(
+                    torch.tensor(cur_gin[:, np.newaxis], dtype=torch.float32))
+                model.output_scalars = nn.Parameter(
+                    torch.tensor(cur_gout[:, np.newaxis], dtype=torch.float32))
 
             with torch.no_grad():
                 for data in train_dataset:

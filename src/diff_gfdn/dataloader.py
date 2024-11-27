@@ -203,7 +203,7 @@ class RoomDataset(ABC):
             common_decay_times (List[Union[ArrayLike, float]]): common decay times for the different rooms of 
                                                                 num_freq_bands x num_rooms
             amplitudes (NDArray): the amplitudes of the common slopes of size 
-                                  (num_freq_bands x  num_rooms x num_rec_pos)
+                                  (num_rec_pos x num_rooms x num_freq_bands)
             room_dims (List): l,w,h for each room in coupled space
             room_start_coord (List): coordinates of the room's starting vertex (first room starts at origin)
             absorption_coeffs (List, optional): uniform absorption coefficients for each room
@@ -360,14 +360,24 @@ class RoomDataset(ABC):
         if not os.path.isdir(directory):
             os.makedirs(directory)
 
-        for num_pos in range(self.num_rec):
-            filename = (
-                f'{filename_prefix}_({self.receiver_position[num_pos,0]:.2f}, '
-                f'{self.receiver_position[num_pos, 1]:.2f}, {self.receiver_position[num_pos, 2]:.2f}).wav'
-            )
+        for src_idx in range(self.num_src):
+            for num_pos in range(self.num_rec):
+                if self.num_src > 1:
+                    filename = (
+                        f'{filename_prefix}_src_pos=({self.source_position[src_idx,0]:.2f}, '
+                        f'{self.source_position[src_idx, 1]:.2f}, {self.source_position[src_idx, 2]:.2f})'
+                        f'_rec_pos=({self.receiver_position[num_pos,0]:.2f}, '
+                        f'{self.receiver_position[num_pos, 1]:.2f}, {self.receiver_position[num_pos, 2]:.2f}).wav'
+                    )
+                else:
+                    filename = (
+                        f'{filename_prefix}_({self.receiver_position[num_pos,0]:.2f}, '
+                        f'{self.receiver_position[num_pos, 1]:.2f}, {self.receiver_position[num_pos, 2]:.2f}).wav'
+                    )
 
-            filepath = os.path.join(directory, filename)
-            sf.write(filepath, self.rirs[num_pos, :], int(self.sample_rate))
+                filepath = os.path.join(directory, filename)
+                sf.write(filepath, self.rirs[src_idx, num_pos, :],
+                         int(self.sample_rate))
 
 
 class ThreeRoomDataset(RoomDataset):
@@ -475,6 +485,13 @@ class MultiRIRDataset(data.Dataset):
         self.mesh_3D = room_data.mesh_3D
         self.device = device
 
+        # if we have multiple sources in the dataset
+        if self.source_position.dim() > 1:
+            # Generate all valid (idx1, idx2) pairs
+            self.index_pairs = [(i, j)
+                                for i in range(len(self.source_position))
+                                for j in range(len(self.listener_positions))]
+
         # frequency-domain data
         freq_bins_rad = torch.tensor(room_data.freq_bins_rad)
 
@@ -505,12 +522,24 @@ class MultiRIRDataset(data.Dataset):
     def __getitem__(self, idx: int):
         """Get data at a particular index"""
         # Return an instance of InputFeatures
-        input_features = InputFeatures(self.z_values, self.source_position,
-                                       self.listener_positions[idx],
-                                       self.mesh_3D)
-        target_labels = Target(self.early_rir_mag_response[idx, :],
-                               self.late_rir_mag_response[idx, :],
-                               self.rir_mag_response[idx, :])
+
+        if self.source_position.shape[0] == 1:
+            input_features = InputFeatures(self.z_values, self.source_position,
+                                           self.listener_positions[idx],
+                                           self.mesh_3D)
+            target_labels = Target(self.early_rir_mag_response[idx, :],
+                                   self.late_rir_mag_response[idx, :],
+                                   self.rir_mag_response[idx, :])
+        else:
+            idx1, idx2 = self.index_pairs[idx]
+            input_features = InputFeatures(self.z_values,
+                                           self.source_position[idx1],
+                                           self.listener_positions[idx2],
+                                           self.mesh_3D)
+            target_labels = Target(self.early_rir_mag_response[idx1, idx2, :],
+                                   self.late_rir_mag_response[idx1, idx2, :],
+                                   self.rir_mag_response[idx1, idx2, :])
+
         return {'input': input_features, 'target': target_labels}
 
 

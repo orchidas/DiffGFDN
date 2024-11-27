@@ -2,15 +2,13 @@ import os
 from pathlib import Path
 import pickle
 import re
-from typing import Dict, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple
 
 from loguru import logger
 import matplotlib.pyplot as plt
 import numpy as np
 import optuna
-from scipy.io import savemat
 import torch
-from torch.utils.data import DataLoader
 
 from .colorless_fdn.dataloader import load_colorless_fdn_dataset
 from .colorless_fdn.model import ColorlessFDN
@@ -18,140 +16,13 @@ from .colorless_fdn.trainer import ColorlessFDNTrainer
 from .colorless_fdn.utils import ColorlessFDNResults
 from .config.config import DiffGFDNConfig
 from .dataloader import load_dataset, RIRData, RoomDataset, ThreeRoomDataset
-from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
+from .hypertuning import mlp_hyperparameter_tuning, MLPTuningConfig
+from .model import DiffGFDNSinglePos, DiffGFDNVarReceiverPos, DiffGFDNVarSourceReceiverPos
+from .save_results import save_colorless_fdn_parameters, save_diff_gfdn_parameters, save_loss
 from .trainer import SinglePosTrainer, VarReceiverPosTrainer
 from .utils import db
 
 # pylint: disable=W0718
-
-
-def save_diff_gfdn_parameters(net: DiffGFDN, dir_path: str, filename: str):
-    """
-    Save parameters of DiffGFDN() net to .mat file 
-    Args    net (nn.Module): trained FDN() network
-            dir_path (string): path to output firectory
-            filename (string): name of the file 
-    Output  param (dictionary of tensors): FDN() net parameters
-            param_np (dictionary of numpy arrays): DiffGFDN() net parameters
-    """
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path)
-
-    param = fdn2dir(net)
-    param_np = {}
-    for name, value in param.items():
-        try:
-            param_np[name] = value.squeeze().cpu().numpy()
-        except AttributeError:
-            param_np[name] = value
-    # save parameters in numpy format
-    savemat(os.path.join(dir_path, filename), param_np)
-
-    return param, param_np
-
-
-def save_colorless_fdn_parameters(net: ColorlessFDN, dir_path: str,
-                                  filename: str) -> ColorlessFDNResults:
-    """
-    Save parameters of ColorlessFDN() net to .pkl file 
-    Args    net (nn.Module): trained FDN() network
-            dir_path (string): path to output firectory
-            filename (string): name of the file 
-    Output  ColorlessFDNResults: dataclass containing the results of optimisation
-    """
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path)
-
-    param = fdn2dir(net)
-    param_np = {}
-    for name, value in param.items():
-        try:
-            param_np[name] = value.squeeze().cpu().numpy() if isinstance(
-                value, torch.Tensor) else value
-        except AttributeError:
-            param_np[name] = value
-
-    colorless_fdn_params = ColorlessFDNResults(
-        opt_input_gains=param_np['input_gains'],
-        opt_output_gains=param_np['output_gains'],
-        opt_feedback_matrix=param_np['feedback_matrix'])
-    # save parameters in numpy format
-    with open(os.path.join(dir_path, filename), "wb") as f:
-        pickle.dump(colorless_fdn_params, f)
-
-    return colorless_fdn_params
-
-
-def fdn2dir(net: Union[DiffGFDN, ColorlessFDN]):
-    """
-    Save learnable parameters to a dictionary  
-    Args    net (nn.Module): trained FDN() network
-    Output  d (dictionary of tensors): FDN() net parameters 
-    """
-    d = {}  # empty dictionary
-    # from parameter dictionary of model
-    d = net.get_param_dict()
-
-    # MLP learned weights and biases
-    for name, param in net.named_parameters():
-        if param.requires_grad and name not in d.keys():
-            d[name] = param.data
-
-    return d
-
-
-def save_loss(train_loss: List,
-              output_dir: str,
-              save_plot=True,
-              filename: str = '',
-              xaxis_label: Optional[str] = "epoch #",
-              individual_losses: Optional[List[Dict]] = None):
-    """
-    Save training and validation loss values in .mat format
-    Args    train_loss (list): training loss values at each epoch
-            output_dir (string): path to output directory
-            save_plot (bool): if True saves the plot of the losses in .pdf format
-            filename (string): additional string to add before .pdf and .mat
-    """
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
-    n_epochs = len(train_loss)
-    losses = {}
-    losses['train'] = train_loss
-    individual_losses_mat = {}
-
-    if save_plot:
-        plt.figure()
-        plt.plot(range(1, n_epochs + 1), train_loss)
-        plt.xlabel(xaxis_label)
-        plt.ylabel('loss')
-        plt.savefig(os.path.join(output_dir, filename + '.pdf'))
-
-        if individual_losses is not None:
-            keys = individual_losses[0].keys()
-            plt.figure()
-
-            for key in keys:
-                loss_values = [
-                    d[key].detach().numpy() for d in individual_losses
-                ]
-                individual_losses_mat[key] = loss_values
-                plt.semilogy(range(1, n_epochs + 1), loss_values, label=key)
-
-            plt.xlabel(xaxis_label)
-            plt.ylabel('loss (log)')
-            plt.legend()
-            plt.savefig(
-                os.path.join(output_dir, filename + '_individual_loss.pdf'))
-
-    savemat(os.path.join(output_dir, 'losses_' + filename + '.mat'), losses)
-
-    if individual_losses is not None:
-        savemat(
-            os.path.join(output_dir, 'individual_losses_' + filename + '.mat'),
-            individual_losses_mat)
-
 
 ####################################################################
 # For training with artificial dataset
@@ -310,85 +181,6 @@ def data_parser_single_receiver_pos(
     return rir_data, room_data, ir_name
 
 
-##########################################################################
-# For MLP hyperparameter tuning
-
-
-class MLPTuningConfig:
-    """Class for specifying input arguments to the hyperparameter tuning method"""
-
-    def __init__(self,
-                 config_dict: DiffGFDNConfig,
-                 room_data: RoomDataset,
-                 train_dataset: DataLoader,
-                 valid_dataset: DataLoader,
-                 colorless_fdn_params: Optional[ColorlessFDNResults] = None):
-        """
-        Args:
-            config_dict (DiffGFDNConfig): config file for the network
-            room_data (RoomDataset): object containing information about the room's geometry
-            train_dataset (Dataloader): dataset containing training samples
-            valid_dataset (Dataloader): dataset containing validation samples
-            colorless_fdn_params (ColorlessFDNResults): if using a colorless FDN, then the optimised parameters
-        """
-        self.config_dict = config_dict
-        self.room_data = room_data
-        self.train_dataset = train_dataset
-        self.valid_dataset = valid_dataset
-        self.colorless_fdn_params = colorless_fdn_params
-
-
-def mlp_hyperparameter_tuning(trial, hyp_config: MLPTuningConfig):
-    """Do hyperparameter tuning for the MLP"""
-    # Define hyperparameters to tune
-    output_filter_config = hyp_config.config_dict.output_filter_config
-    mlp_tuning_config = output_filter_config.mlp_tuning_config
-    trainer_config = hyp_config.config_dict.trainer_config
-    output_filter_config = output_filter_config.model_copy(
-        update={
-            'num_hidden_layers':
-            trial.suggest_int('num_hidden_layers', mlp_tuning_config.
-                              min_layers, mlp_tuning_config.max_layers),
-            'num_neurons_per_layer':
-            trial.suggest_int('num_neurons_per_layer',
-                              mlp_tuning_config.min_neurons,
-                              mlp_tuning_config.max_neurons,
-                              step=mlp_tuning_config.step_size)
-        })
-
-    # initialise the model
-    model = DiffGFDNVarReceiverPos(
-        hyp_config.room_data.sample_rate,
-        hyp_config.room_data.num_rooms,
-        hyp_config.config_dict.delay_length_samps,
-        trainer_config.device,
-        hyp_config.config_dict.feedback_loop_config,
-        output_filter_config,
-        hyp_config.config_dict.use_absorption_filters,
-        common_decay_times=hyp_config.room_data.common_decay_times,
-        band_centre_hz=hyp_config.room_data.band_centre_hz,
-        colorless_fdn_params=hyp_config.colorless_fdn_params,
-        use_colorless_loss=trainer_config.use_colorless_loss)
-    # set default device
-    torch.set_default_device(trainer_config.device)
-    # move model to device (cuda or cpu)
-    model = model.to(trainer_config.device)
-    # create the trainer object
-    trainer = VarReceiverPosTrainer(model, trainer_config)
-    # train the network
-    trainer.train(hyp_config.train_dataset)
-
-    # test the network with the validation set
-    trainer.validate(hyp_config.valid_dataset)
-    # save the validation loss
-    save_loss(trainer.valid_loss,
-              trainer_config.train_dir,
-              save_plot=True,
-              filename='test_loss_vs_position',
-              xaxis_label='Position #')
-    return trainer.valid_loss
-
-
 #############################################################################
 # For training the model
 
@@ -461,11 +253,14 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
     Args:
         config_dict (DiffGFDNTrainConfig): configuration parameters for training
     """
-    logger.info("Training over a grid of listener positions")
-
     # get the data
     room_data = data_parser_var_receiver_pos(
         config_dict, num_freq_bins=config_dict.trainer_config.num_freq_bins)
+
+    if room_data.num_src == 1:
+        logger.info("Training over a grid of listener positions")
+    else:
+        logger.info("Training over a grid of source and listener positions")
 
     # add number of groups to the config dictionary
     config_dict = config_dict.model_copy(
@@ -533,20 +328,36 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
                 }, f)
     # or are we running the network with fixed hyperparameters?
     else:
-        # initialise the model
-        model = DiffGFDNVarReceiverPos(
-            room_data.sample_rate,
-            room_data.num_rooms,
-            config_dict.delay_length_samps,
-            trainer_config.device,
-            config_dict.feedback_loop_config,
-            config_dict.output_filter_config,
-            config_dict.use_absorption_filters,
-            common_decay_times=room_data.common_decay_times,
-            band_centre_hz=room_data.band_centre_hz,
-            colorless_fdn_params=colorless_fdn_params,
-            use_colorless_loss=trainer_config.use_colorless_loss,
-        )
+        if room_data.num_src == 1:
+            # initialise the model
+            model = DiffGFDNVarReceiverPos(
+                room_data.sample_rate,
+                room_data.num_rooms,
+                config_dict.delay_length_samps,
+                trainer_config.device,
+                config_dict.feedback_loop_config,
+                config_dict.output_filter_config,
+                config_dict.use_absorption_filters,
+                common_decay_times=room_data.common_decay_times,
+                band_centre_hz=room_data.band_centre_hz,
+                colorless_fdn_params=colorless_fdn_params,
+                use_colorless_loss=trainer_config.use_colorless_loss,
+            )
+        else:
+            model = DiffGFDNVarSourceReceiverPos(
+                room_data.sample_rate,
+                room_data.num_rooms,
+                config_dict.delay_length_samps,
+                trainer_config.device,
+                config_dict.feedback_loop_config,
+                config_dict.output_filter_config,
+                config_dict.input_filter_config,
+                config_dict.use_absorption_filters,
+                common_decay_times=room_data.common_decay_times,
+                band_centre_hz=room_data.band_centre_hz,
+                colorless_fdn_params=colorless_fdn_params,
+                use_colorless_loss=trainer_config.use_colorless_loss,
+            )
         # set default device
         torch.set_default_device(trainer_config.device)
         # move model to device (cuda or cpu)
