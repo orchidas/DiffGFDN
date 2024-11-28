@@ -128,7 +128,7 @@ class RIRData:
             return self.nfft
         else:
             max_rt60_samps = self.common_decay_times.max() * self.sample_rate
-            return int(np.pow(2, np.ceil(np.log2(max_rt60_samps))))
+            return int(np.power(2, np.ceil(np.log2(max_rt60_samps))))
 
     @property
     def freq_bins_rad(self):
@@ -220,7 +220,8 @@ class RoomDataset(ABC):
         self.common_decay_times = common_decay_times
         self.amplitudes = amplitudes
         self.num_rec = self.receiver_position.shape[0]
-        self.num_src = self.source_position.shape[0]
+        self.num_src = self.source_position.shape[
+            0] if self.source_position.ndim > 1 else 1
         self.rir_length = self.rirs.shape[-1]
         self.absorption_coeffs = absorption_coeffs
         self.room_dims = room_dims
@@ -239,7 +240,7 @@ class RoomDataset(ABC):
             return self.nfft
         else:
             max_rt60_samps = self.common_decay_times.max() * self.sample_rate
-            return int(np.pow(2, np.ceil(np.log2(max_rt60_samps))))
+            return int(np.power(2, np.ceil(np.log2(max_rt60_samps))))
 
     @property
     def freq_bins_rad(self):
@@ -361,23 +362,24 @@ class RoomDataset(ABC):
             os.makedirs(directory)
 
         for src_idx in range(self.num_src):
-            for num_pos in range(self.num_rec):
+            for rec_idx in range(self.num_rec):
                 if self.num_src > 1:
                     filename = (
                         f'{filename_prefix}_src_pos=({self.source_position[src_idx,0]:.2f}, '
                         f'{self.source_position[src_idx, 1]:.2f}, {self.source_position[src_idx, 2]:.2f})'
-                        f'_rec_pos=({self.receiver_position[num_pos,0]:.2f}, '
-                        f'{self.receiver_position[num_pos, 1]:.2f}, {self.receiver_position[num_pos, 2]:.2f}).wav'
+                        f'_rec_pos=({self.receiver_position[rec_idx,0]:.2f}, '
+                        f'{self.receiver_position[rec_idx, 1]:.2f}, {self.receiver_position[rec_idx, 2]:.2f}).wav'
                     )
+                    rir = self.rirs[src_idx, rec_idx, :]
                 else:
                     filename = (
-                        f'{filename_prefix}_({self.receiver_position[num_pos,0]:.2f}, '
-                        f'{self.receiver_position[num_pos, 1]:.2f}, {self.receiver_position[num_pos, 2]:.2f}).wav'
+                        f'{filename_prefix}_({self.receiver_position[rec_idx,0]:.2f}, '
+                        f'{self.receiver_position[rec_idx, 1]:.2f}, {self.receiver_position[rec_idx, 2]:.2f}).wav'
                     )
+                    rir = self.rirs[rec_idx, :]
 
                 filepath = os.path.join(directory, filename)
-                sf.write(filepath, self.rirs[src_idx, num_pos, :],
-                         int(self.sample_rate))
+                sf.write(filepath, rir, int(self.sample_rate))
 
 
 class ThreeRoomDataset(RoomDataset):

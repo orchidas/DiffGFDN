@@ -776,6 +776,7 @@ class DiffGFDNSinglePos(DiffGFDN):
             # this is of size Ndel x num_freq_points
             C = self.get_filter(z, filt_type='output')
 
+        # of size Ndel x num_freq_points
         C *= C_init
 
         if not self.use_svf_in_input:
@@ -788,17 +789,18 @@ class DiffGFDNSinglePos(DiffGFDN):
         else:
             B = self.get_filter(z, filt_type='input')
 
+        # of size Ndel x num_freq_points
         B *= B_init
 
         # get the output of the feedback loop, this is of size num_freq_points x Ndel x Ndel
         P = self.feedback_loop(z)
 
-        # C.T @ P of size Ndel x num_freq_pts
+        # C.T @ P of size num_freq_pts x Ndel
         Htemp = torch.einsum('kn, knm -> km', C.permute(-1, 0), P)
         # C.T @ P @ B + d(z)
         direct_filter = x['target_early_response']
 
-        H = torch.einsum('ik, kj -> ij', Htemp, B).squeeze()
+        H = torch.einsum('ki, ik -> k', Htemp, B)
         H += direct_filter
 
         # pass through a lowpass filter

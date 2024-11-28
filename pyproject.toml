@@ -43,7 +43,9 @@ dependencies = [
     "scikit-learn",
     "onnx",
     "onnxruntime",
-    "optuna"
+    "optuna",
+    "plotly",
+    "kaleido",
 ]
 
 [project.optional-dependencies]

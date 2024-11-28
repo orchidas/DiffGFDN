@@ -9,8 +9,8 @@ output_filter_config:
   use_svfs: False
 colorless_fdn_config:
   use_colorless_prototype: True
-  batch_size: 2000
-  max_epochs: 5
+  batch_size: 4000
+  max_epochs: 15
 trainer_config:
   max_epochs: 50
   io_lr: 0.1

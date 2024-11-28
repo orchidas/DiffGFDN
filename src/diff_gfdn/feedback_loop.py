@@ -8,7 +8,7 @@ from .config.config import CouplingMatrixType
 from .gain_filters import BiquadCascade, IIRFilter, SOSFilter
 from .utils import matrix_convolution, to_complex
 
-# pylint: disable=E0606
+# pylint: disable=E0606, W0718
 
 
 class Skew(nn.Module):
@@ -376,8 +376,11 @@ class FeedbackLoop(nn.Module):
         # get the coupling matrix
         if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
             # computed as A = M_block circ (Phi otimes 1)
-            coupled_feedback_matrix = block_M * torch.kron(
-                self.phi, ones_matrix)
+            try:
+                coupled_feedback_matrix = block_M * torch.kron(
+                    self.phi, ones_matrix)
+            except Exception:
+                coupled_feedback_matrix = block_M
 
         elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
             # computed as A[k] = M_block circ (Phi[k] otimes 1)

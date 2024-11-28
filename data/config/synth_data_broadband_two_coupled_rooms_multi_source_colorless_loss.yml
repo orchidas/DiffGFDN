@@ -6,8 +6,10 @@ feedback_loop_config:
     coupling_matrix_type: 'scalar_matrix'
 output_filter_config:
     use_svfs: False
+    num_hidden_layers: 7
 input_filter_config:
     use_svfs: False
+    num_hidden_layers: 7
 trainer_config:
     max_epochs: 10
     batch_size: 100
