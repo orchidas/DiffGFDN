@@ -74,6 +74,8 @@ class DiffGFDN(nn.Module):
                                    dtype=torch.float32,
                                    device=self.device)
         self.delays = self.delays.to(self.device)
+        # Register delays as a buffer
+        self.register_buffer('delay_buffer', self.delays)
 
         # initialise input-output gains
         self._init_io_gains(colorless_fdn_params)
@@ -149,7 +151,10 @@ class DiffGFDN(nn.Module):
                     for i in range(self.num_groups)
                 ],
                              device=self.device))
+        # logger.info(f"Delay line lengths: {self.delays}")
         # logger.info(f"Gains in delay lines: {self.gain_per_sample}")
+        # Register delay filters as a buffer
+        self.register_buffer('delay_filters', self.gain_per_sample)
 
     def _init_feedback(self,
                        feedback_loop_config: FeedbackLoopConfig,
@@ -561,14 +566,14 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
         H = torch.einsum('bmk, bmk -> bk', Htemp, B) + direct_filter
 
         # pass through a lowpass filter
-        lowpass_response = self.lowpass_filter(z, self.lowpass_biquad)
-        H_lp = H * lowpass_response
+        # lowpass_response = self.lowpass_filter(z, self.lowpass_biquad)
+        # H_lp = H * lowpass_response
 
         if self.use_colorless_loss:
             H_sub_fdn = super().sub_fdn_output(z)
-            return H_lp, H_sub_fdn
+            return H, H_sub_fdn
         else:
-            return H_lp
+            return H
 
     def get_parameters(self) -> Tuple:
         """Return the parameters as a tuple"""
@@ -804,14 +809,14 @@ class DiffGFDNSinglePos(DiffGFDN):
         H += direct_filter
 
         # pass through a lowpass filter
-        lowpass_response = self.lowpass_filter(z, self.lowpass_biquad)
-        H_lp = H * lowpass_response
+        # lowpass_response = self.lowpass_filter(z, self.lowpass_biquad)
+        # H_lp = H * lowpass_response
 
         if self.use_colorless_loss:
             H_sub_fdn = super().sub_fdn_output(z)
-            return H_lp, H_sub_fdn
+            return H, H_sub_fdn
         else:
-            return H_lp
+            return H
 
     def get_filter(self,
                    z_values: torch.tensor,

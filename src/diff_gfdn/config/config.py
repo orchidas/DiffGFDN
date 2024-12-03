@@ -103,6 +103,8 @@ class TrainerConfig(BaseModel):
     edr_loss_weight: float = 1.0
     spectral_loss_weight: float = 1.0
     sparsity_loss_weight: float = 1.0
+    # whether to use masking while calculating edc loss
+    use_edc_mask: bool = False
     # whether to use frequency-based weighting in loss
     use_frequency_weighting: bool = False
     # directory to save results
@@ -194,6 +196,8 @@ class DiffGFDNConfig(BaseModel):
         prime_nums = np.array(list(
             sp.primerange(delay_range_samps[0], delay_range_samps[1])),
                               dtype=np.int32)
+
+        np.random.seed(self.seed)
         rand_primes = prime_nums[np.random.permutation(len(prime_nums))]
         # delay line lengths
         delay_lengths = np.array(np.r_[rand_primes[:self.num_delay_lines - 1],

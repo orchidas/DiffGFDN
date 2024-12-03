@@ -39,13 +39,17 @@ class Trainer:
         if not os.path.exists(self.ir_dir):
             os.makedirs(self.ir_dir)
 
+        if trainer_config.use_edc_mask:
+            logger.info("Using masked EDC loss")
+
         self.criterion = [
             edr_loss(self.net.sample_rate,
                      reduced_pole_radius=self.reduced_pole_radius,
                      use_erb_grouping=trainer_config.use_erb_edr_loss,
                      use_weight_fn=trainer_config.use_frequency_weighting),
             edc_loss(self.net.common_decay_times.max() * 1e3,
-                     self.net.sample_rate)
+                     self.net.sample_rate,
+                     use_mask=trainer_config.use_edc_mask)
         ]
         self.loss_weights = torch.tensor(
             [trainer_config.edr_loss_weight, trainer_config.edc_loss_weight])
@@ -391,10 +395,13 @@ class VarReceiverPosTrainer(Trainer):
         if norm:
             h = torch.div(h, torch.max(torch.abs(h)))
 
-        for src_idx in range(src_pos.shape[0]):
+        num_src = 1 if src_pos.ndim == 1 or torch.all(
+            src_pos == src_pos[0]) else src_pos.shape[0]
+
+        for src_idx in range(num_src):
             for num_pos in range(rec_pos.shape[0]):
 
-                if src_pos.shape[0] == 1:
+                if num_src == 1:
                     filename = (
                         f'{filename_prefix}_({rec_pos[num_pos,0]:.2f}, '
                         f'{rec_pos[num_pos, 1]:.2f}, {rec_pos[num_pos, 2]:.2f}).wav'

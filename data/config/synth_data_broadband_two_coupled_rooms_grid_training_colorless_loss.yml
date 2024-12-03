@@ -6,9 +6,10 @@ trainer_config:
   max_epochs: 20
   batch_size: 10
   train_valid_split: 0.9
+  use_edc_mask: True
   use_colorless_loss: True
-  train_dir: 'output/grid_rir_two_rooms_synth_data_broadband_colorless_loss/'
-  ir_dir: 'audio/grid_rir_two_rooms_synth_data_broadband_colorless_loss/'
+  train_dir: 'output/grid_rir_two_rooms_synth_data_broadband_colorless_loss_edc_mask/'
+  ir_dir: 'audio/grid_rir_two_rooms_synth_data_broadband_colorless_loss_edc_mask/'
 feedback_loop_config:
   coupling_matrix_type: 'scalar_matrix'
 output_filter_config:

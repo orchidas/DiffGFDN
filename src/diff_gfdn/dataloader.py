@@ -399,16 +399,13 @@ class ThreeRoomDataset(RoomDataset):
             logger.info('Reading pkl file ...')
             with open(filepath, 'rb') as f:
                 srir_mat = pickle.load(f)
-                sample_rate = srir_mat['fs'][0][0]
+                sample_rate = srir_mat['fs']
                 source_position = srir_mat['srcPos'].T
                 receiver_position = srir_mat['rcvPos'].T
-                # these are second order ambisonic signals
-                # I am guessing the first channel contains the W component
-                rirs = np.squeeze(srir_mat['srirs'][0, ...]).T
+                rirs = np.squeeze(srir_mat['srirs'])
                 band_centre_hz = srir_mat['band_centre_hz']
-                common_decay_times = np.asarray(
-                    np.squeeze(srir_mat['common_decay_times'], axis=1))
-                amplitudes = np.asarray(srir_mat['amplitudes'])
+                common_decay_times = srir_mat['common_decay_times']
+                amplitudes = srir_mat['amplitudes']
                 nfft = config_dict.trainer_config.num_freq_bins
         except Exception as exc:
             raise FileNotFoundError("pickle file not read correctly") from exc
@@ -493,7 +490,6 @@ class MultiRIRDataset(data.Dataset):
             self.index_pairs = [(i, j)
                                 for i in range(len(self.source_position))
                                 for j in range(len(self.listener_positions))]
-
         # frequency-domain data
         freq_bins_rad = torch.tensor(room_data.freq_bins_rad)
 
@@ -526,7 +522,8 @@ class MultiRIRDataset(data.Dataset):
         # Return an instance of InputFeatures
 
         if self.source_position.shape[0] == 1:
-            input_features = InputFeatures(self.z_values, self.source_position,
+            input_features = InputFeatures(self.z_values,
+                                           torch.squeeze(self.source_position),
                                            self.listener_positions[idx],
                                            self.mesh_3D)
             target_labels = Target(self.early_rir_mag_response[idx, :],

@@ -242,9 +242,11 @@ class FeedbackLoop(nn.Module):
                                     2))
 
                 else:
-                    # no coupling allowed
-                    self.alpha = torch.zeros(self.num_groups *
-                                             (self.num_groups - 1) // 2)
+                    # no coupling allowed - this makes alpha a fixed parameter
+                    self.register_buffer(
+                        "alpha",
+                        torch.zeros(self.num_groups * (self.num_groups - 1) //
+                                    2))
 
             elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
                 self.coupling_matrix_order = self.coupling_matrix_order
@@ -338,7 +340,6 @@ class FeedbackLoop(nn.Module):
                         self.num_delay_lines_per_group] = torch.mm(
                             self.ortho_param(self.M[i]),
                             self.ortho_param(self.M[j]))
-
         return block_M
 
     def construct_coupling_matrix(self):

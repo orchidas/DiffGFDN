@@ -151,6 +151,7 @@ class edc_loss(nn.Module):
         sample_rate: float,
         band_centre_hz: Optional[List] = None,
         mixing_time_ms: float = 20.0,
+        use_mask: bool = False,
     ):
         """
         Args:
@@ -159,6 +160,7 @@ class edc_loss(nn.Module):
             sample_rate (float): sampling frequency in Hz
             band_centre_hz (list, optional): centre frequencies of filters (if calculating subband EDC)
             mixing_time_ms (float): start the EDC calculation after the mixing time
+            use_mask (bool): randomly mask some of the indices to introduce stochasticity
         """
         super().__init__()
         self.max_ir_len_samps = ms_to_samps(max_ir_len_ms, sample_rate)
@@ -168,6 +170,7 @@ class edc_loss(nn.Module):
             self.filter_coeffs_sos = get_bandpass_filters(
                 sample_rate, band_centre_hz)
             self.filter_order = self.filter_coeffs_sos.shape[0]
+        self.use_mask = use_mask
 
     def schroeder_backward_integral(self,
                                     signal: torch.tensor,
@@ -202,6 +205,15 @@ class edc_loss(nn.Module):
             target_edc = self.schroeder_backward_integral(target_rir)
             achieved_edc = self.schroeder_backward_integral(achieved_rir)
 
+            # randomly mask some of the indices
+            if self.use_mask:
+                probs = torch.empty(target_rir.shape[-1]).uniform_(0, 1)
+                masked_index = torch.argwhere(torch.bernoulli(probs))
+            else:
+                masked_index = torch.arange(0,
+                                            target_rir.shape[-1],
+                                            dtype=torch.int32)
+
             # according to Mezza et al
             # loss = torch.div(
             #     torch.sum(torch.pow(target_edc - achieved_edc, 2)),
@@ -210,8 +222,8 @@ class edc_loss(nn.Module):
             # according to Gotz
             loss = torch.mean(
                 torch.abs(
-                    db(target_edc, is_squared=True) -
-                    db(achieved_edc, is_squared=True)))
+                    db(target_edc[..., masked_index], is_squared=True) -
+                    db(achieved_edc[..., masked_index], is_squared=True)))
         else:
             # EDC loss in subbands
             loss = 0.0
@@ -241,6 +253,15 @@ class edc_loss(nn.Module):
                     target_rir_band)
                 achieved_edc_band = self.schroeder_backward_integral(
                     achieved_rir_band)
+
+                if self.use_mask:
+                    probs = torch.empty(target_rir_band.shape[-1]).uniform_(
+                        0, 1)
+                    masked_index = torch.argwhere(torch.bernoulli(probs))
+                else:
+                    masked_index = torch.arange(0,
+                                                target_rir_band.shape[-1],
+                                                dtype=torch.int32)
 
                 loss += torch.mean(
                     torch.abs(target_edc_band - achieved_edc_band))
