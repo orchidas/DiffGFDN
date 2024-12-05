@@ -125,7 +125,8 @@ class DiffGFDN(nn.Module):
             # numerator (filter_order), denominator(filter_order))
             self.gain_per_sample = torch.tensor([
                 decay_times_to_gain_filters_geq(
-                    band_centre_hz, common_decay_times[:, i],
+                    band_centre_hz,
+                    np.squeeze(common_decay_times)[:, i],
                     self.delays_by_group[i], self.sample_rate).tolist()
                 for i in range(self.num_groups)
             ],
@@ -145,9 +146,9 @@ class DiffGFDN(nn.Module):
         else:
             self.gain_per_sample = torch.flatten(
                 torch.tensor([
-                    decay_times_to_gain_per_sample(common_decay_times[0][i],
-                                                   self.delays_by_group[i],
-                                                   self.sample_rate).tolist()
+                    decay_times_to_gain_per_sample(
+                        np.squeeze(common_decay_times)[i],
+                        self.delays_by_group[i], self.sample_rate).tolist()
                     for i in range(self.num_groups)
                 ],
                              device=self.device))

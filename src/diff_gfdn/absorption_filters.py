@@ -126,7 +126,7 @@ def decay_times_to_gain_filters_geq(band_centre_hz: List,
             db(target_gains_linear_pad[:, i]),
             center_freq=torch.tensor(band_centre_hz),
             shelving_crossover=torch.tensor(shelving_crossover_hz),
-            fs=fs)
+            fs=torch.tensor(fs))
         num_coeffs[:, i, :], den_coeffs[:,
                                         i, :] = b.permute(1,
                                                           0), a.permute(1, 0)

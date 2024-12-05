@@ -405,7 +405,7 @@ class ThreeRoomDataset(RoomDataset):
                 rirs = np.squeeze(srir_mat['srirs'])
                 band_centre_hz = srir_mat['band_centre_hz']
                 common_decay_times = srir_mat['common_decay_times']
-                amplitudes = srir_mat['amplitudes']
+                amplitudes = srir_mat['amplitudes'].T
                 nfft = config_dict.trainer_config.num_freq_bins
         except Exception as exc:
             raise FileNotFoundError("pickle file not read correctly") from exc
@@ -436,11 +436,20 @@ class ThreeRoomDataset(RoomDataset):
 
         if config_dict.trainer_config.save_true_irs:
             logger.info("Saving RIRs")
-            self.save_omni_irs()
+            if isinstance(band_centre_hz, list):
+                suffix = ''
+            else:
+                assert config_dict.trainer_config.subband_process_config is not None, \
+                "Subband processing config must be specified"
+                suffix = f'_band_centre={config_dict.trainer_config.subband_process_config.centre_frequency}Hz'
 
-    def save_omni_irs(self,
-                      filename_prefix: str = "ir",
-                      directory: str = "audio/true/"):
+            self.save_omni_irs(directory=f"audio/true{suffix}/")
+
+    def save_omni_irs(
+        self,
+        directory: str,
+        filename_prefix: str = "ir",
+    ):
         """Save the omni RIRs for each receiver position as audio files in directory"""
         if not os.path.isdir(directory):
             os.makedirs(directory)

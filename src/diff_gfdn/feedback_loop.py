@@ -236,17 +236,16 @@ class FeedbackLoop(nn.Module):
                 # no coupling initialisation
                 self.nd_unitary = ND_Unitary()
 
-                if colorless_feedback_matrix is None:
-                    self.alpha = nn.Parameter(
-                        torch.zeros(self.num_groups * (self.num_groups - 1) //
-                                    2))
+                # if colorless_feedback_matrix is None:
+                #     self.alpha = nn.Parameter(
+                #         torch.zeros(self.num_groups * (self.num_groups - 1) //
+                #                     2))
 
-                else:
-                    # no coupling allowed - this makes alpha a fixed parameter
-                    self.register_buffer(
-                        "alpha",
-                        torch.zeros(self.num_groups * (self.num_groups - 1) //
-                                    2))
+                # else:
+                # no coupling allowed - this makes alpha a fixed parameter
+                self.register_buffer(
+                    "alpha",
+                    torch.zeros(self.num_groups * (self.num_groups - 1) // 2))
 
             elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
                 self.coupling_matrix_order = self.coupling_matrix_order

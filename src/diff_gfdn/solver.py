@@ -269,7 +269,7 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
     divisible by number of groups in network"
 
     if config_dict.sample_rate != room_data.sample_rate:
-        logger.warn("Config sample rate does not match data, alterning it")
+        logger.warning("Config sample rate does not match data, alterning it")
         config_dict.sample_rate = room_data.sample_rate
 
     # get the training config

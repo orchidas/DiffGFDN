@@ -10,6 +10,7 @@ import pyfar as pf
 from scipy.signal import fftconvolve
 
 # pylint: disable=W0621
+# flake8: noqa:E231
 
 
 def save_subband_rirs(rirs: NDArray, sample_rate: float, common_t60: NDArray,
@@ -28,7 +29,7 @@ def save_subband_rirs(rirs: NDArray, sample_rate: float, common_t60: NDArray,
 
     num_bands = len(centre_freqs)
     for band in range(num_bands):
-        cur_common_t60 = np.squeeze(common_t60[band])
+        cur_common_t60 = common_t60[band]
         cur_amplitudes = amplitudes[band, ...]
         cur_filter = np.tile(subband_filters.coefficients[band, :],
                              (num_receivers, 1))
@@ -44,7 +45,7 @@ def save_subband_rirs(rirs: NDArray, sample_rate: float, common_t60: NDArray,
         }
         # Specify the output pickle file path
         pickle_file_path = Path(
-            f"resources/Georg_3room_FDTD/srirs_band_centre={centre_freqs[band]: .0f}Hz.pkl"
+            f"resources/Georg_3room_FDTD/srirs_band_centre={centre_freqs[band]:.0f}Hz.pkl"
         ).resolve()
 
         # Write the data to a pickle file
@@ -93,7 +94,7 @@ data_dict = {
     'rcvPos': receiver_position,
     'srirs': srirs.T,
     'band_centre_hz': freqs,
-    'common_decay_times': np.asarray(np.squeeze(common_t60, axis=1)),
+    'common_decay_times': np.asarray(common_t60),
     'amplitudes': np.asarray(amplitudes),
 }
 

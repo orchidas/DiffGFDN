@@ -552,10 +552,15 @@ def plot_edc_error_in_space(
         cur_est_rirs = np.squeeze(
             all_rirs[[src_idx],
                      ...]) if len(src_pos) > 1 else np.asarray(all_rirs)
+
         cur_original_rirs = np.squeeze(
             original_rirs[src_idx, ...]) if len(src_pos) > 1 else original_rirs
 
-        cur_est_rirs = cur_est_rirs[..., :cur_original_rirs.shape[-1]]
+        rir_len_samps = min(cur_original_rirs.shape[-1],
+                            cur_est_rirs.shape[-1])
+
+        cur_est_rirs = cur_est_rirs[..., :rir_len_samps]
+        cur_original_rirs = cur_original_rirs[..., :rir_len_samps]
 
         # do subband filterings
         if is_in_subbands:
@@ -587,7 +592,7 @@ def plot_edc_error_in_space(
                     f' is {error_mse[k]: .3f} dB')
                 var_to_plot = db2lin(error_func[..., idx])
         else:
-            logger.info(f'The RMSE in EDC amplitudes is {error_mse} dB')
+            logger.info(f'The RMSE in matching EDC is {error_mse} dB')
             var_to_plot = db2lin(error_func)
 
         # plot the error in amplitude matching
@@ -601,15 +606,15 @@ def plot_edc_error_in_space(
             if save_path is not None else None)
 
 
-def plot_amps_in_space(
-    room_data: RoomDataset,
-    all_rirs: Union[NDArray, List],
-    all_rec_pos: Union[NDArray, List],
-    freq_to_plot: Optional[float] = 1000.0,
-    scatter: bool = False,
-    save_path: Optional[str] = None,
-    pos_sorted: bool = False,
-):
+def plot_amps_in_space(room_data: RoomDataset,
+                       all_rirs: Union[NDArray, List],
+                       all_rec_pos: Union[NDArray, List],
+                       freq_to_plot: Optional[float] = 1000.0,
+                       scatter: bool = False,
+                       save_path: Optional[str] = None,
+                       pos_sorted: bool = False,
+                       plot_original_amps: bool = True,
+                       plot_amp_error: bool = True):
     """
     Plot the amplitudes as a function of spatial location at frequency 'freq_to_plot' Hz
     Args:
@@ -620,6 +625,8 @@ def plot_amps_in_space(
         scatter (bool): whether to make a scatter plot (discrete), or a surface plot (continuous)
         save_path (optional, str): path to save the file
         pos_sorted (bool): whether the positions are sorted in all_{src,rec}_pos
+        plot_original_amps (bool): whether to plot the true amplitudes as a function of space
+        plot_amp_error (bool): whether to plot the amplitude matching error
     """
 
     def get_amplitude_error(original_amps: NDArray, original_points: NDArray,
@@ -654,7 +661,7 @@ def plot_amps_in_space(
     src_pos = np.array(room_data.source_position)
     if src_pos.ndim == 1:
         src_pos = src_pos[np.newaxis, :]
-    is_in_subbands = t_vals.shape[1] > 1
+    is_in_subbands = t_vals.shape[-1] > 1
     est_amps = np.zeros_like(original_amps)
 
     for src_idx in tqdm(range(len(src_pos))):
@@ -674,8 +681,8 @@ def plot_amps_in_space(
             est_rirs_filtered = octave_filtering(est_rirs,
                                                  room_data.sample_rate,
                                                  room_data.band_centre_hz)
-            t_vals_expanded = np.tile(t_vals[np.newaxis, ...],
-                                      (num_est_rirs, 1, 1))
+            t_vals_expanded = np.tile(
+                np.squeeze(t_vals)[np.newaxis, ...], (num_est_rirs, 1, 1))
             band_centre_hz = room_data.band_centre_hz
             save_name = f'{save_path}_{freq_to_plot / 1000: .0f}kHz_\
             src=({cur_src_pos[0]:.2f}, {cur_src_pos[1]:.2f}, {cur_src_pos[2]:.2f})'
@@ -691,6 +698,8 @@ def plot_amps_in_space(
 
         est_rec_pos = np.asarray(all_rec_pos)
         # these are of shape num_rec x num_slope x num_fbands
+
+        print(t_vals_expanded.shape, est_rirs_filtered.shape)
         cur_est_amps = calculate_amplitudes_least_squares(
             t_vals_expanded, room_data.sample_rate, est_rirs_filtered,
             band_centre_hz)
@@ -724,14 +733,15 @@ def plot_amps_in_space(
         else:
             est_amps = cur_est_amps
 
-        room.plot_amps_at_receiver_points(
-            rec_points,
-            cur_src_pos,
-            amps_mid_band,
-            scatter_plot=scatter,
-            cur_freq_hz=freq_to_plot,
-            save_path=Path(f'{save_name}_actual_amplitudes_in_space.png'
-                           ).resolve() if save_path is not None else None)
+        if plot_original_amps:
+            room.plot_amps_at_receiver_points(
+                rec_points,
+                cur_src_pos,
+                amps_mid_band,
+                scatter_plot=scatter,
+                cur_freq_hz=freq_to_plot,
+                save_path=Path(f'{save_name}_actual_amplitudes_in_space.png'
+                               ).resolve() if save_path is not None else None)
 
         room.plot_amps_at_receiver_points(
             est_rec_pos,
@@ -742,31 +752,33 @@ def plot_amps_in_space(
             save_path=Path(f'{save_name}_learnt_amplitudes_in_space.png'
                            ).resolve() if save_path is not None else None)
 
-        # get error metrics
-        error_func, error_mse = get_amplitude_error(cur_original_amps,
-                                                    rec_points, cur_est_amps,
-                                                    est_rec_pos)
-        if is_in_subbands:
-            idx = np.argwhere(
-                np.array(room_data.band_centre_hz) == freq_to_plot)[0][0]
-            for k in range(len(room_data.band_centre_hz)):
-                logger.info(
-                    f'The RMSE in matching amplitudes at frequency {room_data.band_centre_hz[k]: .0f}Hz'
-                    f' is {error_mse[k]: .3f} dB')
-                var_to_plot = db2lin(error_func[..., idx].T)
-        else:
-            logger.info(f'The RMSE in matching amplitudes is {error_mse} dB')
-            var_to_plot = db2lin(error_func.T)
+        if plot_amp_error:
 
-        # plot the error in amplitude matching
-        room.plot_amps_at_receiver_points(
-            rec_points,
-            cur_src_pos,
-            var_to_plot,
-            scatter_plot=scatter,
-            cur_freq_hz=freq_to_plot,
-            save_path=Path(f'{save_name}_amplitude_error_in_space.png'
-                           ).resolve() if save_path is not None else None)
+            # get error metrics
+            error_func, error_mse = get_amplitude_error(
+                cur_original_amps, rec_points, cur_est_amps, est_rec_pos)
+            if is_in_subbands:
+                idx = np.argwhere(
+                    np.array(room_data.band_centre_hz) == freq_to_plot)[0][0]
+                for k in range(len(room_data.band_centre_hz)):
+                    logger.info(
+                        f'The RMSE in matching amplitudes at frequency {room_data.band_centre_hz[k]: .0f}Hz'
+                        f' is {error_mse[k]: .3f} dB')
+                    var_to_plot = db2lin(error_func[..., idx].T)
+            else:
+                logger.info(
+                    f'The RMSE in matching amplitudes is {error_mse} dB')
+                var_to_plot = db2lin(error_func.T)
+
+            # plot the error in amplitude matching
+            room.plot_amps_at_receiver_points(
+                rec_points,
+                cur_src_pos,
+                var_to_plot,
+                scatter_plot=scatter,
+                cur_freq_hz=freq_to_plot,
+                save_path=Path(f'{save_name}_amplitude_error_in_space.png'
+                               ).resolve() if save_path is not None else None)
 
     return est_amps
 
@@ -890,7 +902,7 @@ def plot_learned_svf_response(
             -22.5)  # Move radial labels away from plotted line
         ax2[n].grid(True)
 
-    fig.subplots_adjust(hspace=0.5)
+    fig.subplots_adjust(hspace=0.3 * num_groups)
     fig2.subplots_adjust(hspace=0.5)
 
     if save_path is not None:

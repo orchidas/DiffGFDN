@@ -43,10 +43,13 @@ class Trainer:
             logger.info("Using masked EDC loss")
 
         self.criterion = [
-            edr_loss(self.net.sample_rate,
-                     reduced_pole_radius=self.reduced_pole_radius,
-                     use_erb_grouping=trainer_config.use_erb_edr_loss,
-                     use_weight_fn=trainer_config.use_frequency_weighting),
+            edr_loss(
+                self.net.sample_rate,
+                reduced_pole_radius=self.reduced_pole_radius,
+                use_erb_grouping=trainer_config.use_erb_edr_loss,
+                use_weight_fn=trainer_config.use_frequency_weighting,
+                subband_process_config=trainer_config.subband_process_config,
+            ),
             edc_loss(self.net.common_decay_times.max() * 1e3,
                      self.net.sample_rate,
                      use_mask=trainer_config.use_edc_mask)
@@ -201,6 +204,9 @@ class VarReceiverPosTrainer(Trainer):
         self.individual_train_loss = []
 
         st = time.time()  # start time
+        # save initial parameters
+        super().save_model(-1)
+
         for epoch in trange(self.max_epochs, desc='Training'):
             logger.info(f'Epoch #{epoch}')
             st_epoch = time.time()

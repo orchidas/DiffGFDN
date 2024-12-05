@@ -1,7 +1,7 @@
 # pylint: disable=relative-beyond-top-level
 
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from loguru import logger
 import numpy as np
@@ -56,6 +56,13 @@ class MLPTuningConfig(BaseModel):
     num_trials: int = 50
 
 
+class SubbandProcessingConfig(BaseModel):
+    # config for running DiffGFDNs in parallel, one for each subband
+    centre_frequency: float
+    frequency_range: Tuple
+    num_fraction_octaves: int = 3
+
+
 class OutputFilterConfig(BaseModel):
     # config for training the output filters based on listener location
     # number of biquads in each filter
@@ -107,6 +114,8 @@ class TrainerConfig(BaseModel):
     use_edc_mask: bool = False
     # whether to use frequency-based weighting in loss
     use_frequency_weighting: bool = False
+    # whether the GFDN is processing only one subband
+    subband_process_config: Optional[SubbandProcessingConfig] = None
     # directory to save results
     train_dir: str = "output/cpu/"
     # where to save the IRs

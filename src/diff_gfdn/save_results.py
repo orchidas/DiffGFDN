@@ -2,6 +2,7 @@ import os
 import pickle
 from typing import Dict, List, Optional, Union
 
+from loguru import logger
 import matplotlib.pyplot as plt
 from scipy.io import savemat
 import torch
@@ -29,6 +30,7 @@ def save_diff_gfdn_parameters(net: DiffGFDN, dir_path: str, filename: str):
         try:
             param_np[name] = value.squeeze().cpu().numpy()
         except AttributeError:
+            logger.warning(f"Cannot save {name}")
             param_np[name] = value
     # save parameters in numpy format
     savemat(os.path.join(dir_path, filename), param_np)
