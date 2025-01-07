@@ -382,13 +382,17 @@ class SinusoidalEncoding(nn.Module):
         num_pos_pts, num_pos_features = pos_coords.shape
         encoded_pos = torch.zeros(
             num_pos_pts, num_pos_features * self.num_fourier_features * 2)
+        f_min, f_max = 1.0, 32.0  # Frequency range
+        frequencies = torch.exp(
+            torch.linspace(np.log(f_min), np.log(f_max),
+                           self.num_fourier_features))
 
         start_idx = 0
         for k in range(self.num_fourier_features):
             encoded_pos[:, start_idx:start_idx +
                         2 * num_pos_features] = torch.cat(
-                            (torch.sin(2**k * np.pi * pos_coords),
-                             torch.cos(2**k * np.pi * pos_coords)),
+                            (torch.sin(frequencies[k] * np.pi * pos_coords),
+                             torch.cos(frequencies[k] * np.pi * pos_coords)),
                             dim=-1)
             start_idx += 2 * num_pos_features
         # this is of size num_pos_pts x (3 * num_fourier_features * 2)
@@ -773,7 +777,7 @@ class Gains_from_MLP(nn.Module):
         """
         z_values = x['z_values']
         position = x[
-            'listener_position'] if self.position_type == "output_gains" else x[
+            'norm_listener_position'] if self.position_type == "output_gains" else x[
                 'source_position']
         self.batch_size = position.shape[0]
         mesh_3D = x['mesh_3D']

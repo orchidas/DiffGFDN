@@ -11,7 +11,7 @@ from tqdm import trange
 
 from .colorless_fdn.losses import amse_loss, sparsity_loss
 from .config.config import TrainerConfig
-from .losses import edc_loss, edr_loss, reg_loss
+from .losses import edc_loss, edr_loss, reg_loss, spatial_variance_loss
 from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
 from .utils import get_response, get_str_results, ms_to_samps
 
@@ -52,7 +52,8 @@ class Trainer:
             ),
             edc_loss(self.net.common_decay_times.max() * 1e3,
                      self.net.sample_rate,
-                     use_mask=trainer_config.use_edc_mask)
+                     use_mask=trainer_config.use_edc_mask),
+            spatial_variance_loss(),
         ]
         self.loss_weights = torch.tensor(
             [trainer_config.edr_loss_weight, trainer_config.edc_loss_weight])
@@ -211,6 +212,11 @@ class VarReceiverPosTrainer(Trainer):
             logger.info(f'Epoch #{epoch}')
             st_epoch = time.time()
 
+            # normalise b, c at each epoch to ensure the sub-FDNs have
+            # unit energy
+            data = next(iter(train_dataset))
+            self.normalize(data)
+
             # training
             epoch_loss = 0.0
             all_loss = {}
@@ -269,7 +275,12 @@ class VarReceiverPosTrainer(Trainer):
             data['target_rir_response'], H)
         edc_loss_val = self.loss_weights[1] * self.criterion[1](
             data['target_rir_response'], H)
-        all_losses = {'edc_loss': edc_loss_val, 'edr_loss': edr_loss_val}
+        # spatial_var_loss_val = self.criterion[2](self.net.output_scalars.gains)
+        all_losses = {
+            'edc_loss': edc_loss_val,
+            'edr_loss': edr_loss_val,
+            # 'spatial_loss': spatial_var_loss_val
+        }
 
         if self.use_reg_loss:
             reg_loss_val = self.loss_weights[2] * self.criterion[2](
@@ -327,9 +338,13 @@ class VarReceiverPosTrainer(Trainer):
                 data['target_rir_response'], H)
             edc_loss_val = self.loss_weights[1] * self.criterion[1](
                 data['target_rir_response'], H)
+            # spatial_var_loss_val = self.criterion[2](
+            #     self.net.output_scalars.gains)
+
             cur_all_losses = {
                 'edc_loss': edc_loss_val,
-                'edr_loss': edr_loss_val
+                'edr_loss': edr_loss_val,
+                # 'spatial_loss': spatial_var_loss_val
             }
 
             if self.use_reg_loss:
@@ -366,6 +381,25 @@ class VarReceiverPosTrainer(Trainer):
 
         net_valid_loss = total_loss / len(valid_dataset)
         logger.info(f"The net validation loss is {net_valid_loss:.4f}")
+
+    @torch.no_grad()
+    def normalize(self, data: Dict):
+        # average energy normalization - this normalises the energy
+        # of each of the sub-FDNs to be unity
+
+        if self.use_colorless_loss:
+            _, H_sub_fdn, _ = get_response(data, self.net)
+            energyH_sub = torch.mean(torch.pow(torch.abs(H_sub_fdn), 2), dim=0)
+            for name, prm in self.net.named_parameters():
+                if name in ('input_gains', 'output_gains'):
+                    for k in range(self.net.num_groups):
+                        ind_slice = torch.arange(
+                            k * self.net.num_delay_lines_per_group,
+                            (k + 1) * self.net.num_delay_lines_per_group,
+                            dtype=torch.int32)
+                        prm.data[ind_slice].copy_(
+                            torch.div(prm.data[ind_slice],
+                                      torch.pow(energyH_sub[k], 1 / 4)))
 
     @torch.no_grad()
     def save_ir(
@@ -534,7 +568,18 @@ class SinglePosTrainer(Trainer):
         # of the initial FDN to the target impulse response
 
         if self.use_colorless_loss:
-            H, _, _ = get_response(data, self.net)
+            H, H_sub_fdn, _ = get_response(data, self.net)
+            energyH_sub = torch.mean(torch.pow(torch.abs(H_sub_fdn), 2), dim=0)
+            for name, prm in self.net.named_parameters():
+                if name in ('input_gains', 'output_gains'):
+                    for k in range(self.net.num_groups):
+                        ind_slice = torch.arange(
+                            k * self.net.num_delay_lines_per_group,
+                            (k + 1) * self.net.num_delay_lines_per_group,
+                            dtype=torch.int32)
+                        prm.data[ind_slice].copy_(
+                            torch.div(prm.data[ind_slice],
+                                      torch.pow(energyH_sub[k], 1 / 4)))
         else:
             H, _ = get_response(data, self.net)
         energyH = torch.mean(torch.pow(torch.abs(H), 2))

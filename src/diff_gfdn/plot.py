@@ -684,8 +684,8 @@ def plot_amps_in_space(room_data: RoomDataset,
             t_vals_expanded = np.tile(
                 np.squeeze(t_vals)[np.newaxis, ...], (num_est_rirs, 1, 1))
             band_centre_hz = room_data.band_centre_hz
-            save_name = f'{save_path}_{freq_to_plot / 1000: .0f}kHz_\
-            src=({cur_src_pos[0]:.2f}, {cur_src_pos[1]:.2f}, {cur_src_pos[2]:.2f})'
+            save_name = f'{save_path}_{freq_to_plot / 1000: .0f}kHz_'+ \
+            f'src=({cur_src_pos[0]:.2f}, {cur_src_pos[1]:.2f}, {cur_src_pos[2]:.2f})'
 
             num_bands = len(room_data.band_centre_hz)
 
@@ -699,7 +699,6 @@ def plot_amps_in_space(room_data: RoomDataset,
         est_rec_pos = np.asarray(all_rec_pos)
         # these are of shape num_rec x num_slope x num_fbands
 
-        print(t_vals_expanded.shape, est_rirs_filtered.shape)
         cur_est_amps = calculate_amplitudes_least_squares(
             t_vals_expanded, room_data.sample_rate, est_rirs_filtered,
             band_centre_hz)

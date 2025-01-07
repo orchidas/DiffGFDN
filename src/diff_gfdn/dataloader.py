@@ -44,6 +44,7 @@ class InputFeatures():
     z_values: torch.tensor
     source_position: torch.tensor
     listener_position: torch.tensor
+    norm_listener_position: torch.tensor
     mesh_3D: Meshgrid
 
     def __repr__(self):
@@ -229,9 +230,25 @@ class RoomDataset(ABC):
         self.aperture_coords = aperture_coords
         self.mixing_time_ms = mixing_time_ms
         self.nfft = nfft
+        self._eps = 1e-12
         self.early_late_split()
         # create 3D mesh
         self.mesh_3D = self.get_3D_meshgrid(grid_spacing_m=0.3)
+
+    @property
+    def norm_receiver_position(self):
+        """
+        Normalise receiver coordinates to be between 0, 1 for more
+        meaningful Fourier encoding
+        """
+        norm_receiver_position = np.zeros_like(self.receiver_position)
+        for k in range(3):
+            norm_receiver_position[:, k] = (
+                self.receiver_position[:, k] -
+                self.receiver_position[:, k].min()) / (
+                    (self.receiver_position[:, k].max() -
+                     self.receiver_position[:, k].min()) + self._eps)
+        return norm_receiver_position
 
     @property
     def num_freq_bins(self):
@@ -490,6 +507,8 @@ class MultiRIRDataset(data.Dataset):
         self.source_position = self.source_position.unsqueeze(
             0) if self.source_position.dim() == 1 else self.source_position
         self.listener_positions = torch.tensor(room_data.receiver_position)
+        self.norm_listener_position = torch.tensor(
+            room_data.norm_receiver_position)
         self.mesh_3D = room_data.mesh_3D
         self.device = device
 
@@ -534,6 +553,7 @@ class MultiRIRDataset(data.Dataset):
             input_features = InputFeatures(self.z_values,
                                            torch.squeeze(self.source_position),
                                            self.listener_positions[idx],
+                                           self.norm_listener_position[idx],
                                            self.mesh_3D)
             target_labels = Target(self.early_rir_mag_response[idx, :],
                                    self.late_rir_mag_response[idx, :],
@@ -543,6 +563,7 @@ class MultiRIRDataset(data.Dataset):
             input_features = InputFeatures(self.z_values,
                                            self.source_position[idx1],
                                            self.listener_positions[idx2],
+                                           self.norm_listener_position[idx2],
                                            self.mesh_3D)
             target_labels = Target(self.early_rir_mag_response[idx1, idx2, :],
                                    self.late_rir_mag_response[idx1, idx2, :],
@@ -642,6 +663,9 @@ def custom_collate(batch: data.Dataset):
     # depends on source/receiver positions
     source_positions = [item['input'].source_position for item in batch]
     listener_positions = [item['input'].listener_position for item in batch]
+    norm_listener_positions = [
+        item['input'].norm_listener_position for item in batch
+    ]
     target_early_response = [
         item['target'].early_rir_mag_response for item in batch
     ]
@@ -653,6 +677,7 @@ def custom_collate(batch: data.Dataset):
         'z_values': z_values,
         'source_position': torch.stack(source_positions),
         'listener_position': torch.stack(listener_positions),
+        'norm_listener_position': torch.stack(norm_listener_positions),
         'mesh_3D': mesh_3D_data,
         'target_early_response': torch.stack(target_early_response),
         'target_late_response': torch.stack(target_late_response),

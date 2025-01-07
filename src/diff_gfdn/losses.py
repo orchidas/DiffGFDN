@@ -502,3 +502,12 @@ def get_edr_from_stft(S: torch.tensor):
         edr[..., m] = torch.sum(torch.abs(S[..., m:])**2, axis=-1)
     edr = db(edr, is_squared=True)
     return edr
+
+
+class spatial_variance_loss(nn.Module):
+    """Loss to encourage spatial variance across source/receiver gains"""
+
+    def forward(self, receiver_gains: torch.Tensor):
+        """Higher variance of the receiver gains across spatial locations"""
+        return -torch.mean(
+            torch.pow(receiver_gains - torch.mean(receiver_gains, dim=0), 2))

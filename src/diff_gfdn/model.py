@@ -504,10 +504,7 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
                          colorless_fdn_params, use_colorless_loss)
 
         self.use_svf_in_output = output_filter_config.use_svfs
-
-        self.input_scalars = nn.Parameter(
-            (2 * torch.ones(self.num_groups, 1) - 1) /
-            np.sqrt(self.num_groups))
+        self.input_scalars = torch.ones(self.num_groups, 1)
 
         if self.use_svf_in_output:
             logger.info("Using filters in output")
