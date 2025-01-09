@@ -77,6 +77,7 @@ with h5py.File(file_path, 'r') as mat_file:
 file_path = Path("resources/Georg_3room_FDTD/Common_Slope_Analysis_Results/")
 filename = 'cs_analysis_results_omni'
 freqs = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
+
 common_t60 = []
 amplitudes = []
 
