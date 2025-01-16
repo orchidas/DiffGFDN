@@ -10,8 +10,8 @@ from numpy.typing import ArrayLike, NDArray
 from scipy.fft import rfftfreq
 from scipy.signal import freqz, sos2zpk, sosfreqz
 from scipy.spatial.distance import cdist
-from slope2noise.slope2noise.rooms import RoomGeometry
-from slope2noise.slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering, schroeder_backward_int
+from slope2noise.rooms import RoomGeometry
+from slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering, schroeder_backward_int
 import torch
 from tqdm import tqdm
 
@@ -562,8 +562,8 @@ def plot_edc_error_in_space(
         cur_est_rirs = cur_est_rirs[..., :rir_len_samps]
         cur_original_rirs = cur_original_rirs[..., :rir_len_samps]
 
-        # do subband filterings
-        if is_in_subbands:
+        # do subband filtering
+        if is_in_subbands and freq_to_plot is not None:
             cur_original_rirs_filtered = octave_filtering(
                 cur_original_rirs, room_data.sample_rate,
                 room_data.band_centre_hz)

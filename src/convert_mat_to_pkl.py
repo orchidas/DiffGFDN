@@ -14,8 +14,9 @@ from scipy.signal import fftconvolve
 
 
 def save_subband_rirs(rirs: NDArray, sample_rate: float, common_t60: NDArray,
-                      amplitudes: NDArray, centre_freqs: List,
-                      source_position: Union[NDArray, ArrayLike],
+                      amplitudes: NDArray, noise_floor: NDArray,
+                      centre_freqs: List, source_position: Union[NDArray,
+                                                                 ArrayLike],
                       receiver_position: NDArray):
     """Filter RIRs into subbands and save the parameters"""
     logger.info("Saving subband RIRs after filtering")
@@ -31,6 +32,7 @@ def save_subband_rirs(rirs: NDArray, sample_rate: float, common_t60: NDArray,
     for band in range(num_bands):
         cur_common_t60 = common_t60[band]
         cur_amplitudes = amplitudes[band, ...]
+        cur_noise_floor = noise_floor[band, ...]
         cur_filter = np.tile(subband_filters.coefficients[band, :],
                              (num_receivers, 1))
         cur_rir = fftconvolve(rirs, cur_filter, axes=-1)
@@ -42,6 +44,7 @@ def save_subband_rirs(rirs: NDArray, sample_rate: float, common_t60: NDArray,
             'band_centre_hz': centre_freqs[band],
             'common_decay_times': cur_common_t60,
             'amplitudes': cur_amplitudes,
+            'noise_floor': cur_noise_floor,
         }
         # Specify the output pickle file path
         pickle_file_path = Path(
@@ -80,13 +83,15 @@ freqs = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
 
 common_t60 = []
 amplitudes = []
+noise_floor = []
 
 for i in range(len(freqs)):
     full_path = file_path / f'{filename}_{freqs[i]}.mat'
     with h5py.File(full_path.resolve(), 'r') as mat_file:
         data = mat_file['analysisResults']
         common_t60.append(data['commonDecayTimes'][:])
-        amplitudes.append(data['aVals'][:] + data['nVals'][:])
+        amplitudes.append(data['aVals'][:])
+        noise_floor.append(data['nVals'][:])
 
 # Convert the list to a NumPy array if needed
 data_dict = {
@@ -97,6 +102,7 @@ data_dict = {
     'band_centre_hz': freqs,
     'common_decay_times': np.asarray(common_t60),
     'amplitudes': np.asarray(amplitudes),
+    'noise_floor': np.asarray(noise_floor)
 }
 
 # Specify the output pickle file path
@@ -109,5 +115,5 @@ with open(pickle_file_path, 'wb') as pickle_file:
 logger.info("Saved pickle file")
 
 save_subband_rirs(srirs.T, sample_rate, np.asarray(common_t60),
-                  np.asarray(amplitudes), freqs, source_position,
-                  receiver_position)
+                  np.asarray(amplitudes), np.asarray(noise_floor), freqs,
+                  source_position, receiver_position)

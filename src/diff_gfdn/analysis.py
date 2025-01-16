@@ -1,12 +1,12 @@
 from typing import List, Optional, Tuple
 
+from DecayFitNet.python.toolbox.DecayFitNetToolbox import DecayFitNetToolbox
+from DecayFitNet.python.toolbox.core import decay_model, discard_last_n_percent, PreprocessRIR
+from DecayFitNet.python.toolbox.utils import calc_mse
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from slope2noise.DecayFitNet.python.toolbox.DecayFitNetToolbox import DecayFitNetToolbox
-from slope2noise.DecayFitNet.python.toolbox.core import decay_model, discard_last_n_percent, PreprocessRIR
-from slope2noise.DecayFitNet.python.toolbox.utils import calc_mse
-from slope2noise.slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering
+from slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering
 import torch
 
 from .filters.geq import octave_bands
@@ -240,7 +240,10 @@ def amplitudes_to_initial_level(
     impulse[0] = 1
     f_bands = octave_bands(end_freq=max_freq)
 
-    ir_octave_filter = octave_filtering(impulse, fs, f_bands, get_filter=True)
+    ir_octave_filter = octave_filtering(impulse,
+                                        fs,
+                                        f_bands,
+                                        get_filter_ir=True)
     # the input impulse will not be used in this case actually, get_filter argument is just a quick fix
     band_energy = np.sum(ir_octave_filter**2, axis=0)
     band_energy = np.tile(band_energy[:, np.newaxis], (1, n_slopes))

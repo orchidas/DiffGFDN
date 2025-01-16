@@ -24,7 +24,7 @@ from run_model import dump_config_to_pickle
 
 
 def sum_arrays(series):
-    """convert tensor to numpy array"""
+    """sum an array along first dimension"""
     return np.sum(series, axis=0)
 
 
@@ -34,15 +34,16 @@ def create_config(
     freq_range: List,
     config_path: str,
     write_config: bool = True,
-    # seed_base: int = 2346
+    # seed_base: int = 23463,
 ) -> DiffGFDNConfig:
     """Create config file for each subband"""
+    # seed = seed_base + cur_freq_hz
     config_dict = {
         'room_dataset_path': data_path,
         'sample_rate': 32000.0,
         'num_delay_lines': 12,
         'use_absorption_filters': False,
-        # 'seed': seed_base + cur_freq_hz
+        # 'seed': seed,
         'trainer_config': {
             'max_epochs': 10,
             'batch_size': 32,
@@ -128,10 +129,21 @@ def inferencing(freqs_list: List, config_dicts: List[DiffGFDNConfig],
     if not os.path.exists(save_filename):
         synth_subband_rirs = pd.DataFrame(
             columns=['frequency', 'position', 'time_samples'])
+
+        # prepare the reconstructing filterbank
+        subband_filters, _ = pf.dsp.filter.reconstructing_fractional_octave_bands(
+            None,
+            num_fractions=config_dicts[0].trainer_config.
+            subband_process_config.num_fraction_octaves,
+            frequency_range=(freqs_list[0], freqs_list[-1]),
+            sampling_rate=config_dicts[0].sample_rate,
+        )
+
         # loop through all subband frequencies
         for k in range(len(freqs_list)):
             logger.info(
                 f'Running inferencing for subband = {freqs_list[k]} Hz')
+
             config_dict = config_dicts[k]
             room_data = ThreeRoomDataset(
                 Path(config_dict.room_dataset_path).resolve(), config_dict)
@@ -177,14 +189,6 @@ def inferencing(freqs_list: List, config_dicts: List[DiffGFDNConfig],
             model.load_state_dict(checkpoint)
             # in eval mode, no gradients are calculated
             model.eval()
-            # prepare the reconstructing filterbank
-            subband_filters, _ = pf.dsp.filter.reconstructing_fractional_octave_bands(
-                None,
-                num_fractions=trainer_config.subband_process_config.
-                num_fraction_octaves,
-                frequency_range=(freqs_list[0], freqs_list[-1]),
-                sampling_rate=room_data.sample_rate,
-            )
 
             # loop through all positions
             for data in train_dataset:

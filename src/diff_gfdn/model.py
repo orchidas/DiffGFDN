@@ -74,6 +74,7 @@ class DiffGFDN(nn.Module):
                                    dtype=torch.float32,
                                    device=self.device)
         self.delays = self.delays.to(self.device)
+        logger.info(f"The delay line lengths are {self.delays} samples")
         # Register delays as a buffer
         self.register_buffer('delay_buffer', self.delays)
 
