@@ -225,7 +225,6 @@ class FeedbackLoop(nn.Module):
             # uniformly in (-1/sqrt(N), +1/sqrt(N))
             if colorless_feedback_matrix is not None:
                 self.M = colorless_feedback_matrix.clone().detach()
-
             else:
                 self.M = nn.Parameter((2 * torch.rand(
                     self.num_groups, self.num_delay_lines_per_group,

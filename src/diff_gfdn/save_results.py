@@ -130,6 +130,7 @@ def save_loss(train_loss: List,
             plt.legend()
             plt.savefig(
                 os.path.join(output_dir, filename + '_individual_loss.pdf'))
+            plt.close()
 
     savemat(os.path.join(output_dir, 'losses_' + filename + '.mat'), losses)
 

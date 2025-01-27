@@ -35,7 +35,7 @@ def save_subband_rirs(rirs: NDArray, sample_rate: float, common_t60: NDArray,
         cur_noise_floor = noise_floor[band, ...]
         cur_filter = np.tile(subband_filters.coefficients[band, :],
                              (num_receivers, 1))
-        cur_rir = fftconvolve(rirs, cur_filter, axes=-1)
+        cur_rir = fftconvolve(rirs, cur_filter, axes=-1, mode='same')
         data_dict = {
             'fs': sample_rate,
             'srcPos': source_position,

@@ -373,7 +373,8 @@ def plot_subband_edc(h_true: ArrayLike,
                        db(synth_edf, is_squared=True),
                        label=f'Epoch={epoch}')
             ax[k].set_title(f'{band_centre_hz[k]: .0f} Hz')
-            ax[k].set_ylim([-100, 0])
+            ax[k].set_ylim([-80, 0])
+            ax[k].set_xlim([0, 2.0])
 
         display.display(fig)  # Display the updated figure
         display.clear_output(
@@ -395,7 +396,7 @@ def plot_subband_edc(h_true: ArrayLike,
         f'{pos_to_investigate[0]: .2f}, {pos_to_investigate[1]: .2f}, {pos_to_investigate[2]: .2f} m'
     )
     if save_path is not None:
-        fig.savefig(Path(save_path).resolve())
+        fig.savefig(Path(save_path).resolve(), bbox_inches="tight")
     plt.show()
 
 
@@ -544,7 +545,7 @@ def plot_edc_error_in_space(
     src_pos = np.array(room_data.source_position)
     if src_pos.ndim == 1:
         src_pos = src_pos[np.newaxis, :]
-    is_in_subbands = t_vals.shape[1] > 1
+    is_in_subbands = t_vals.shape[-1] > 1
     original_rirs = room_data.rirs
 
     for src_idx in tqdm(range(len(src_pos))):
@@ -565,11 +566,15 @@ def plot_edc_error_in_space(
         # do subband filtering
         if is_in_subbands and freq_to_plot is not None:
             cur_original_rirs_filtered = octave_filtering(
-                cur_original_rirs, room_data.sample_rate,
-                room_data.band_centre_hz)
-            cur_est_rirs_filtered = octave_filtering(cur_est_rirs,
-                                                     room_data.sample_rate,
-                                                     room_data.band_centre_hz)
+                cur_original_rirs,
+                room_data.sample_rate,
+                room_data.band_centre_hz,
+                use_pyfar_filterbank=False)
+            cur_est_rirs_filtered = octave_filtering(
+                cur_est_rirs,
+                room_data.sample_rate,
+                room_data.band_centre_hz,
+                use_pyfar_filterbank=False)
             save_name = f'{save_path}_{freq_to_plot / 1000: .0f}kHz\
             _src=({cur_src_pos[0]:.2f}, {cur_src_pos[1]:.2f}, {cur_src_pos[2]:.2f})'
 
@@ -583,7 +588,7 @@ def plot_edc_error_in_space(
         error_func, error_mse = get_edc_error(
             cur_original_rirs_filtered.copy(), rec_points,
             cur_est_rirs_filtered.copy(), est_rec_pos)
-        if is_in_subbands:
+        if is_in_subbands and freq_to_plot is not None:
             idx = np.argwhere(
                 np.array(room_data.band_centre_hz) == freq_to_plot)[0][0]
             for k in range(len(room_data.band_centre_hz)):
@@ -815,7 +820,7 @@ def plot_learned_svf_response(
     fig2, ax2 = plt.subplots(num_groups,
                              1,
                              subplot_kw={'projection': 'polar'},
-                             figsize=(6, 6))
+                             figsize=(6, 8))
 
     # are the output_biquad_coeffs also a function of epoch number?
     is_list_of_lists = all(
@@ -892,7 +897,7 @@ def plot_learned_svf_response(
         ax[n].set_xlabel('Frequency (Hz)')
         ax[n].set_ylabel('Magnitude (dB)')
         ax[n].set_title(
-            f'Output filter for group {n} at position {pos_to_investigate}')
+            f'Output filter for group {n+1} at position {pos_to_investigate}')
         ax[n].grid(True)
 
         ax2[n].set_rmax(1)

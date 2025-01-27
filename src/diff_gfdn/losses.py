@@ -277,8 +277,8 @@ class edr_loss(nn.Module):
     def __init__(
         self,
         sample_rate: float,
-        win_size: int = 2**10,
-        hop_size: int = 2**9,
+        win_size: int = 2**12,
+        hop_size: int = 2**11,
         reduced_pole_radius: Optional[float] = None,
         use_erb_grouping: bool = False,
         time_axis: int = -1,
