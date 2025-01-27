@@ -178,7 +178,7 @@ def plot_spectrogram(S: torch.tensor,
     """
     Plot spectrogram from STFT data
     Args:
-        S (torch.tensor): STFT data (2D) tensor, of size (N x T)
+        S (torch.tensor): STFT data (2D) tensor in dB, of size (N x T)
         freqs (ArrayLike): frequency bins in Hz of length N
         time_frames (ArrayLike): time indices in s of length T
         title (optional, str): title of plot
@@ -187,17 +187,19 @@ def plot_spectrogram(S: torch.tensor,
 
     """
     plt.figure()
-    plt.imshow(db(np.abs(S)).cpu().detach().numpy(),
-               aspect='auto',
-               origin='lower',
-               extent=[
-                   time_frames.min(),
-                   time_frames.max(),
-                   freqs.min(),
-                   freqs.max(),
-               ],
-               vmin=-35,
-               vmax=35)
+    plt.imshow(
+        S.cpu().detach().numpy(),
+        aspect='auto',
+        origin='lower',
+        extent=[
+            time_frames.min(),
+            time_frames.max(),
+            freqs.min(),
+            freqs.max(),
+        ],
+        vmin=-60,
+        vmax=10,
+    )
     plt.xlabel('Time (s)')
     plt.ylabel('Frequency (Hz)')
     plt.ylim([20, max(freqs)])
