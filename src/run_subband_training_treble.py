@@ -137,8 +137,9 @@ def inferencing(freqs_list: List, config_dicts: List[DiffGFDNConfig],
                 save_filename: str):
     """Run inferencing and save the full band RIRs for each position"""
     if not os.path.exists(save_filename):
-        synth_subband_rirs = pd.DataFrame(
-            columns=['frequency', 'position', 'time_samples'])
+        synth_subband_rirs = pd.DataFrame(columns=[
+            'frequency', 'position', 'time_samples', 'filtered_time_samples'
+        ])
         output_path = Path(
             "audio/grid_rir_treble_subband_processing_colorless_loss")
         if not os.path.exists(output_path.resolve()):
@@ -218,6 +219,8 @@ def inferencing(freqs_list: List, config_dicts: List[DiffGFDNConfig],
             for data in train_dataset:
                 position = data['listener_position'].detach().cpu().numpy()
 
+                # TO-DO: change z_values to represent the particular frequency subband
+
                 if model.use_colorless_loss:
                     _, _, h = get_response(data, model)
                 else:
@@ -226,6 +229,7 @@ def inferencing(freqs_list: List, config_dicts: List[DiffGFDNConfig],
                 # loop over all positions for a particular frequency band and add it to a dataframe
                 for num_pos in range(position.shape[0]):
                     cur_rir = h[num_pos, :].detach().cpu().numpy()
+
                     cur_rir_filtered = fftconvolve(
                         cur_rir,
                         subband_filters.coefficients[k, :],
@@ -245,7 +249,8 @@ def inferencing(freqs_list: List, config_dicts: List[DiffGFDNConfig],
                         [(position[num_pos, 0], position[num_pos,
                                                          1], position[num_pos,
                                                                       2])],
-                        'time_samples': [cur_rir_filtered]
+                        'filtered_time_samples': [cur_rir_filtered],
+                        'time_samples': [cur_rir],
                     })
                     synth_subband_rirs = pd.concat(
                         [synth_subband_rirs, new_row], ignore_index=True)
@@ -259,12 +264,12 @@ def inferencing(freqs_list: List, config_dicts: List[DiffGFDNConfig],
     logger.info('Saving synthesised RIRs')
 
     # Group by 'position' and sum the 'time_samples' over each frequency band
-    synth_rirs = synth_subband_rirs.groupby('position')['time_samples'].apply(
-        sum_arrays)
+    synth_rirs = synth_subband_rirs.groupby(
+        'position')['filtered_time_samples'].apply(sum_arrays)
 
     # Convert to DataFrame if needed
     synth_rirs_df = synth_rirs.reset_index()
-    synth_rirs_df.columns = ['position', 'time_samples']
+    synth_rirs_df.columns = ['position', 'filtered_time_samples']
 
     if not os.path.isdir(output_path):
         os.makedir(output_path)
@@ -272,7 +277,7 @@ def inferencing(freqs_list: List, config_dicts: List[DiffGFDNConfig],
     # Save each row's 'time_samples' as a WAV file
     for _, row in synth_rirs_df.iterrows():
         position = row['position']
-        values = row['time_samples']
+        values = row['filtered_time_samples']
 
         filename = f'{output_path.resolve()}/ir_({position[0]:.2f}, {position[1]:.2f}, {position[2]:.2f}).wav'
         sf.write(filename, values, int(config_dicts[0].sample_rate))
@@ -287,4 +292,4 @@ if __name__ == '__main__':
     save_filename = Path(
         'output/treble_data_grid_training_final_rirs_colorless_loss.pkl'
     ).resolve()
-    # inferencing(freqs_list, config_dicts, save_filename)
+    inferencing(freqs_list, config_dicts, save_filename)
