@@ -1,12 +1,12 @@
 from typing import List, Optional, Tuple
 
+from DecayFitNet.python.toolbox.DecayFitNetToolbox import DecayFitNetToolbox
+from DecayFitNet.python.toolbox.core import decay_model, discard_last_n_percent, PreprocessRIR
+from DecayFitNet.python.toolbox.utils import calc_mse
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from slope2noise.DecayFitNet.python.toolbox.DecayFitNetToolbox import DecayFitNetToolbox
-from slope2noise.DecayFitNet.python.toolbox.core import decay_model, discard_last_n_percent, PreprocessRIR
-from slope2noise.DecayFitNet.python.toolbox.utils import calc_mse
-from slope2noise.slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering
+from slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering
 import torch
 
 from .filters.geq import octave_bands
@@ -133,12 +133,12 @@ def get_decay_times_for_rirs(
                                                    band_centre_hz)
     est_t60, _, _, _, fitted_approx_edc = get_edc_params(
         trunc_approx_rir, n_slopes, fs, band_centre_hz)
-    # filter into subbands for EDF
-    filtered_rir = octave_filtering(trunc_rir, fs, band_centre_hz)
-    filtered_approx_rir = octave_filtering(trunc_approx_rir, fs,
-                                           band_centre_hz)
 
     if plot_edc:
+        # filter into subbands for EDF
+        filtered_rir = octave_filtering(trunc_rir, fs, band_centre_hz)
+        filtered_approx_rir = octave_filtering(trunc_approx_rir, fs,
+                                               band_centre_hz)
         num_bands = len(band_centre_hz)
         fig, ax = plt.subplots(num_bands, 1, figsize=(6, 12))
         time = np.linspace(0, (len(trunc_rir) - 1) / fs, len(trunc_rir))
@@ -240,7 +240,10 @@ def amplitudes_to_initial_level(
     impulse[0] = 1
     f_bands = octave_bands(end_freq=max_freq)
 
-    ir_octave_filter = octave_filtering(impulse, fs, f_bands, get_filter=True)
+    ir_octave_filter = octave_filtering(impulse,
+                                        fs,
+                                        f_bands,
+                                        get_filter_ir=True)
     # the input impulse will not be used in this case actually, get_filter argument is just a quick fix
     band_energy = np.sum(ir_octave_filter**2, axis=0)
     band_energy = np.tile(band_energy[:, np.newaxis], (1, n_slopes))

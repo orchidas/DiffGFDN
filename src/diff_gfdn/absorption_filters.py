@@ -112,8 +112,9 @@ def decay_times_to_gain_filters_geq(band_centre_hz: List,
     den_coeffs = torch.zeros_like(num_coeffs)
 
     target_gains_linear = torch.tensor(
-        10**(-3 / fs / common_decay_times)).unsqueeze(-1)**torch.tensor(
-            delay_length_samp, dtype=torch.int32)
+        10**(-3 / fs /
+             common_decay_times)).unsqueeze(-1).clone().detach()**torch.tensor(
+                 delay_length_samp, dtype=torch.int32)
     # pad target gains with 0.5x of the first/last values for the shelving filters
     target_gains_linear_pad = torch.cat(
         (target_gains_linear[0:1, :] * 0.5, target_gains_linear,
@@ -125,7 +126,7 @@ def decay_times_to_gain_filters_geq(band_centre_hz: List,
             db(target_gains_linear_pad[:, i]),
             center_freq=torch.tensor(band_centre_hz),
             shelving_crossover=torch.tensor(shelving_crossover_hz),
-            fs=fs)
+            fs=torch.tensor(fs))
         num_coeffs[:, i, :], den_coeffs[:,
                                         i, :] = b.permute(1,
                                                           0), a.permute(1, 0)

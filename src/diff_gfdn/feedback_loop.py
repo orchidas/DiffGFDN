@@ -8,7 +8,7 @@ from .config.config import CouplingMatrixType
 from .gain_filters import BiquadCascade, IIRFilter, SOSFilter
 from .utils import matrix_convolution, to_complex
 
-# pylint: disable=E0606
+# pylint: disable=E0606, W0718
 
 
 class Skew(nn.Module):
@@ -149,8 +149,10 @@ class FeedbackLoop(nn.Module):
                  delays: torch.tensor,
                  gains: torch.tensor,
                  use_absorption_filters: bool,
-                 coupling_matrix_type: CouplingMatrixType,
-                 coupling_matrix_order: Optional[int] = None):
+                 coupling_matrix_type: CouplingMatrixType = None,
+                 coupling_matrix_order: Optional[int] = None,
+                 colorless_feedback_matrix: Optional[torch.tensor] = None,
+                 device: torch.device = 'cpu'):
         """
         Class implementing the feedback loop of the FDN (D_m(z) - A(z)Gamma(z))^{-1}
         Args:
@@ -161,6 +163,9 @@ class FeedbackLoop(nn.Module):
             use_absorption_filters (bool): whether the delay line gains are gains or filters
             coupling_matrix_type (CouplingMatrixType): scalar or filter coupling
             coupling_matrix_order (optional, int): order of the PU filter coupling matrix
+            colorless_feedback_matrix (torch.tensor, optional): the block diagonal
+                                colorless feedback matrix obtained from ColorlessFDN optimisation
+            device (torch.device): the training device, CPU or CUDA
         """
         super().__init__()
         self.num_groups = num_groups
@@ -168,6 +173,7 @@ class FeedbackLoop(nn.Module):
         self.delays = delays
         self.num_delays = len(self.delays)
         self.use_absorption_filters = use_absorption_filters
+        self.device = device
 
         # whether to use absorption filters or scalar gains in delay lines
         if self.use_absorption_filters:
@@ -176,7 +182,9 @@ class FeedbackLoop(nn.Module):
             if gains.ndim == 3:
                 self.delay_line_gains = IIRFilter(filter_order,
                                                   self.num_delays,
-                                                  gains[..., 0], gains[..., 1])
+                                                  gains[..., 0],
+                                                  gains[..., 1],
+                                                  device=self.device)
             # absorption gains as SOS with GEQ fitting
             else:
                 self.delay_line_gains = []
@@ -185,14 +193,20 @@ class FeedbackLoop(nn.Module):
                                                        gains[k, :, :, 0],
                                                        gains[k, :, :, 1])
                     self.delay_line_gains.append(
-                        SOSFilter(filter_order, delay_line_biquads))
+                        SOSFilter(filter_order,
+                                  delay_line_biquads,
+                                  device=self.device))
         else:
             self.delay_line_gains = gains
 
         self._eps = 1e-9
         self.coupling_matrix_type = coupling_matrix_type
         self.coupling_matrix_order = coupling_matrix_order
+        self._init_feedback_matrix(colorless_feedback_matrix)
 
+    def _init_feedback_matrix(self,
+                              colorless_feedback_matrix: Optional[
+                                  torch.tensor] = None):
         # orthonormal parameterisation of the matrices in M
         self.ortho_param = nn.Sequential(Skew(), MatrixExponential())
 
@@ -206,30 +220,34 @@ class FeedbackLoop(nn.Module):
         # otherwise, use coupled matrix structure proposed in GFDN papers
         # with individual mixing matrices and a coupling matrix connecting them
         else:
-            # initialise the feedback matrices, which are learnable
             # these are individual feedback matrices for each group that
             # are orthonormal and of size N=Ndel/Ngroups, each distributed
             # uniformly in (-1/sqrt(N), +1/sqrt(N))
-            self.M = nn.Parameter((
-                2 * torch.rand(self.num_groups, self.num_delay_lines_per_group,
-                               self.num_delay_lines_per_group) - 1) /
-                                  np.sqrt(self.num_delay_lines_per_group))
+            if colorless_feedback_matrix is not None:
+                self.M = colorless_feedback_matrix.clone().detach()
+            else:
+                self.M = nn.Parameter((2 * torch.rand(
+                    self.num_groups, self.num_delay_lines_per_group,
+                    self.num_delay_lines_per_group) - 1) /
+                                      np.sqrt(self.num_delay_lines_per_group))
+
             if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
-
-                # Nroom choose 2 rotation angles for getting an Nroom x Nroom unitary coupling matrix
-                # these are randomly distributed between 0 and pi/4
-                # self.alpha = nn.Parameter(
-                #     torch.rand((self.num_groups *
-                #                 (self.num_groups - 1)) // 2) / (0.25 * np.pi))
-
                 # no coupling initialisation
-                self.alpha = nn.Parameter(
-                    torch.zeros(self.num_groups * (self.num_groups - 1) // 2))
-
                 self.nd_unitary = ND_Unitary()
 
+                # if colorless_feedback_matrix is None:
+                #     self.alpha = nn.Parameter(
+                #         torch.zeros(self.num_groups * (self.num_groups - 1) //
+                #                     2))
+
+                # else:
+                # no coupling allowed - this makes alpha a fixed parameter
+                self.register_buffer(
+                    "alpha",
+                    torch.zeros(self.num_groups * (self.num_groups - 1) // 2))
+
             elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
-                self.coupling_matrix_order = coupling_matrix_order
+                self.coupling_matrix_order = self.coupling_matrix_order
                 # order - 1 unit norm householder vectors
                 self.unit_vectors = nn.Parameter(
                     torch.randn(self.num_groups,
@@ -298,8 +316,7 @@ class FeedbackLoop(nn.Module):
                                          dim1=0,
                                          dim2=1)
             Ddecay = D * Gamma_inv.permute(-1, 0, 1)
-            # Adecay = torch.einsum('kmn, knp -> kmp', A,
-            #                       Gamma.permute(-1, 0, 1))
+
         else:
             # invert a diagonal matrix
             Gamma_inv = torch.diag(1.0 / torch.diagonal(Gamma))
@@ -321,7 +338,6 @@ class FeedbackLoop(nn.Module):
                         self.num_delay_lines_per_group] = torch.mm(
                             self.ortho_param(self.M[i]),
                             self.ortho_param(self.M[j]))
-
         return block_M
 
     def construct_coupling_matrix(self):
@@ -359,8 +375,11 @@ class FeedbackLoop(nn.Module):
         # get the coupling matrix
         if self.coupling_matrix_type == CouplingMatrixType.SCALAR:
             # computed as A = M_block circ (Phi otimes 1)
-            coupled_feedback_matrix = block_M * torch.kron(
-                self.phi, ones_matrix)
+            try:
+                coupled_feedback_matrix = block_M * torch.kron(
+                    self.phi, ones_matrix)
+            except Exception:
+                coupled_feedback_matrix = block_M
 
         elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
             # computed as A[k] = M_block circ (Phi[k] otimes 1)
@@ -370,7 +389,6 @@ class FeedbackLoop(nn.Module):
                 coupled_feedback_matrix[..., k] += block_M * torch.kron(
                     self.phi[..., k], ones_matrix)
 
-            # assert is_paraunitary(coupled_feedback_matrix)
         return to_complex(coupled_feedback_matrix)
 
     def print(self):

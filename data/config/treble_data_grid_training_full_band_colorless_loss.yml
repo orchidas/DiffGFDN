@@ -1,0 +1,19 @@
+room_dataset_path: 'resources/Georg_3room_FDTD/srirs.pkl'
+sample_rate: 32000.0
+num_delay_lines: 12
+use_absorption_filters: True
+trainer_config:
+  max_epochs: 10
+  batch_size: 32
+  save_true_irs: True
+  train_valid_split: 0.8
+  use_edc_mask: True
+  use_colorless_loss: True
+  train_dir: 'output/grid_rir_treble_full_band_colorless_loss/'
+  ir_dir: 'audio/grid_rir_rir_treble_full_band_colorless_loss/'
+feedback_loop_config:
+  coupling_matrix_type: 'scalar_matrix'
+output_filter_config:
+  use_svfs: True
+  num_hidden_layers: 3
+  num_neurons_per_layer: 32

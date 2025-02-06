@@ -1,0 +1,18 @@
+room_dataset_path: 'resources/synthetic_dataset/two_coupled_rooms_multi_source/bb_wgn_0000.pkl'
+sample_rate: 48000.0
+num_delay_lines: 8
+use_absorption_filters: False
+feedback_loop_config:
+    coupling_matrix_type: 'scalar_matrix'
+output_filter_config:
+    use_svfs: False
+colorless_fdn_config:
+    use_colorless_prototype: True
+    batch_size: 4000
+    max_epochs: 15
+trainer_config:
+    batch_size: 1
+    num_freq_bins: 96000
+    train_dir: 'output/single_rir_out_gains_synth_data_colorless_prototype_low_rank_decomp/'
+    ir_dir: 'audio/single_rir_out_gains_synth_data_colorless_prototype_low_rank_decomp/'
+

@@ -1,6 +1,0 @@
-trainer_config:
-    device: 'cpu'
-    max_epochs: 3
-    train_dir: 'output/reg_loss/'
-    ir_dir: 'audio/reg_loss/'
-    use_reg_loss: True

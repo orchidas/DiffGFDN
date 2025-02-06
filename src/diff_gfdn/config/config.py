@@ -1,8 +1,9 @@
 # pylint: disable=relative-beyond-top-level
 
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
+from loguru import logger
 import numpy as np
 from pydantic import BaseModel, computed_field, ConfigDict, Field, field_validator, model_validator
 import sympy as sp
@@ -44,6 +45,24 @@ class FeedbackLoopConfig(BaseModel):
     coupling_matrix_type: CouplingMatrixType = CouplingMatrixType.SCALAR
 
 
+class MLPTuningConfig(BaseModel):
+    # tune hyperparameters of the MLP
+    tune_hyperparameters: bool = True
+    min_layers: int = 1
+    max_layers: int = 20
+    min_neurons: int = 2**4
+    max_neurons: int = 2**7
+    step_size: int = 2**4
+    num_trials: int = 50
+
+
+class SubbandProcessingConfig(BaseModel):
+    # config for running DiffGFDNs in parallel, one for each subband
+    centre_frequency: float
+    frequency_range: Tuple
+    num_fraction_octaves: int = 3
+
+
 class OutputFilterConfig(BaseModel):
     # config for training the output filters based on listener location
     # number of biquads in each filter
@@ -52,6 +71,8 @@ class OutputFilterConfig(BaseModel):
     # by how much to constrain the pole radii when calculating output filter coeffs
     compress_pole_factor: float = 1.0
     # used only if MLP is used for training the SVF filters
+    mlp_tuning_config: Optional[MLPTuningConfig] = None
+    # or, fix them to these numbers
     num_hidden_layers: int = 3
     num_neurons_per_layer: int = 2**7
     num_fourier_features: int = 10
@@ -82,8 +103,19 @@ class TrainerConfig(BaseModel):
     use_reg_loss: bool = False
     # whether to use perceptual ERB loss
     use_erb_edr_loss: bool = False
+    # whether to use colorless loss in the DiffGFDN's loss itself
+    use_colorless_loss: bool = False
+    # weights for edc and edr loss
+    edc_loss_weight: float = 1.0
+    edr_loss_weight: float = 1.0
+    spectral_loss_weight: float = 1.0
+    sparsity_loss_weight: float = 1.0
+    # whether to use masking while calculating edc loss
+    use_edc_mask: bool = False
     # whether to use frequency-based weighting in loss
     use_frequency_weighting: bool = False
+    # whether the GFDN is processing only one subband
+    subband_process_config: Optional[SubbandProcessingConfig] = None
     # directory to save results
     train_dir: str = "output/cpu/"
     # where to save the IRs
@@ -104,6 +136,7 @@ class TrainerConfig(BaseModel):
         if value == 'cuda':
             assert torch.cuda.is_available(
             ), "CUDA is not available for training"
+            logger.info(f"Running on GPU: {torch.cuda.get_device_name(0)}")
 
     # validator for the 'reduced_pole_radius' field
     @model_validator(mode='after')
@@ -118,9 +151,28 @@ class TrainerConfig(BaseModel):
         return model
 
 
+class ColorlessFDNConfig(BaseModel):
+    """Config file for colorless FDN training"""
+
+    # whether to use colorless FDN to get the input/output gains and feedback matrix
+    use_colorless_prototype: bool = False
+    # batch size for training
+    batch_size: int = 2000
+    # maximum epochs
+    max_epochs: int = 20
+    # training and validation split
+    train_valid_split: float = 0.8
+    # learning rate for Adam optimiser
+    lr: float = 0.01
+    # weigth for the sparsity loss
+    alpha: float = 1
+
+
 class DiffGFDNConfig(BaseModel):
     """Config file for training the DiffGFDN"""
 
+    # random seed for reproducibility
+    seed: int = 46434
     # path to three room dataset
     room_dataset_path: str = 'resources/Georg_3room_FDTD/srirs.pkl'
     # if a single measurement is being used
@@ -139,18 +191,22 @@ class DiffGFDNConfig(BaseModel):
     feedback_loop_config: FeedbackLoopConfig = FeedbackLoopConfig()
     # number of biquads in SVF
     output_filter_config: OutputFilterConfig = OutputFilterConfig()
+    input_filter_config: Optional[OutputFilterConfig] = OutputFilterConfig()
+    # colorless FDN config
+    colorless_fdn_config: ColorlessFDNConfig = ColorlessFDNConfig()
 
     @computed_field
     @property
     def delay_length_samps(self) -> List[int]:
         """Co-prime delay line lenghts for a given range"""
-        np.random.seed(46434)
         delay_range_samps = ms_to_samps(np.asarray(self.delay_range_ms),
                                         self.sample_rate)
         # generate prime numbers in specified range
         prime_nums = np.array(list(
             sp.primerange(delay_range_samps[0], delay_range_samps[1])),
                               dtype=np.int32)
+
+        np.random.seed(self.seed)
         rand_primes = prime_nums[np.random.permutation(len(prime_nums))]
         # delay line lengths
         delay_lengths = np.array(np.r_[rand_primes[:self.num_delay_lines - 1],

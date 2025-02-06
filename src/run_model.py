@@ -6,7 +6,9 @@ import shutil
 import time
 from typing import Dict
 
+import numpy as np
 from pydantic import BaseModel
+import torch
 import yaml
 
 from diff_gfdn.config.config import DiffGFDNConfig
@@ -82,6 +84,10 @@ if __name__ == '__main__':
                                                DiffGFDNConfig)
     else:
         config_dict = DiffGFDNConfig()
+
+    # set random seeds
+    np.random.seed(config_dict.seed)
+    torch.manual_seed(config_dict.seed)
 
     # make output directory
     if config_dict.trainer_config.train_dir is not None:

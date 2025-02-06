@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import pickle
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from loguru import logger
 import matplotlib.pyplot as plt
@@ -44,6 +44,7 @@ class InputFeatures():
     z_values: torch.tensor
     source_position: torch.tensor
     listener_position: torch.tensor
+    norm_listener_position: torch.tensor
     mesh_3D: Meshgrid
 
     def __repr__(self):
@@ -69,19 +70,18 @@ class RIRData:
     """Data for a single measured/simulated RIR"""
 
     def __init__(self,
-                 wav_path: Path,
                  common_decay_times: List,
                  band_centre_hz: Optional[ArrayLike],
                  amplitudes: Optional[List] = None,
                  room_dims: Optional[List] = None,
                  absorption_coeffs: Optional[List] = None,
                  mixing_time_ms: float = 20.0,
-                 nfft: Optional[int] = None):
+                 nfft: Optional[int] = None,
+                 wav_path: Optional[Path] = None,
+                 rir: Optional[NDArray] = None,
+                 sample_rate: Optional[float] = None):
         """
         Args:
-            num_rooms (int): number of rooms in coupled space
-            sample_rate (float): sample rate of dataset
-            wav_path (Path): path to the RIR
             band_centre_hz (optional, ArrayLike): octave band centres where common T60s are calculated
             common_decay_times (List[ArrayLike, float]): common decay times for the different rooms
             amplitudes (List[ArrayLike]): the amplitudes of the common slopes, unique to the receiver position,
@@ -90,17 +90,26 @@ class RIRData:
             absorption_coeffs (optional, List): uniform absorption coefficients for each room
             mixing_time_ms (float): time when early reflections morph into late reverb
             nfft (optional, int): number of frequency bins
+            wav_path (Path, optional): path to the RIR
+            sample_rate (float, optional): sample rate of dataset
+            rir (ArrayLike, optiona): the RIR itself as an array
+
         """
+        if wav_path is None and rir is None:
+            raise AttributeError(
+                "Either the path to the wav file or the RIR itself must be specified"
+            )
 
-        assert str(wav_path).endswith(
-            '.wav'), "provide the path to the .wav file"
+        if wav_path is not None and rir is None:
+            assert str(wav_path).endswith(
+                '.wav'), "provide the path to the .wav file"
 
-        # read contents from .wav file
-        try:
-            (rir, sample_rate) = sf.read(str(wav_path))
-        except Exception as exc:
-            raise FileNotFoundError(
-                f"File was not found at {str(wav_path)}") from exc
+            # read contents from .wav file
+            try:
+                (rir, sample_rate) = sf.read(str(wav_path))
+            except Exception as exc:
+                raise FileNotFoundError(
+                    f"File was not found at {str(wav_path)}") from exc
 
         self.rir = rir
         self.sample_rate = sample_rate
@@ -120,7 +129,7 @@ class RIRData:
             return self.nfft
         else:
             max_rt60_samps = self.common_decay_times.max() * self.sample_rate
-            return int(np.pow(2, np.ceil(np.log2(max_rt60_samps))))
+            return int(np.power(2, np.ceil(np.log2(max_rt60_samps))))
 
     @property
     def freq_bins_rad(self):
@@ -180,6 +189,7 @@ class RoomDataset(ABC):
                  room_start_coord: List,
                  band_centre_hz: Optional[ArrayLike] = None,
                  amplitudes: Optional[NDArray] = None,
+                 noise_floor: Optional[NDArray] = None,
                  absorption_coeffs: Optional[List] = None,
                  aperture_coords: Optional[List] = None,
                  mixing_time_ms: float = 20.0,
@@ -194,8 +204,10 @@ class RoomDataset(ABC):
             band_centre_hz (optinal, ArrayLike): octave band centres where common T60s are calculated
             common_decay_times (List[Union[ArrayLike, float]]): common decay times for the different rooms of 
                                                                 num_freq_bands x num_rooms
-            amplitudes (NDArray): the amplitudes of the common slopes of size 
-                                  (num_freq_bands x  num_rooms x num_rec_pos)
+            amplitudes (NDArray): the amplitudes of the common slopes model of size 
+                                  (num_rec_pos x num_rooms x num_freq_bands)
+            noise_floor (NDArray): the noise floor of the common slopes model of size
+                                    (num_rec_pos x num_freq_bands)
             room_dims (List): l,w,h for each room in coupled space
             room_start_coord (List): coordinates of the room's starting vertex (first room starts at origin)
             absorption_coeffs (List, optional): uniform absorption coefficients for each room
@@ -210,9 +222,11 @@ class RoomDataset(ABC):
         self.rirs = rirs
         self.band_centre_hz = band_centre_hz
         self.common_decay_times = common_decay_times
+        self.noise_floor = noise_floor
         self.amplitudes = amplitudes
         self.num_rec = self.receiver_position.shape[0]
-        self.num_src = self.source_position.shape[0]
+        self.num_src = self.source_position.shape[
+            0] if self.source_position.ndim > 1 else 1
         self.rir_length = self.rirs.shape[-1]
         self.absorption_coeffs = absorption_coeffs
         self.room_dims = room_dims
@@ -220,9 +234,25 @@ class RoomDataset(ABC):
         self.aperture_coords = aperture_coords
         self.mixing_time_ms = mixing_time_ms
         self.nfft = nfft
+        self._eps = 1e-12
         self.early_late_split()
         # create 3D mesh
         self.mesh_3D = self.get_3D_meshgrid(grid_spacing_m=0.3)
+
+    @property
+    def norm_receiver_position(self):
+        """
+        Normalise receiver coordinates to be between 0, 1 for more
+        meaningful Fourier encoding
+        """
+        norm_receiver_position = np.zeros_like(self.receiver_position)
+        for k in range(3):
+            norm_receiver_position[:, k] = (
+                self.receiver_position[:, k] -
+                self.receiver_position[:, k].min()) / (
+                    (self.receiver_position[:, k].max() -
+                     self.receiver_position[:, k].min()) + self._eps)
+        return norm_receiver_position
 
     @property
     def num_freq_bins(self):
@@ -231,7 +261,7 @@ class RoomDataset(ABC):
             return self.nfft
         else:
             max_rt60_samps = self.common_decay_times.max() * self.sample_rate
-            return int(np.pow(2, np.ceil(np.log2(max_rt60_samps))))
+            return int(np.power(2, np.ceil(np.log2(max_rt60_samps))))
 
     @property
     def freq_bins_rad(self):
@@ -253,19 +283,19 @@ class RoomDataset(ABC):
         mixing_time_samps = ms_to_samps(self.mixing_time_ms, self.sample_rate)
         win_len_samps = ms_to_samps(win_len_ms, self.sample_rate)
         window = np.broadcast_to(np.hanning(win_len_samps),
-                                 (self.rirs.shape[0], win_len_samps))
+                                 self.rirs.shape[:-1] + (win_len_samps, ))
 
         # create fade in and fade out windows to avoid discontinuities
-        fade_in_win = window[:, :win_len_samps // 2]
-        fade_out_win = window[:, win_len_samps // 2:]
+        fade_in_win = window[..., :win_len_samps // 2]
+        fade_out_win = window[..., win_len_samps // 2:]
 
         # truncate rir into early and late parts
-        self.early_rirs = self.rirs[:, :mixing_time_samps]
-        self.late_rirs = self.rirs[:, mixing_time_samps:]
+        self.early_rirs = self.rirs[..., :mixing_time_samps]
+        self.late_rirs = self.rirs[..., mixing_time_samps:]
 
         # apply fade-in and fade-out windows
-        self.early_rirs[:, -win_len_samps // 2:] *= fade_out_win
-        self.late_rirs[:, :win_len_samps // 2] *= fade_in_win
+        self.early_rirs[..., -win_len_samps // 2:] *= fade_out_win
+        self.late_rirs[..., :win_len_samps // 2] *= fade_in_win
 
         # get frequency response
         self.late_rir_mag_response = rfft(self.late_rirs,
@@ -352,14 +382,25 @@ class RoomDataset(ABC):
         if not os.path.isdir(directory):
             os.makedirs(directory)
 
-        for num_pos in range(self.num_rec):
-            filename = (
-                f'{filename_prefix}_({self.receiver_position[num_pos,0]:.2f}, '
-                f'{self.receiver_position[num_pos, 1]:.2f}, {self.receiver_position[num_pos, 2]:.2f}).wav'
-            )
+        for src_idx in range(self.num_src):
+            for rec_idx in range(self.num_rec):
+                if self.num_src > 1:
+                    filename = (
+                        f'{filename_prefix}_src_pos=({self.source_position[src_idx,0]:.2f}, '
+                        f'{self.source_position[src_idx, 1]:.2f}, {self.source_position[src_idx, 2]:.2f})'
+                        f'_rec_pos=({self.receiver_position[rec_idx,0]:.2f}, '
+                        f'{self.receiver_position[rec_idx, 1]:.2f}, {self.receiver_position[rec_idx, 2]:.2f}).wav'
+                    )
+                    rir = self.rirs[src_idx, rec_idx, :]
+                else:
+                    filename = (
+                        f'{filename_prefix}_({self.receiver_position[rec_idx,0]:.2f}, '
+                        f'{self.receiver_position[rec_idx, 1]:.2f}, {self.receiver_position[rec_idx, 2]:.2f}).wav'
+                    )
+                    rir = self.rirs[rec_idx, :]
 
-            filepath = os.path.join(directory, filename)
-            sf.write(filepath, self.rirs[num_pos, :], int(self.sample_rate))
+                filepath = os.path.join(directory, filename)
+                sf.write(filepath, rir, int(self.sample_rate))
 
 
 class ThreeRoomDataset(RoomDataset):
@@ -379,16 +420,14 @@ class ThreeRoomDataset(RoomDataset):
             logger.info('Reading pkl file ...')
             with open(filepath, 'rb') as f:
                 srir_mat = pickle.load(f)
-                sample_rate = srir_mat['fs'][0][0]
+                sample_rate = srir_mat['fs']
                 source_position = srir_mat['srcPos'].T
                 receiver_position = srir_mat['rcvPos'].T
-                # these are second order ambisonic signals
-                # I am guessing the first channel contains the W component
-                rirs = np.squeeze(srir_mat['srirs'][0, ...]).T
+                rirs = np.squeeze(srir_mat['srirs'])
                 band_centre_hz = srir_mat['band_centre_hz']
-                common_decay_times = np.asarray(
-                    np.squeeze(srir_mat['common_decay_times'], axis=1))
-                amplitudes = np.asarray(srir_mat['amplitudes'])
+                common_decay_times = srir_mat['common_decay_times']
+                amplitudes = srir_mat['amplitudes'].T
+                noise_floor = srir_mat['noise_floor'].T
                 nfft = config_dict.trainer_config.num_freq_bins
         except Exception as exc:
             raise FileNotFoundError("pickle file not read correctly") from exc
@@ -413,17 +452,27 @@ class ThreeRoomDataset(RoomDataset):
                          room_start_coord,
                          band_centre_hz,
                          amplitudes,
+                         noise_floor,
                          absorption_coeffs,
                          aperture_coords,
                          nfft=nfft)
 
         if config_dict.trainer_config.save_true_irs:
             logger.info("Saving RIRs")
-            self.save_omni_irs()
+            if isinstance(band_centre_hz, list):
+                suffix = ''
+            else:
+                assert config_dict.trainer_config.subband_process_config is not None, \
+                "Subband processing config must be specified"
+                suffix = f'_band_centre={config_dict.trainer_config.subband_process_config.centre_frequency}Hz'
 
-    def save_omni_irs(self,
-                      filename_prefix: str = "ir",
-                      directory: str = "audio/true/"):
+            self.save_omni_irs(directory=f"audio/true{suffix}/")
+
+    def save_omni_irs(
+        self,
+        directory: str,
+        filename_prefix: str = "ir",
+    ):
         """Save the omni RIRs for each receiver position as audio files in directory"""
         if not os.path.isdir(directory):
             os.makedirs(directory)
@@ -464,9 +513,17 @@ class MultiRIRDataset(data.Dataset):
         self.source_position = self.source_position.unsqueeze(
             0) if self.source_position.dim() == 1 else self.source_position
         self.listener_positions = torch.tensor(room_data.receiver_position)
+        self.norm_listener_position = torch.tensor(
+            room_data.norm_receiver_position)
         self.mesh_3D = room_data.mesh_3D
         self.device = device
 
+        # if we have multiple sources in the dataset
+        if self.source_position.dim() > 1:
+            # Generate all valid (idx1, idx2) pairs
+            self.index_pairs = [(i, j)
+                                for i in range(len(self.source_position))
+                                for j in range(len(self.listener_positions))]
         # frequency-domain data
         freq_bins_rad = torch.tensor(room_data.freq_bins_rad)
 
@@ -497,12 +554,27 @@ class MultiRIRDataset(data.Dataset):
     def __getitem__(self, idx: int):
         """Get data at a particular index"""
         # Return an instance of InputFeatures
-        input_features = InputFeatures(self.z_values, self.source_position,
-                                       self.listener_positions[idx],
-                                       self.mesh_3D)
-        target_labels = Target(self.early_rir_mag_response[idx, :],
-                               self.late_rir_mag_response[idx, :],
-                               self.rir_mag_response[idx, :])
+
+        if self.source_position.shape[0] == 1:
+            input_features = InputFeatures(self.z_values,
+                                           torch.squeeze(self.source_position),
+                                           self.listener_positions[idx],
+                                           self.norm_listener_position[idx],
+                                           self.mesh_3D)
+            target_labels = Target(self.early_rir_mag_response[idx, :],
+                                   self.late_rir_mag_response[idx, :],
+                                   self.rir_mag_response[idx, :])
+        else:
+            idx1, idx2 = self.index_pairs[idx]
+            input_features = InputFeatures(self.z_values,
+                                           self.source_position[idx1],
+                                           self.listener_positions[idx2],
+                                           self.norm_listener_position[idx2],
+                                           self.mesh_3D)
+            target_labels = Target(self.early_rir_mag_response[idx1, idx2, :],
+                                   self.late_rir_mag_response[idx1, idx2, :],
+                                   self.rir_mag_response[idx1, idx2, :])
+
         return {'input': input_features, 'target': target_labels}
 
 
@@ -554,7 +626,7 @@ class SingleRIRDataset(data.Dataset):
         """Get length of dataset (equal to number of receiver positions)"""
         return len(self.z_values)
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> Dict:
         """Get data at a particular index"""
         return {
             'z_values': self.z_values[idx],
@@ -597,6 +669,9 @@ def custom_collate(batch: data.Dataset):
     # depends on source/receiver positions
     source_positions = [item['input'].source_position for item in batch]
     listener_positions = [item['input'].listener_position for item in batch]
+    norm_listener_positions = [
+        item['input'].norm_listener_position for item in batch
+    ]
     target_early_response = [
         item['target'].early_rir_mag_response for item in batch
     ]
@@ -604,11 +679,11 @@ def custom_collate(batch: data.Dataset):
         item['target'].late_rir_mag_response for item in batch
     ]
     target_rir_response = [item['target'].rir_mag_response for item in batch]
-
     return {
         'z_values': z_values,
         'source_position': torch.stack(source_positions),
         'listener_position': torch.stack(listener_positions),
+        'norm_listener_position': torch.stack(norm_listener_positions),
         'mesh_3D': mesh_3D_data,
         'target_early_response': torch.stack(target_early_response),
         'target_late_response': torch.stack(target_late_response),
@@ -659,6 +734,7 @@ def get_dataloader(dataset: data.Dataset,
                                      drop_last=drop_last,
                                      collate_fn=custom_collate)
 
+    logger.info(f"Number of batches : {len(dataloader)}")
     return dataloader
 
 

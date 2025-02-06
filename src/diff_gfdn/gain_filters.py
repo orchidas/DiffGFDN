@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 from torch import nn
+from torch.nn import init
 from torchaudio.functional import filtfilt
 
 from .config.config import FeatureEncodingType
@@ -152,31 +153,38 @@ class BiquadCascade:
 
 class IIRFilter(nn.Module):
 
-    def __init__(self, filt_order: int, num_filters: int,
+    def __init__(self,
+                 filt_order: int,
+                 num_filters: int,
                  filter_numerator: torch.tensor,
-                 filter_denominator: torch.tensor):
+                 filter_denominator: torch.tensor,
+                 device: Optional[torch.device] = 'cpu'):
         """
         Filter input with an IIR filter of order filt_order
         Args:
             filt_order (int): order of the IIR fulter
+            filter_numerator (torch.tensor): numerator coefficients
+            filter_denominator (torch.tensor): denominator coefficients
+            device (optional, torch.device): the training device, CPU or GPU
         """
         super().__init__()
         self.filt_order = filt_order
         self.num_filters = num_filters
         self.filter_numerator = filter_numerator
         self.filter_denominator = filter_denominator
+        self.device = device
 
         assert self.filter_numerator.shape == (self.num_filters,
                                                self.filt_order)
 
-    def forward(self, z: torch.tensor, device: Optional[torch.device] = 'cpu'):
+    def forward(self, z: torch.tensor):
         """
         Calculate 
         Here, z represents the input frequency sampling points
         """
         H = torch.ones((self.num_filters, len(z)),
                        dtype=torch.complex64,
-                       device=device)
+                       device=self.device)
         Hnum = torch.zeros_like(H)
         Hden = torch.zeros_like(H)
 
@@ -374,13 +382,17 @@ class SinusoidalEncoding(nn.Module):
         num_pos_pts, num_pos_features = pos_coords.shape
         encoded_pos = torch.zeros(
             num_pos_pts, num_pos_features * self.num_fourier_features * 2)
+        f_min, f_max = 1.0, 32.0  # Frequency range
+        frequencies = torch.exp(
+            torch.linspace(np.log(f_min), np.log(f_max),
+                           self.num_fourier_features))
 
         start_idx = 0
         for k in range(self.num_fourier_features):
             encoded_pos[:, start_idx:start_idx +
                         2 * num_pos_features] = torch.cat(
-                            (torch.sin(2**k * np.pi * pos_coords),
-                             torch.cos(2**k * np.pi * pos_coords)),
+                            (torch.sin(frequencies[k] * np.pi * pos_coords),
+                             torch.cos(frequencies[k] * np.pi * pos_coords)),
                             dim=-1)
             start_idx += 2 * num_pos_features
         # this is of size num_pos_pts x (3 * num_fourier_features * 2)
@@ -499,6 +511,18 @@ class MLP(nn.Module):
 
         # Combine layers into a Sequential model
         self.model = nn.Sequential(*layers)
+
+        self._initialise_weights()
+
+    def _initialise_weights(self):
+        """Initialize weights and biases of Linear layers."""
+        for layer in self.model:
+            if isinstance(layer, nn.Linear):
+                # Use He initialization for ReLU
+                init.kaiming_uniform_(layer.weight, nonlinearity='relu')
+                # Optional: Bias initialization
+                if layer.bias is not None:
+                    init.constant_(layer.bias, 0)
 
     def forward(self, x: torch.tensor):
         """
@@ -635,9 +659,6 @@ class SVF_from_MLP(nn.Module):
         for b in range(self.batch_size):
             for i in range(self.num_groups):
                 svf_params_del_line = self.svf_params[b, i, :]
-                # logger.info(
-                #     f'Batch={b}, group={i}, resonance={svf_params_del_line[:, 0]}'
-                # )
                 svf_cascade = [
                     SVF(cutoff_frequency=self.svf_cutoff_freqs[k],
                         resonance=svf_params_del_line[k, 0],
@@ -676,15 +697,10 @@ class SVF_from_MLP(nn.Module):
         return (svf_params, biquad_coeffs)
 
     @torch.no_grad()
-    def get_param_dict(self) -> Dict:
-        """Return the parameters as a dict"""
+    def get_param_dict(self, x: Dict) -> Dict:
+        """Return the parameters as a dict for a new data position - used in inferencing"""
+        self.forward(x)
         param_np = {}
-        self.svf_params[..., 0] = self.scaled_res(
-            self.svf_params[..., 0].view(-1)).view(self.num_groups,
-                                                   self.num_biquads)
-        self.svf_params[..., 1] = self.scaled_gains(
-            self.svf_params[..., 1].view(-1)).view(self.num_groups,
-                                                   self.num_biquads)
         param_np['svf_params'] = self.svf_params.squeeze().cpu().numpy()
         param_np['biquad_coeffs'] = [[
             torch.cat((self.biquad_cascade[b][n].num_coeffs,
@@ -726,7 +742,6 @@ class Gains_from_MLP(nn.Module):
         super().__init__()
         self.num_groups = num_groups
         self.num_delay_lines_per_group = num_delay_lines_per_group
-        self.num_delay_lines = self.num_groups * self.num_delay_lines_per_group
         self.position_type = position_type
         self.encoding_type = encoding_type
         self.device = device
@@ -748,7 +763,7 @@ class Gains_from_MLP(nn.Module):
         self.mlp = MLP(num_input_features,
                        num_hidden_layers,
                        num_neurons,
-                       self.num_delay_lines,
+                       self.num_groups,
                        num_biquads_in_cascade=1,
                        num_params=1)
 
@@ -762,7 +777,7 @@ class Gains_from_MLP(nn.Module):
         """
         z_values = x['z_values']
         position = x[
-            'listener_position'] if self.position_type == "output_gains" else x[
+            'norm_listener_position'] if self.position_type == "output_gains" else x[
                 'source_position']
         self.batch_size = position.shape[0]
         mesh_3D = x['mesh_3D']
@@ -776,20 +791,24 @@ class Gains_from_MLP(nn.Module):
         # run the MLP, output of the MLP are the state variable filter coefficients
         self.gains = self.mlp(encoded_position)
 
-        # if meshgrid encoding is used, the size of svf_params is (Lx*Ly*Lz, N, K, 2).
-        # instead, we want the size to be (B, N, K, 2). So, we only take the filters
+        # if meshgrid encoding is used, the size of svf_params is (Lx*Ly*Lz, Ngroup, K, 2).
+        # instead, we want the size to be (B, Ngroup, K, 2). So, we only take the filters
         # corresponding to the position of the receivers in the meshgrid
         if self.encoding_type == FeatureEncodingType.MESHGRID:
             self.gains = self.gains[rec_idx, ...]  # pylint: disable=E0601
             assert self.gains.shape[0] == self.batch_size
 
         # always ensure that the filter parameters are constrained
-        reshape_size = (self.batch_size, self.num_delay_lines)
+        reshape_size = (self.batch_size, self.num_groups)
         self.gains = self.scaled_sigmoid(
             self.gains.view(-1)).view(reshape_size)
 
+        # expand the gains to have shape (B, Ngroup x N_del_per_group, K, 2)
+        expanded_gains = self.gains.repeat_interleave(
+            self.num_delay_lines_per_group, dim=1)
+
         # fill the output gains of size B x N x K
-        C = self.gains.unsqueeze(-1).repeat(1, 1, len(z_values))
+        C = expanded_gains.unsqueeze(-1).repeat(1, 1, len(z_values))
 
         return C
 
@@ -805,11 +824,9 @@ class Gains_from_MLP(nn.Module):
         return gains
 
     @torch.no_grad()
-    def get_param_dict(self) -> Dict:
+    def get_param_dict(self, x: Dict) -> Dict:
         """Return the parameters as a dict"""
+        self.forward(x)
         param_np = {}
-        self.gains = self.scaled_sigmoid(self.gains.view(-1)).view(
-            self.batch_size, self.num_delay_lines)
-
         param_np['gains'] = self.gains.squeeze().cpu().numpy()
         return param_np

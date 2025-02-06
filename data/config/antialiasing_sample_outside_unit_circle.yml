@@ -1,6 +1,0 @@
-trainer_config:
-    device: 'cpu'
-    max_epochs: 3
-    train_dir: 'output/sample_outside_unit_circle/'
-    ir_dir: 'audio/sample_outside_unit_circle/'
-    alias_attenuation_db: 60

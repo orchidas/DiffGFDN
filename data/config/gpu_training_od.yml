@@ -1,0 +1,10 @@
+trainer_config:
+    device: 'cuda'
+    max_epochs: 10
+    train_dir: 'output/gpu_train_od/'
+    ir_dir: 'audio/gpu_train_od/'
+    alias_attenuation_db: 30
+    save_irs: True
+feedback_loop_config:
+    coupling_matrix_type: "scalar_matrix"
+room_dataset_path: '/scratch/users/k2478454/DiffGFDN/resources/Georg_3room_FDTD/srirs.pkl'
