@@ -776,14 +776,14 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
                                       batch_size=batch_size,
                                       shuffle=shuffle,
                                       device=device,
-                                      drop_last=True,
+                                      drop_last=False,
                                       collate_fn=custom_collate)
 
         valid_loader = get_dataloader(valid_set,
                                       batch_size=batch_size,
                                       shuffle=shuffle,
                                       device=device,
-                                      drop_last=True,
+                                      drop_last=False,
                                       collate_fn=custom_collate)
         return train_loader, valid_loader
 

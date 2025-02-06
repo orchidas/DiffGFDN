@@ -7,7 +7,7 @@ from loguru import logger
 import numpy as np
 import pandas as pd
 import pyfar as pf
-from scipy.signal import fftconvolve
+from scipy.signal import fftconvolve, sosfilt, sosfreqz
 import soundfile as sf
 import torch
 import yaml
@@ -24,9 +24,35 @@ from run_model import dump_config_to_pickle
 # pylint: disable=W0621, W0632
 
 
-def sum_arrays(series):
-    """sum an array along first dimension"""
-    return np.sum(series, axis=0)
+def sum_and_normalize(group, subband_filters):
+    """
+    Ensure that the subband RIR has the same energy as the broadband RIR in each frequency band
+    """
+    filtered = np.stack(group['filtered_time_samples'].values)
+    num_time_samp = filtered.shape[-1]
+    num_bands = filtered.shape[0]
+
+    # filters are in SOS format
+    if subband_filters.coefficients.ndim > 2:
+        h = np.array([
+            sosfreqz(subband_filters.coefficients[b_idx, ...],
+                     worN=num_time_samp // 2 + 1)[1]
+            for b_idx in range(num_bands)
+        ])
+        norm_factor = 1.0 / np.sqrt(
+            np.sum(np.fft.irfft(h, axis=-1)**2, axis=-1))
+
+    # filters are in FIR format
+    else:
+        norm_factor = 1.0 / np.sqrt(
+            np.sum(np.power(subband_filters.coefficients, 2), axis=-1))
+
+    normalized_filtered = filtered * np.repeat(
+        norm_factor[:, np.newaxis], num_time_samp, axis=-1)
+
+    # sum along frequencies
+    summed_normalized_filtered = np.sum(normalized_filtered, axis=0)
+    return summed_normalized_filtered
 
 
 def create_config(
@@ -133,19 +159,15 @@ def training(freqs_list: int, data_path: str, training_complete: bool = False):
     return subband_config_dicts
 
 
-def inferencing(freqs_list: List, config_dicts: List[DiffGFDNConfig],
-                save_filename: str):
+def inferencing(freqs_list: List,
+                config_dicts: List[DiffGFDNConfig],
+                save_filename: str,
+                output_path: Path,
+                use_amp_preserve_filterbank: bool = True):
     """Run inferencing and save the full band RIRs for each position"""
-    if not os.path.exists(save_filename):
-        synth_subband_rirs = pd.DataFrame(columns=[
-            'frequency', 'position', 'time_samples', 'filtered_time_samples'
-        ])
-        output_path = Path(
-            "audio/grid_rir_treble_subband_processing_colorless_loss")
-        if not os.path.exists(output_path.resolve()):
-            os.mkdir(output_path.resolve())
 
-        # prepare the reconstructing filterbank
+    # prepare the reconstructing filterbank
+    if use_amp_preserve_filterbank:
         subband_filters, _ = pf.dsp.filter.reconstructing_fractional_octave_bands(
             None,
             num_fractions=config_dicts[0].trainer_config.
@@ -153,6 +175,22 @@ def inferencing(freqs_list: List, config_dicts: List[DiffGFDNConfig],
             frequency_range=(freqs_list[0], freqs_list[-1]),
             sampling_rate=config_dicts[0].sample_rate,
         )
+    else:
+        subband_filters = pf.dsp.filter.fractional_octave_bands(
+            None,
+            num_fractions=config_dicts[0].trainer_config.
+            subband_process_config.num_fraction_octaves,
+            frequency_range=(freqs_list[0], freqs_list[-1]),
+            sampling_rate=config_dicts[0].sample_rate,
+        )
+
+    if not os.path.exists(save_filename):
+        synth_subband_rirs = pd.DataFrame(columns=[
+            'frequency', 'position', 'time_samples', 'filtered_time_samples'
+        ])
+
+        if not os.path.exists(output_path.resolve()):
+            os.mkdir(output_path.resolve())
 
         # loop through all subband frequencies
         for k in range(len(freqs_list)):
@@ -230,10 +268,14 @@ def inferencing(freqs_list: List, config_dicts: List[DiffGFDNConfig],
                 for num_pos in range(position.shape[0]):
                     cur_rir = h[num_pos, :].detach().cpu().numpy()
 
-                    cur_rir_filtered = fftconvolve(
-                        cur_rir,
-                        subband_filters.coefficients[k, :],
-                        mode='same')
+                    if use_amp_preserve_filterbank:
+                        cur_rir_filtered = fftconvolve(
+                            cur_rir,
+                            subband_filters.coefficients[k, :],
+                            mode='same')
+                    else:
+                        cur_rir_filtered = sosfilt(
+                            subband_filters.coefficients[k, ...], cur_rir)
 
                     # save filtered RIRs
                     filename = f'{fdir}/ir_({position[num_pos, 0]:.2f}, {position[num_pos, 1]:.2f}, '\
@@ -263,13 +305,14 @@ def inferencing(freqs_list: List, config_dicts: List[DiffGFDNConfig],
     # Save the synthesised RIRs
     logger.info('Saving synthesised RIRs')
 
-    # Group by 'position' and sum the 'time_samples' over each frequency band
-    synth_rirs = synth_subband_rirs.groupby(
-        'position')['filtered_time_samples'].apply(sum_arrays)
+    # Group by position and sum the filtered_time_samples over each frequency band,
+    # and normalise by the energy of 'time_samples'
+    synth_rirs = synth_subband_rirs.groupby('position').apply(
+        lambda group: sum_and_normalize(group, subband_filters))
 
     # Convert to DataFrame if needed
     synth_rirs_df = synth_rirs.reset_index()
-    synth_rirs_df.columns = ['position', 'filtered_time_samples']
+    synth_rirs_df.columns = ['position', 'time_samples']
 
     if not os.path.isdir(output_path):
         os.makedir(output_path)
@@ -277,7 +320,7 @@ def inferencing(freqs_list: List, config_dicts: List[DiffGFDNConfig],
     # Save each row's 'time_samples' as a WAV file
     for _, row in synth_rirs_df.iterrows():
         position = row['position']
-        values = row['filtered_time_samples']
+        values = row['time_samples']
 
         filename = f'{output_path.resolve()}/ir_({position[0]:.2f}, {position[1]:.2f}, {position[2]:.2f}).wav'
         sf.write(filename, values, int(config_dicts[0].sample_rate))
@@ -292,4 +335,10 @@ if __name__ == '__main__':
     save_filename = Path(
         'output/treble_data_grid_training_final_rirs_colorless_loss.pkl'
     ).resolve()
-    inferencing(freqs_list, config_dicts, save_filename)
+    output_path = Path(
+        "audio/grid_rir_treble_subband_processing_colorless_loss")
+    inferencing(freqs_list,
+                config_dicts,
+                save_filename,
+                output_path,
+                use_amp_preserve_filterbank=True)

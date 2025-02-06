@@ -343,7 +343,11 @@ def plot_subband_edc(h_true: ArrayLike,
     crop_end_samp = ms_to_samps(crop_end_ms, fs)
 
     trunc_true_ir = h_true[mixing_time_samp:-crop_end_samp]
-    filtered_true_ir = octave_filtering(trunc_true_ir, fs, band_centre_hz)
+    filtered_true_ir = octave_filtering(trunc_true_ir,
+                                        fs,
+                                        band_centre_hz,
+                                        compensate_filter_energy=True,
+                                        use_pyfar_filterbank=True)
     time = np.linspace(0, (len(trunc_true_ir) - 1) / fs, len(trunc_true_ir))
 
     num_bands = len(band_centre_hz)
@@ -357,8 +361,11 @@ def plot_subband_edc(h_true: ArrayLike,
         approx_ir = h_approx[epoch]
         trunc_approx_ir = approx_ir[mixing_time_samp:mixing_time_samp +
                                     len(trunc_true_ir)]
-        filtered_approx_ir = octave_filtering(trunc_approx_ir, fs,
-                                              band_centre_hz)
+        filtered_approx_ir = octave_filtering(trunc_approx_ir,
+                                              fs,
+                                              band_centre_hz,
+                                              compensate_filter_energy=True,
+                                              use_pyfar_filterbank=True)
         leg.append(f'Epoch = {epoch}')
 
         for k in range(num_bands):
@@ -500,6 +507,7 @@ def plot_edc_error_in_space(
     scatter: bool = False,
     save_path: Optional[str] = None,
     pos_sorted: bool = False,
+    norm_edc: bool = False,
 ):
     """
     Plot the EDC matching error in dB as a function of spatial location
@@ -512,10 +520,14 @@ def plot_edc_error_in_space(
         save_path (optional, str): path to save the file
         mixing_time_ms (float): truncate RIR before this time
         pos_sorted (bool): whether the positions are sorted in all_{src,rec}_pos
+        norm_edc (bool): whether to normalise the EDC before calculating the error
     """
 
-    def get_edc_error(original_rirs: NDArray, original_points: NDArray,
-                      estimated_rirs: NDArray, est_points: NDArray):
+    def get_edc_error(original_rirs: NDArray,
+                      original_points: NDArray,
+                      estimated_rirs: NDArray,
+                      est_points: NDArray,
+                      norm_flag: bool = False):
         """Get MSE error between the EDC mismatch"""
 
         if not pos_sorted:
@@ -524,8 +536,9 @@ def plot_edc_error_in_space(
         else:
             ordered_pos_idx = np.arange(0, len(est_points), dtype=np.int32)
         est_rirs_ordered = estimated_rirs[ordered_pos_idx, ...]
-        original_edc = schroeder_backward_int(original_rirs, normalize=False)
-        est_edc = schroeder_backward_int(est_rirs_ordered, normalize=False)
+        original_edc = schroeder_backward_int(original_rirs,
+                                              normalize=norm_flag)
+        est_edc = schroeder_backward_int(est_rirs_ordered, normalize=norm_flag)
         error_db = np.mean(np.abs(
             db(original_edc, is_squared=True) - db(est_edc, is_squared=True)),
                            axis=-2)
@@ -571,12 +584,14 @@ def plot_edc_error_in_space(
                 cur_original_rirs,
                 room_data.sample_rate,
                 room_data.band_centre_hz,
-                use_pyfar_filterbank=False)
+                compensate_filter_energy=True,
+                use_pyfar_filterbank=True)
             cur_est_rirs_filtered = octave_filtering(
                 cur_est_rirs,
                 room_data.sample_rate,
                 room_data.band_centre_hz,
-                use_pyfar_filterbank=False)
+                compensate_filter_energy=True,
+                use_pyfar_filterbank=True)
             save_name = f'{save_path}_{freq_to_plot / 1000: .0f}kHz\
             _src=({cur_src_pos[0]:.2f}, {cur_src_pos[1]:.2f}, {cur_src_pos[2]:.2f})'
 
@@ -589,7 +604,7 @@ def plot_edc_error_in_space(
         # get error metrics
         error_func, error_mse = get_edc_error(
             cur_original_rirs_filtered.copy(), rec_points,
-            cur_est_rirs_filtered.copy(), est_rec_pos)
+            cur_est_rirs_filtered.copy(), est_rec_pos, norm_edc)
         if is_in_subbands and freq_to_plot is not None:
             idx = np.argwhere(
                 np.array(room_data.band_centre_hz) == freq_to_plot)[0][0]
@@ -687,7 +702,9 @@ def plot_amps_in_space(room_data: RoomDataset,
         if is_in_subbands:
             est_rirs_filtered = octave_filtering(est_rirs,
                                                  room_data.sample_rate,
-                                                 room_data.band_centre_hz)
+                                                 room_data.band_centre_hz,
+                                                 compensate_filter_energy=True,
+                                                 use_pyfar_filterbank=True)
             t_vals_expanded = np.tile(
                 np.squeeze(t_vals)[np.newaxis, ...], (num_est_rirs, 1, 1))
             band_centre_hz = room_data.band_centre_hz

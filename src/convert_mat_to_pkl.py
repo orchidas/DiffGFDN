@@ -7,25 +7,37 @@ from loguru import logger
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 import pyfar as pf
-from scipy.signal import fftconvolve
+from scipy.signal import fftconvolve, sosfilt
 
 # pylint: disable=W0621
 # flake8: noqa:E231
 
 
-def save_subband_rirs(rirs: NDArray, sample_rate: float, common_t60: NDArray,
-                      amplitudes: NDArray, noise_floor: NDArray,
-                      centre_freqs: List, source_position: Union[NDArray,
-                                                                 ArrayLike],
-                      receiver_position: NDArray):
+def save_subband_rirs(rirs: NDArray,
+                      sample_rate: float,
+                      common_t60: NDArray,
+                      amplitudes: NDArray,
+                      noise_floor: NDArray,
+                      centre_freqs: List,
+                      source_position: Union[NDArray, ArrayLike],
+                      receiver_position: NDArray,
+                      use_amp_preserve_filterbank: bool = True):
     """Filter RIRs into subbands and save the parameters"""
     logger.info("Saving subband RIRs after filtering")
-    subband_filters, _ = pf.dsp.filter.reconstructing_fractional_octave_bands(
-        None,
-        num_fractions=1,
-        frequency_range=(centre_freqs[0], centre_freqs[-1]),
-        sampling_rate=sample_rate,
-    )
+    if use_amp_preserve_filterbank:
+        subband_filters, _ = pf.dsp.filter.reconstructing_fractional_octave_bands(
+            None,
+            num_fractions=1,
+            frequency_range=(centre_freqs[0], centre_freqs[-1]),
+            sampling_rate=sample_rate,
+        )
+    else:
+        subband_filters, _ = pf.dsp.filter.fractional_octave_bands(
+            None,
+            num_fractions=1,
+            frequency_range=(centre_freqs[0], centre_freqs[-1]),
+            sampling_rate=sample_rate,
+        )
     num_receivers = rirs.shape[0]
 
     num_bands = len(centre_freqs)
@@ -33,9 +45,14 @@ def save_subband_rirs(rirs: NDArray, sample_rate: float, common_t60: NDArray,
         cur_common_t60 = common_t60[band]
         cur_amplitudes = amplitudes[band, ...]
         cur_noise_floor = noise_floor[band, ...]
-        cur_filter = np.tile(subband_filters.coefficients[band, :],
-                             (num_receivers, 1))
-        cur_rir = fftconvolve(rirs, cur_filter, axes=-1, mode='same')
+        if use_amp_preserve_filterbank:
+            cur_filter = np.tile(subband_filters.coefficients[band, :],
+                                 (num_receivers, 1))
+            cur_rir = fftconvolve(rirs, cur_filter, axes=-1, mode='same')
+        else:
+            cur_filter = subband_filters.coefficients[band, ...]
+            cur_rir = sosfilt(cur_filter, rirs, axis=-1)
+
         data_dict = {
             'fs': sample_rate,
             'srcPos': source_position,
