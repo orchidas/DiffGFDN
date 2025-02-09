@@ -21,7 +21,7 @@ from diff_gfdn.utils import get_response
 from run_model import dump_config_to_pickle
 
 # flake8: noqa: E231
-# pylint: disable=W0621, W0632
+# pylint: disable=W0621, W0632, E0402
 
 
 def sum_and_normalize(group, subband_filters):

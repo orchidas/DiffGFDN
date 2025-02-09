@@ -189,7 +189,9 @@ class RoomDataset(ABC):
                  room_start_coord: List,
                  band_centre_hz: Optional[ArrayLike] = None,
                  amplitudes: Optional[NDArray] = None,
+                 amplitudes_norm: Optional[NDArray] = None,
                  noise_floor: Optional[NDArray] = None,
+                 noise_floor_norm: Optional[NDArray] = None,
                  absorption_coeffs: Optional[List] = None,
                  aperture_coords: Optional[List] = None,
                  mixing_time_ms: float = 20.0,
@@ -223,7 +225,9 @@ class RoomDataset(ABC):
         self.band_centre_hz = band_centre_hz
         self.common_decay_times = common_decay_times
         self.noise_floor = noise_floor
+        self.noise_floor_norm = noise_floor_norm
         self.amplitudes = amplitudes
+        self.amplitudes_norm = amplitudes_norm
         self.num_rec = self.receiver_position.shape[0]
         self.num_src = self.source_position.shape[
             0] if self.source_position.ndim > 1 else 1
@@ -427,7 +431,9 @@ class ThreeRoomDataset(RoomDataset):
                 band_centre_hz = srir_mat['band_centre_hz']
                 common_decay_times = srir_mat['common_decay_times']
                 amplitudes = srir_mat['amplitudes'].T
+                amplitudes_norm = srir_mat['amplitudes_norm'].T
                 noise_floor = srir_mat['noise_floor'].T
+                noise_floor_norm = srir_mat['noise_floor_norm'].T
                 nfft = config_dict.trainer_config.num_freq_bins
         except Exception as exc:
             raise FileNotFoundError("pickle file not read correctly") from exc
@@ -442,6 +448,8 @@ class ThreeRoomDataset(RoomDataset):
         # coordinates of the aperture
         aperture_coords = [[(4, 3), (4, 4.5)], [(8.5, 5), (10, 5)]]
 
+        print(amplitudes.shape, amplitudes_norm.shape)
+
         super().__init__(num_rooms,
                          sample_rate,
                          source_position,
@@ -452,7 +460,9 @@ class ThreeRoomDataset(RoomDataset):
                          room_start_coord,
                          band_centre_hz,
                          amplitudes,
+                         amplitudes_norm,
                          noise_floor,
+                         noise_floor_norm,
                          absorption_coeffs,
                          aperture_coords,
                          nfft=nfft)

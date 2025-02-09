@@ -30,7 +30,7 @@ classifiers = [
 dependencies = [
     "loguru>=0.6.0",
     "notebook",
-    "numpy",
+    "numpy==1.26.4",
     "scipy",
     "h5py",
     "tqdm",
