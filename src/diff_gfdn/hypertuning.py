@@ -102,4 +102,4 @@ def mlp_hyperparameter_tuning(trial, hyp_config: MLPTuningConfig):
               save_plot=True,
               filename='test_loss_vs_position',
               xaxis_label='Position #')
-    return trainer.valid_loss
+    return sum(trainer.valid_loss)

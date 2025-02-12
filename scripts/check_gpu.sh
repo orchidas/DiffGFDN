@@ -1,8 +1,8 @@
 #!/bin/bash -l
 # change current working directory
-#SBATCH --chdir=/scratch/users/%u/DiffGFDN/
+#SBATCH --chdir=/scratch/users/k2478454/recovered/DiffGFDN/
 # set output directory
-#SBATCH --output=/scratch/users/%u/%j.out
+#SBATCH --output=/scratch/users/%u/recovered/%j.out
 #SBATCH --job-name=gpu
 #SBATCH --gres=gpu
 # Load required modules

@@ -82,6 +82,7 @@ logger.info("Reading mat file")
 
 # Load the MATLAB v7.3 .mat file using h5py
 file_path = Path("resources/Georg_3room_FDTD/srirs.mat").resolve()
+print(file_path)
 
 with h5py.File(file_path, 'r') as mat_file:
     # Get the dataset
