@@ -21,7 +21,7 @@ from diff_gfdn.utils import get_response
 from run_model import dump_config_to_pickle
 
 # flake8: noqa: E231
-# pylint: disable=W0621, W0632
+# pylint: disable=W0621, W0632, E0402
 
 
 def sum_and_normalize(group, subband_filters):
@@ -61,18 +61,31 @@ def create_config(
     freq_range: List,
     config_path: str,
     write_config: bool = True,
-    # seed_base: int = 23463,
+    seed_base: int = 23463,
 ) -> DiffGFDNConfig:
     """Create config file for each subband"""
-    num_hidden_layers = 1 if cur_freq_hz in (63, 125) else 3
-    num_neurons_per_layer = 2**4 if cur_freq_hz in (63, 125) else 2**7
-    # seed = seed_base + cur_freq_hz
+
+    # parameters from hypertuning
+    if cur_freq_hz == 63:
+        num_hidden_layers = 1
+        num_neurons_per_layer = 2**3
+    elif cur_freq_hz == 125:
+        num_hidden_layers = 1
+        num_neurons_per_layer = 2**4
+    elif cur_freq_hz in (250, 500):
+        num_hidden_layers = 5
+        num_neurons_per_layer = 2**4
+    else:
+        num_hidden_layers = 3
+        num_neurons_per_layer = 2**7
+
+    seed = seed_base + cur_freq_hz
     config_dict = {
         'room_dataset_path': data_path,
         'sample_rate': 32000.0,
         'num_delay_lines': 12,
         'use_absorption_filters': False,
-        # 'seed': seed,
+        'seed': seed,
         'trainer_config': {
             'max_epochs': 10,
             'batch_size': 32,
@@ -82,22 +95,15 @@ def create_config(
             'use_edc_mask': True,
             'use_colorless_loss': True,
             'train_dir':
-            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
+            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_seed={seed}/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
+            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_seed={seed}/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
                 'frequency_range': freq_range,
             },
         },
-        # 'colorless_fdn_config': {
-        #     'use_colorless_prototype': True,
-        #     'batch_size': 4000,
-        #     'max_epochs': 15,
-        #     'lr': 0.01,
-        #     'alpha': 1,
-        # },
         'feedback_loop_config': {
             'coupling_matrix_type': 'scalar_matrix',
         },
@@ -331,12 +337,12 @@ def inferencing(freqs_list: List,
 if __name__ == '__main__':
     freqs_list = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
     data_path = Path('resources/Georg_3room_FDTD').resolve()
-    config_dicts = training(freqs_list, data_path, training_complete=True)
+    config_dicts = training(freqs_list, data_path, training_complete=False)
     save_filename = Path(
-        'output/treble_data_grid_training_final_rirs_colorless_loss.pkl'
+        'output/treble_data_grid_training_final_rirs_diff_delays_colorless_loss.pkl'
     ).resolve()
     output_path = Path(
-        "audio/grid_rir_treble_subband_processing_colorless_loss")
+        "audio/grid_rir_treble_subband_processing_diff_delays_colorless_loss")
     inferencing(freqs_list,
                 config_dicts,
                 save_filename,

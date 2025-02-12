@@ -536,14 +536,19 @@ def plot_edc_error_in_space(
         else:
             ordered_pos_idx = np.arange(0, len(est_points), dtype=np.int32)
         est_rirs_ordered = estimated_rirs[ordered_pos_idx, ...]
+
         original_edc = schroeder_backward_int(original_rirs,
-                                              normalize=norm_flag)
-        est_edc = schroeder_backward_int(est_rirs_ordered, normalize=norm_flag)
+                                              time_axis=-2,
+                                              normalize=norm_flag,
+                                              discard_last_zeros=False)
+        est_edc = schroeder_backward_int(est_rirs_ordered,
+                                         time_axis=-2,
+                                         normalize=norm_flag,
+                                         discard_last_zeros=False)
         error_db = np.mean(np.abs(
             db(original_edc, is_squared=True) - db(est_edc, is_squared=True)),
                            axis=-2)
-        error_mse = np.linalg.norm(error_db, axis=0) / np.sqrt(
-            original_points.shape[0])
+        error_mse = np.linalg.norm(error_db, axis=0) / original_points.shape[0]
         return error_db, error_mse
 
     num_rooms = room_data.num_rooms
@@ -724,8 +729,11 @@ def plot_amps_in_space(room_data: RoomDataset,
         # these are of shape num_rec x num_slope x num_fbands
 
         cur_est_amps = calculate_amplitudes_least_squares(
-            t_vals_expanded, room_data.sample_rate, est_rirs_filtered,
-            band_centre_hz)
+            t_vals_expanded,
+            room_data.sample_rate,
+            est_rirs_filtered,
+            band_centre_hz,
+            use_non_linear_ls=False)
 
         # if amplitudes are specified in subbands
         if is_in_subbands:
