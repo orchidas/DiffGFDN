@@ -62,8 +62,12 @@ def save_subband_rirs(rirs: NDArray, sample_rate: float, common_t60: NDArray,
         )
 
 
-def calculate_cs_params_custom(srirs: NDArray, t_vals: NDArray, f_bands: List,
-                               fs: int) -> Tuple[NDArray, NDArray]:
+def calculate_cs_params_custom(
+        srirs: NDArray,
+        t_vals: NDArray,
+        f_bands: List,
+        fs: int,
+        batch_size: int = 50) -> Tuple[NDArray, NDArray]:
     """
     Calculate custom CS parameters from the common decay times
     Args:
@@ -71,33 +75,48 @@ def calculate_cs_params_custom(srirs: NDArray, t_vals: NDArray, f_bands: List,
         t_vals (NDArray): common decay times of size n_bands x 1 x n_slopes
         f_bands (List): list of frequencies for filtering
         fs (int): sampling frequency
+        batch_size: running estimation for all RIRs at once is difficult, so split in batches
     Returns:
         Tuple[NDArray, NDArray]: Amplitudes of shape n_bands x n_slopes x n_rirs
                                  Noise of shape n_bands x 1 x n_rirs
     """
     num_rirs = srirs.shape[0]
-    # convert to shape 1 x n_slopes x n_bands
-    t_vals = t_vals.transpose(1, -1, 0)
-    # ensure t_vals is of shape n_rirs x n_slopes x n_bands
-    t_vals = np.repeat(t_vals, num_rirs, axis=0)
+    num_slopes = t_vals.shape[-1]
+    num_batches = int(np.ceil(num_rirs / float(batch_size)))
+    logger.info(f"Number of batches : {num_batches}")
+    a_vals = np.zeros((len(f_bands), num_slopes, num_rirs))
+    n_vals = np.zeros((len(f_bands), 1, num_rirs))
 
-    assert t_vals.shape[0] == num_rirs and t_vals.shape[-1] == len(f_bands)
+    for n in range(num_batches):
+        batch_idx = np.arange(n * batch_size,
+                              max(num_rirs, (n + 1) * batch_size),
+                              dtype=np.int32)
+        cur_srirs = srirs[batch_idx, :]
+        num_rirs_per_batch = cur_srirs.shape[0]
+        # convert to shape 1 x n_slopes x n_bands
+        t_vals_exp = t_vals.transpose(1, -1, 0)
+        # ensure t_vals is of shape n_rirs x n_slopes x n_bands
+        t_vals_exp = np.repeat(t_vals_exp, num_rirs_per_batch, axis=0)
 
-    # of shape n_rirs x ir_len x n_bands
-    srirs_filtered = octave_filtering(srirs,
-                                      fs,
-                                      f_bands,
-                                      use_pyfar_filterbank=True)
-    logger.info("Done with octave filtering for LS estimation")
+        assert t_vals_exp.shape[0] == num_rirs_per_batch and t_vals_exp.shape[
+            -1] == len(f_bands)
 
-    # calculate amplitudes and noise floor - this is of shape nrirs x n_slopes+1 x n_bands
-    est_amps = calculate_amplitudes_least_squares(t_vals,
-                                                  fs,
-                                                  srirs_filtered,
-                                                  f_bands,
-                                                  leave_out_ms=100)
-    a_vals = est_amps[:, 1:, :].transpose(-1, 1, 0)
-    n_vals = np.expand_dims(est_amps[:, 0, :], axis=1).transpose(-1, 1, 0)
+        # of shape n_rirs x ir_len x n_bands
+        cur_srirs_filtered = octave_filtering(cur_srirs,
+                                              fs,
+                                              f_bands,
+                                              use_pyfar_filterbank=True)
+        logger.info("Done with octave filtering for LS estimation")
+
+        # calculate amplitudes and noise floor - this is of shape nrirs x n_slopes+1 x n_bands
+        est_amps = calculate_amplitudes_least_squares(t_vals_exp,
+                                                      fs,
+                                                      cur_srirs_filtered,
+                                                      f_bands,
+                                                      leave_out_ms=1000)
+        a_vals[..., batch_idx] = est_amps[:, 1:, :].transpose(-1, 1, 0)
+        n_vals[..., batch_idx] = np.expand_dims(est_amps[:, 0, :],
+                                                axis=1).transpose(-1, 1, 0)
     return a_vals, n_vals
 
 
@@ -137,9 +156,12 @@ for i in range(len(freqs)):
 # get custom CS amps and noise floor
 logger.info(
     "Calculating unnormalised amplitudes and noise floor with least squares")
-amps_ls, noise_ls = calculate_cs_params_custom(srirs.copy().T,
-                                               np.array(common_t60), freqs,
-                                               sample_rate)
+amps_ls, noise_ls = calculate_cs_params_custom(
+    srirs.copy().T,
+    np.array(common_t60),
+    freqs,
+    sample_rate,
+    batch_size=receiver_position.shape[-1])
 
 # Convert the list to a NumPy array if needed
 data_dict = {

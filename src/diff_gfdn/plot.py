@@ -729,8 +729,11 @@ def plot_amps_in_space(room_data: RoomDataset,
         # these are of shape num_rec x num_slope x num_fbands
 
         cur_est_amps = calculate_amplitudes_least_squares(
-            t_vals_expanded, room_data.sample_rate, est_rirs_filtered,
-            band_centre_hz)
+            t_vals_expanded,
+            room_data.sample_rate,
+            est_rirs_filtered,
+            band_centre_hz,
+            use_non_linear_ls=False)
 
         # if amplitudes are specified in subbands
         if is_in_subbands:

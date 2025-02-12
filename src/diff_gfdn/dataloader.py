@@ -448,8 +448,6 @@ class ThreeRoomDataset(RoomDataset):
         # coordinates of the aperture
         aperture_coords = [[(4, 3), (4, 4.5)], [(8.5, 5), (10, 5)]]
 
-        print(amplitudes.shape, amplitudes_norm.shape)
-
         super().__init__(num_rooms,
                          sample_rate,
                          source_position,
