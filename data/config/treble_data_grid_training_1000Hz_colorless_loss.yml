@@ -18,8 +18,8 @@ trainer_config:
   subband_process_config:
     centre_frequency: 1000
     frequency_range:
-    - 1000
-    - 1000
+    - 63
+    - 8000
     num_fraction_octaves: 1
   train_dir: output/grid_rir_treble_band_centre=1000Hz_colorless_loss/
   train_valid_split: 0.8

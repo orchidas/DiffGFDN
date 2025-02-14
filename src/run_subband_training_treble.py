@@ -1,7 +1,8 @@
+import argparse
 import os
 from pathlib import Path
 import shutil
-from typing import List
+from typing import List, Optional
 
 from loguru import logger
 import numpy as np
@@ -126,27 +127,20 @@ def create_config(
     return diff_gfdn_config
 
 
-def training(freqs_list: int, data_path: str, training_complete: bool = False):
+def training(freqs_list: List, config_dicts: List[DiffGFDNConfig]):
     """Run DiffGFDN training for various subbands"""
-    subband_config_dicts = []
-    config_path = Path("data/config").resolve()
 
-    for k in range(len(freqs_list)):
-        logger.info(f'Training GFDN for subband = {freqs_list[k]} Hz')
-        cur_data_path = f'{data_path}/srirs_band_centre={freqs_list[k]}Hz.pkl'
+    if freqs_list is None:
+        logger.info("No frequencies to train on")
+        return
+    else:
+        for k in range(len(freqs_list)):
+            logger.info(f'Training GFDN for subband = {freqs_list[k]} Hz')
+            # get config file
+            config_dict = config_dicts[k]
 
-        # generate config file
-        config_dict = create_config(freqs_list[k],
-                                    cur_data_path,
-                                    freq_range=[freqs_list[0], freqs_list[-1]],
-                                    config_path=config_path,
-                                    write_config=not training_complete)
-        subband_config_dicts.append(config_dict)
-
-        if not training_complete:
             # make output directory
             if config_dict.trainer_config.train_dir is not None:
-
                 # remove directory if it already exists, we want it to be overwritten
                 if os.path.isdir(config_dict.trainer_config.train_dir):
                     shutil.rmtree(config_dict.trainer_config.train_dir)
@@ -154,16 +148,15 @@ def training(freqs_list: int, data_path: str, training_complete: bool = False):
                 # create the output directory
                 os.makedirs(config_dict.trainer_config.train_dir)
 
-            # write arguments to a pickle file
-            args_file = os.path.join(config_dict.trainer_config.train_dir,
-                                     'config_args.pickle')
-            dump_config_to_pickle(config_dict, args_file)
+                # write arguments to a pickle file
+                args_file = os.path.join(config_dict.trainer_config.train_dir,
+                                         'config_args.pickle')
+                dump_config_to_pickle(config_dict, args_file)
 
-            # run the training
-            run_training_var_receiver_pos(config_dict)
+                # run the training
+                run_training_var_receiver_pos(config_dict)
 
-    logger.info('Training complete')
-    return subband_config_dicts
+        logger.info('Training complete')
 
 
 def inferencing(freqs_list: List,
@@ -335,11 +328,43 @@ def inferencing(freqs_list: List,
     logger.info("Done...")
 
 
-def main():
-    """Main function to run the training and inferencing"""
+def main(freqs_list_train: Optional[List] = None):
+    """
+    Main function to run the training and inferencing
+    Args:
+        freqs_list_train (List): list of frequencies to train on
+    """
+
+    # generate config file
     freqs_list = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
+    config_path = Path("data/config").resolve()
     data_path = Path('resources/Georg_3room_FDTD').resolve()
-    config_dicts = training(freqs_list, data_path, training_complete=True)
+    config_dicts = []
+    training_complete = freqs_list_train is None
+
+    for k in range(len(freqs_list)):
+        cur_data_path = f'{data_path}/srirs_band_centre={freqs_list[k]}Hz.pkl'
+
+        # generate config file
+        config_dict = create_config(freqs_list[k],
+                                    cur_data_path,
+                                    freq_range=[freqs_list[0], freqs_list[-1]],
+                                    config_path=config_path,
+                                    write_config=not training_complete)
+        config_dicts.append(config_dict)
+    logger.info("Done creating config files")
+
+    if not training_complete:
+        freq_idx_to_train = [
+            freqs_list.index(elem) if elem in freqs_list else -1
+            for elem in freqs_list_train
+        ]
+
+        train_config_dicts = [config_dicts[idx] for idx in freq_idx_to_train]
+        # run training
+        training(freqs_list_train, train_config_dicts)
+
+    # inferencing
     save_filename = Path(
         'output/treble_data_grid_training_final_rirs_colorless_loss.pkl'
     ).resolve()
@@ -353,4 +378,12 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description="Process frequency list.")
+    parser.add_argument(
+        "--freqs",
+        nargs="+",  # Accepts multiple values
+        type=float,  # Convert to float
+        help="List of frequencies for training")
+
+    args = parser.parse_args()
+    main(args.freqs)
