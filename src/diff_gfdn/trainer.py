@@ -1,15 +1,15 @@
 import os
-from pathlib import Path
 import time
+from pathlib import Path
 from typing import Dict, Tuple
 
-from loguru import logger
 import torch
-from torch.utils.data import DataLoader
 import torchaudio
+from loguru import logger
+from torch.utils.data import DataLoader
 from tqdm import trange
 
-from .colorless_fdn.losses import amse_loss, sparsity_loss
+from .colorless_fdn.losses import mse_loss, sparsity_loss
 from .config.config import TrainerConfig
 from .losses import edc_loss, edr_loss, reg_loss, spatial_variance_loss
 from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
@@ -72,7 +72,7 @@ class Trainer:
 
         if self.use_colorless_loss:
             logger.info('Using colorless FDN loss for each sub-FDN')
-            self.colorless_criterion = [amse_loss(), sparsity_loss()]
+            self.colorless_criterion = [mse_loss(), sparsity_loss()]
             self.colorless_loss_weights = torch.tensor([
                 trainer_config.spectral_loss_weight,
                 trainer_config.sparsity_loss_weight
@@ -275,11 +275,9 @@ class VarReceiverPosTrainer(Trainer):
             data['target_rir_response'], H)
         edc_loss_val = self.loss_weights[1] * self.criterion[1](
             data['target_rir_response'], H)
-        # spatial_var_loss_val = self.criterion[2](self.net.output_scalars.gains)
         all_losses = {
             'edc_loss': edc_loss_val,
             'edr_loss': edr_loss_val,
-            # 'spatial_loss': spatial_var_loss_val
         }
 
         if self.use_reg_loss:

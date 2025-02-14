@@ -1,11 +1,11 @@
 from typing import Dict, List, Optional, Union
 
-from loguru import logger
 import numpy as np
-from numpy.typing import ArrayLike
 import torch
-from torch import nn
 import torchaudio.functional as Faudio
+from loguru import logger
+from numpy.typing import ArrayLike
+from torch import nn
 
 
 def db(x: Union[ArrayLike, torch.tensor],
@@ -69,6 +69,20 @@ def ms_to_samps(ms: Union[float, ArrayLike],
         return int(samp)
     else:
         return samp.astype(np.int32)
+
+
+def samps_to_ms(samps: Union[int, ArrayLike],
+                fs: float) -> Union[float, ArrayLike]:
+    """
+    Convert samples to ms
+    Args:
+        samps (int or ArrayLike): time in samples
+        fs (float): sampling rate
+    Returns:
+        float, ArrayLike: time in ms
+    """
+    ms = float(samps) / fs * 1e3
+    return ms
 
 
 def hertz2rad(hertz: torch.Tensor, fs: float):

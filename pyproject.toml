@@ -4,11 +4,10 @@ build-backend = "setuptools.build_meta"
 
 
 [tool.setuptools.packages.find]
-where = ["src", "submodules"]
-include = ["diff_gfdn", "slope2noise.config", "slope2noise.slope2noise", "slope2noise.DecayFitNet"]
+where = ["src"]
+include = ["diff_gfdn"]
 # include the name of the folder containing the library
 # eg: include = ["diff_gfdn"]
-
 
 [project]
 name = "DiffGFDN"
@@ -25,7 +24,6 @@ classifiers = [
     "License :: Other/Proprietary License",
     "Operating System :: OS Independent",
 ]
-
 
 dependencies = [
     "loguru>=0.6.0",
@@ -47,6 +45,11 @@ dependencies = [
     "plotly",
     "kaleido",
 ]
+
+[project.scripts]
+run_model = "run_model:main"
+run_subband_training_treble = "run_subband_training_treble:main"
+convert_mat_to_pkl = "convert_mat_to_pkl:main"
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-cov", "tox"]

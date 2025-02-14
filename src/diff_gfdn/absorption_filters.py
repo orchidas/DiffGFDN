@@ -1,10 +1,11 @@
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
 
 from .filters.geq import design_geq
-from .filters.prony import interpolate_magnitude_spectrum, prony_warped, tf2minphase
+from .filters.prony import (interpolate_magnitude_spectrum, prony_warped,
+                            tf2minphase)
 from .plot import plot_t60_filter_response
 from .utils import db, db2lin
 
@@ -53,7 +54,8 @@ def decay_times_to_gain_filters_prony(band_centre_hz: List,
                                       fs: float,
                                       filter_order: int = 8,
                                       num_freq_bins: int = 2**10,
-                                      plot_response: bool = False):
+                                      plot_response: bool = False,
+                                      save_path: Optional[str] = None):
     """Fit filters to the common decay times in octave bands"""
     # the T60s for each delay line need to be attenuated
     num_delay_lines = len(delay_length_samp)
@@ -86,9 +88,14 @@ def decay_times_to_gain_filters_prony(band_centre_hz: List,
             interp_min_phase_ir, fs, filter_order, filter_order)
 
     if plot_response:
-        plot_t60_filter_response(band_centre_hz, delay_line_filters,
-                                 num_coeffs, den_coeffs, fs,
-                                 interp_delay_line_filter, num_freq_bins)
+        plot_t60_filter_response(band_centre_hz,
+                                 delay_line_filters,
+                                 num_coeffs,
+                                 den_coeffs,
+                                 fs,
+                                 interp_delay_line_filter,
+                                 num_freq_bins,
+                                 save_path=save_path)
 
     return np.stack((num_coeffs, den_coeffs), axis=-1)
 
@@ -97,7 +104,8 @@ def decay_times_to_gain_filters_geq(band_centre_hz: List,
                                     common_decay_times: List,
                                     delay_length_samp: List[int],
                                     fs: float,
-                                    plot_response: bool = False):
+                                    plot_response: bool = False,
+                                    save_path: Optional[str] = None):
     """
     Fit filters to the common decay times in octave bands using a graphic equaliser
     Ref: ACCURATE REVERBERATION TIME CONTROL IN FEEDBACK DELAY NETWORKS by Schlecht SJ and Habets EAP
@@ -132,8 +140,11 @@ def decay_times_to_gain_filters_geq(band_centre_hz: List,
                                                           0), a.permute(1, 0)
 
     if plot_response:
-        plot_t60_filter_response(band_centre_hz, target_gains_linear.T,
+        plot_t60_filter_response(band_centre_hz,
+                                 target_gains_linear.T,
                                  num_coeffs.detach().numpy(),
-                                 den_coeffs.detach().numpy(), fs)
+                                 den_coeffs.detach().numpy(),
+                                 fs,
+                                 save_path=save_path)
 
     return torch.stack((num_coeffs, den_coeffs), axis=-1)

@@ -1,17 +1,17 @@
+import os
+import pickle
 from abc import ABC
 from dataclasses import dataclass
-import os
 from pathlib import Path
-import pickle
 from typing import Dict, List, Optional, Union
 
-from loguru import logger
 import matplotlib.pyplot as plt
 import numpy as np
-from numpy.typing import ArrayLike, NDArray
-from scipy.fft import rfft, rfftfreq
 import soundfile as sf
 import torch
+from loguru import logger
+from numpy.typing import ArrayLike, NDArray
+from scipy.fft import rfft, rfftfreq
 from torch.utils import data
 
 from .config.config import DiffGFDNConfig
@@ -239,6 +239,7 @@ class RoomDataset(ABC):
         self.mixing_time_ms = mixing_time_ms
         self.nfft = nfft
         self._eps = 1e-12
+        self.rir_mag_response = rfft(self.rirs, n=self.num_freq_bins, axis=-1)
         self.early_late_split()
         # create 3D mesh
         self.mesh_3D = self.get_3D_meshgrid(grid_spacing_m=0.3)
@@ -277,11 +278,6 @@ class RoomDataset(ABC):
         """Frequency bins in Hz"""
         return rfftfreq(self.num_freq_bins, d=1.0 / self.sample_rate)
 
-    @property
-    def rir_mag_response(self):
-        """Frequency response of the RIRs, time along last axis"""
-        return rfft(self.rirs, n=self.num_freq_bins, axis=-1)
-
     def early_late_split(self, win_len_ms: float = 5.0):
         """Split the RIRs into early and late response based on mixing time"""
         mixing_time_samps = ms_to_samps(self.mixing_time_ms, self.sample_rate)
@@ -308,6 +304,18 @@ class RoomDataset(ABC):
         self.early_rir_mag_response = rfft(self.early_rirs,
                                            n=self.num_freq_bins,
                                            axis=-1)
+
+    def update_receiver_pos(self, new_receiver_pos: NDArray):
+        """Update receiver positions"""
+        self.receiver_position = new_receiver_pos
+        self.num_rec = self.receiver_position.shape[0]
+
+    def update_rirs(self, new_rirs: NDArray):
+        """Update room impulse responses"""
+        self.rirs = new_rirs
+        self.rir_length = new_rirs.shape[-1]
+        self.rir_mag_response = rfft(new_rirs, n=self.num_freq_bins, axis=-1)
+        self.early_late_split()
 
     def get_3D_meshgrid(self, grid_spacing_m: float) -> Meshgrid:
         """

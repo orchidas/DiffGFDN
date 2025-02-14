@@ -1,7 +1,8 @@
+import argparse
 import os
 from pathlib import Path
 import shutil
-from typing import List
+from typing import List, Optional
 
 from loguru import logger
 import numpy as np
@@ -61,7 +62,7 @@ def create_config(
     freq_range: List,
     config_path: str,
     write_config: bool = True,
-    seed_base: int = 23463,
+    # seed_base: int = 23463,
 ) -> DiffGFDNConfig:
     """Create config file for each subband"""
 
@@ -79,25 +80,26 @@ def create_config(
         num_hidden_layers = 3
         num_neurons_per_layer = 2**7
 
-    seed = seed_base + cur_freq_hz
+    # seed = seed_base + cur_freq_hz
     config_dict = {
         'room_dataset_path': data_path,
         'sample_rate': 32000.0,
         'num_delay_lines': 12,
         'use_absorption_filters': False,
-        'seed': seed,
+        # 'seed': seed,
         'trainer_config': {
-            'max_epochs': 10,
+            'max_epochs': 10 if cur_freq_hz == 1000 else 15,
             'batch_size': 32,
             'save_true_irs': True,
             'train_valid_split': 0.8,
             'num_freq_bins': 131072,
             'use_edc_mask': True,
             'use_colorless_loss': True,
+            'edc_loss_weight': 10,
             'train_dir':
-            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_seed={seed}/',
+            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_seed={seed}/',
+            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
@@ -125,27 +127,20 @@ def create_config(
     return diff_gfdn_config
 
 
-def training(freqs_list: int, data_path: str, training_complete: bool = False):
+def training(freqs_list: List, config_dicts: List[DiffGFDNConfig]):
     """Run DiffGFDN training for various subbands"""
-    subband_config_dicts = []
-    config_path = Path("data/config").resolve()
 
-    for k in range(len(freqs_list)):
-        logger.info(f'Training GFDN for subband = {freqs_list[k]} Hz')
-        cur_data_path = f'{data_path}/srirs_band_centre={freqs_list[k]}Hz.pkl'
+    if freqs_list is None:
+        logger.info("No frequencies to train on")
+        return
+    else:
+        for k in range(len(freqs_list)):
+            logger.info(f'Training GFDN for subband = {freqs_list[k]} Hz')
+            # get config file
+            config_dict = config_dicts[k]
 
-        # generate config file
-        config_dict = create_config(freqs_list[k],
-                                    cur_data_path,
-                                    freq_range=[freqs_list[0], freqs_list[-1]],
-                                    config_path=config_path,
-                                    write_config=not training_complete)
-        subband_config_dicts.append(config_dict)
-
-        if not training_complete:
             # make output directory
             if config_dict.trainer_config.train_dir is not None:
-
                 # remove directory if it already exists, we want it to be overwritten
                 if os.path.isdir(config_dict.trainer_config.train_dir):
                     shutil.rmtree(config_dict.trainer_config.train_dir)
@@ -153,16 +148,15 @@ def training(freqs_list: int, data_path: str, training_complete: bool = False):
                 # create the output directory
                 os.makedirs(config_dict.trainer_config.train_dir)
 
-            # write arguments to a pickle file
-            args_file = os.path.join(config_dict.trainer_config.train_dir,
-                                     'config_args.pickle')
-            dump_config_to_pickle(config_dict, args_file)
+                # write arguments to a pickle file
+                args_file = os.path.join(config_dict.trainer_config.train_dir,
+                                         'config_args.pickle')
+                dump_config_to_pickle(config_dict, args_file)
 
-            # run the training
-            run_training_var_receiver_pos(config_dict)
+                # run the training
+                run_training_var_receiver_pos(config_dict)
 
-    logger.info('Training complete')
-    return subband_config_dicts
+        logger.info('Training complete')
 
 
 def inferencing(freqs_list: List,
@@ -318,7 +312,7 @@ def inferencing(freqs_list: List,
 
     # Convert to DataFrame if needed
     synth_rirs_df = synth_rirs.reset_index()
-    synth_rirs_df.columns = ['position', 'time_samples']
+    synth_rirs_df.columns = ['position', 'filtered_time_samples']
 
     if not os.path.isdir(output_path):
         os.makedir(output_path)
@@ -326,7 +320,7 @@ def inferencing(freqs_list: List,
     # Save each row's 'time_samples' as a WAV file
     for _, row in synth_rirs_df.iterrows():
         position = row['position']
-        values = row['time_samples']
+        values = row['filtered_time_samples']
 
         filename = f'{output_path.resolve()}/ir_({position[0]:.2f}, {position[1]:.2f}, {position[2]:.2f}).wav'
         sf.write(filename, values, int(config_dicts[0].sample_rate))
@@ -334,17 +328,62 @@ def inferencing(freqs_list: List,
     logger.info("Done...")
 
 
-if __name__ == '__main__':
+def main(freqs_list_train: Optional[List] = None):
+    """
+    Main function to run the training and inferencing
+    Args:
+        freqs_list_train (List): list of frequencies to train on
+    """
+
+    # generate config file
     freqs_list = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
+    config_path = Path("data/config").resolve()
     data_path = Path('resources/Georg_3room_FDTD').resolve()
-    config_dicts = training(freqs_list, data_path, training_complete=False)
+    config_dicts = []
+    training_complete = freqs_list_train is None
+
+    for k in range(len(freqs_list)):
+        cur_data_path = f'{data_path}/srirs_band_centre={freqs_list[k]}Hz.pkl'
+
+        # generate config file
+        config_dict = create_config(freqs_list[k],
+                                    cur_data_path,
+                                    freq_range=[freqs_list[0], freqs_list[-1]],
+                                    config_path=config_path,
+                                    write_config=not training_complete)
+        config_dicts.append(config_dict)
+    logger.info("Done creating config files")
+
+    if not training_complete:
+        freq_idx_to_train = [
+            freqs_list.index(elem) if elem in freqs_list else -1
+            for elem in freqs_list_train
+        ]
+
+        train_config_dicts = [config_dicts[idx] for idx in freq_idx_to_train]
+        # run training
+        training(freqs_list_train, train_config_dicts)
+
+    # inferencing
     save_filename = Path(
-        'output/treble_data_grid_training_final_rirs_diff_delays_colorless_loss.pkl'
+        'output/treble_data_grid_training_final_rirs_colorless_loss.pkl'
     ).resolve()
     output_path = Path(
-        "audio/grid_rir_treble_subband_processing_diff_delays_colorless_loss")
+        "audio/grid_rir_treble_subband_processing_colorless_loss")
     inferencing(freqs_list,
                 config_dicts,
                 save_filename,
                 output_path,
                 use_amp_preserve_filterbank=True)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Process frequency list.")
+    parser.add_argument(
+        "--freqs",
+        nargs="+",  # Accepts multiple values
+        type=float,  # Convert to float
+        help="List of frequencies for training")
+
+    args = parser.parse_args()
+    main(args.freqs)

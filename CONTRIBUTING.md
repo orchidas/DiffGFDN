@@ -4,6 +4,7 @@
 - Modify `pyproject.toml` to include new libraries. Installation with pyproject.toml requires pip > 21.3
 - Install the repository with `pip install -e .`
 - To get setup with submodules run `git submodule add <repo-link>`, `git submodule update --init --recursive`
+- Manually install the submodule with `pip install -e submodules/slope2noise`
 - To run accelerated training on Apple silicon (requires conda), install pytorch nightly build with `pip3 install --pre torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/nightly/cpu`
 
 ## Development tools

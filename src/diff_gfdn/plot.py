@@ -1,18 +1,19 @@
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
 from IPython import display
 from loguru import logger
 from matplotlib import animation
-import matplotlib.pyplot as plt
-import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.fft import rfftfreq
 from scipy.signal import freqz, sos2zpk, sosfreqz
 from scipy.spatial.distance import cdist
 from slope2noise.rooms import RoomGeometry
-from slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering, schroeder_backward_int
-import torch
+from slope2noise.utils import (calculate_amplitudes_least_squares,
+                               octave_filtering, schroeder_backward_int)
 from tqdm import tqdm
 
 from .analysis import get_amps_for_rir
@@ -31,7 +32,8 @@ def plot_t60_filter_response(
         den_coeffs: NDArray,
         sample_rate: float,
         interp_delay_line_filter: Optional[NDArray] = None,
-        num_freq_bins: int = 2**12):
+        num_freq_bins: int = 2**12,
+        save_path: Optional[str] = None):
     """Plot the fitted T60 filters to see how well they match to the specified spectrum"""
     num_delay_lines = desired_filter_mag.shape[0]
     total_response = np.zeros((num_delay_lines, num_freq_bins), dtype=complex)
@@ -54,7 +56,7 @@ def plot_t60_filter_response(
                                                        worN=num_freq_bins,
                                                        fs=sample_rate)
 
-    plt.figure()
+    fig = plt.figure()
     line0 = plt.semilogx(freqs, db(desired_filter_mag.T), marker="o")
     line1 = plt.semilogx(freq_axis, db(np.abs(total_response.T)))
 
@@ -68,8 +70,12 @@ def plot_t60_filter_response(
         plt.legend([line0[0], line1[0]], ["Measured", "GEQ fit"])
     plt.xlabel('Frequency(Hz)')
     plt.ylabel('Magnitude (dB)')
-    plt.ylim([-30, 5])
+    plt.ylim([-15, 0])
     plt.tight_layout()
+
+    if save_path is not None:
+        fig.savefig(
+            Path(f'{save_path}_absorption_filter_response.png').resolve())
 
 
 def plot_polynomial_matrix_impulse_response(
