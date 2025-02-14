@@ -120,72 +120,81 @@ def calculate_cs_params_custom(
     return a_vals, n_vals
 
 
-# This script converts the .mat file to pickle format which can be read much faster by Python
-logger.info("Reading mat file")
+def main():
+    """Main function to save the modified ThreeRoomDataset"""
+    # This script converts the .mat file to pickle format which can be read much faster by Python
+    logger.info("Reading mat file")
 
-# Load the MATLAB v7.3 .mat file using h5py
-file_path = Path("resources/Georg_3room_FDTD/srirs.mat").resolve()
+    # Load the MATLAB v7.3 .mat file using h5py
+    file_path = Path("resources/Georg_3room_FDTD/srirs.mat").resolve()
 
-with h5py.File(file_path, 'r') as mat_file:
-    # Get the dataset
-    srir_mat = mat_file['srirDataset']
-    sample_rate = np.squeeze(srir_mat['fs'][:])
-    source_position = srir_mat['srcPos'][:]
-    receiver_position = srir_mat['rcvPos'][:]
-    # these are second order ambisonic signals
-    # I am guessing the first channel contains the W component
-    srirs = srir_mat['srirs'][0, ...][:]
+    with h5py.File(file_path, 'r') as mat_file:
+        # Get the dataset
+        srir_mat = mat_file['srirDataset']
+        sample_rate = np.squeeze(srir_mat['fs'][:])
+        source_position = srir_mat['srcPos'][:]
+        receiver_position = srir_mat['rcvPos'][:]
+        # these are second order ambisonic signals
+        # I am guessing the first channel contains the W component
+        srirs = srir_mat['srirs'][0, ...][:]
 
-# load the common slopes from the other mat files
-file_path = Path("resources/Georg_3room_FDTD/Common_Slope_Analysis_Results/")
-filename = 'cs_analysis_results_omni'
-freqs = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
+    # load the common slopes from the other mat files
+    file_path = Path(
+        "resources/Georg_3room_FDTD/Common_Slope_Analysis_Results/")
+    filename = 'cs_analysis_results_omni'
+    freqs = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
 
-common_t60 = []
-amplitudes_norm = []
-noise_floor_norm = []
+    common_t60 = []
+    amplitudes_norm = []
+    noise_floor_norm = []
 
-for i in range(len(freqs)):
-    full_path = file_path / f'{filename}_{freqs[i]}.mat'
-    with h5py.File(full_path.resolve(), 'r') as mat_file:
-        data = mat_file['analysisResults']
-        common_t60.append(data['commonDecayTimes'][:])
-        amplitudes_norm.append(data['aVals'][:])
-        noise_floor_norm.append(data['nVals'][:])
+    for i in range(len(freqs)):
+        full_path = file_path / f'{filename}_{freqs[i]}.mat'
+        with h5py.File(full_path.resolve(), 'r') as mat_file:
+            data = mat_file['analysisResults']
+            common_t60.append(data['commonDecayTimes'][:])
+            amplitudes_norm.append(data['aVals'][:])
+            noise_floor_norm.append(data['nVals'][:])
 
-# get custom CS amps and noise floor
-logger.info(
-    "Calculating unnormalised amplitudes and noise floor with least squares")
-amps_ls, noise_ls = calculate_cs_params_custom(
-    srirs.copy().T,
-    np.array(common_t60),
-    freqs,
-    sample_rate,
-    batch_size=receiver_position.shape[-1])
+    # get custom CS amps and noise floor
+    logger.info(
+        "Calculating unnormalised amplitudes and noise floor with least squares"
+    )
+    amps_ls, noise_ls = calculate_cs_params_custom(
+        srirs.copy().T,
+        np.array(common_t60),
+        freqs,
+        sample_rate,
+        batch_size=receiver_position.shape[-1])
 
-# Convert the list to a NumPy array if needed
-data_dict = {
-    'fs': sample_rate,
-    'srcPos': source_position,
-    'rcvPos': receiver_position,
-    'srirs': srirs.T,
-    'band_centre_hz': freqs,
-    'common_decay_times': np.asarray(common_t60),
-    'amplitudes_norm': np.asarray(amplitudes_norm),
-    'amplitudes': amps_ls,
-    'noise_floor_norm': np.asarray(noise_floor_norm),
-    'noise_floor': noise_ls,
-}
+    # Convert the list to a NumPy array if needed
+    data_dict = {
+        'fs': sample_rate,
+        'srcPos': source_position,
+        'rcvPos': receiver_position,
+        'srirs': srirs.T,
+        'band_centre_hz': freqs,
+        'common_decay_times': np.asarray(common_t60),
+        'amplitudes_norm': np.asarray(amplitudes_norm),
+        'amplitudes': amps_ls,
+        'noise_floor_norm': np.asarray(noise_floor_norm),
+        'noise_floor': noise_ls,
+    }
 
-# Specify the output pickle file path
-pickle_file_path = Path("resources/Georg_3room_FDTD/srirs.pkl").resolve()
+    # Specify the output pickle file path
+    pickle_file_path = Path("resources/Georg_3room_FDTD/srirs.pkl").resolve()
 
-# Write the data to a pickle file
-with open(pickle_file_path, 'wb') as pickle_file:
-    pickle.dump(data_dict, pickle_file)
+    # Write the data to a pickle file
+    with open(pickle_file_path, 'wb') as pickle_file:
+        pickle.dump(data_dict, pickle_file)
 
-logger.info("Saved pickle file")
+    logger.info("Saved pickle file")
 
-save_subband_rirs(srirs.copy().T, sample_rate, np.asarray(common_t60),
-                  np.asarray(amplitudes_norm), np.asarray(noise_floor_norm),
-                  amps_ls, noise_ls, freqs, source_position, receiver_position)
+    save_subband_rirs(srirs.copy().T, sample_rate, np.asarray(common_t60),
+                      np.asarray(amplitudes_norm),
+                      np.asarray(noise_floor_norm), amps_ls, noise_ls, freqs,
+                      source_position, receiver_position)
+
+
+if __name__ == '__main__':
+    main()

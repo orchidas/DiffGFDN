@@ -1,20 +1,20 @@
 import os
-import shutil
 from pathlib import Path
+import shutil
 from typing import List
 
+from loguru import logger
 import numpy as np
 import pandas as pd
 import pyfar as pf
+from scipy.signal import fftconvolve, sosfilt, sosfreqz
 import soundfile as sf
 import torch
 import yaml
-from loguru import logger
-from scipy.signal import fftconvolve, sosfilt, sosfreqz
 
 from diff_gfdn.colorless_fdn.utils import get_colorless_fdn_params
 from diff_gfdn.config.config import DiffGFDNConfig
-from diff_gfdn.dataloader import ThreeRoomDataset, load_dataset
+from diff_gfdn.dataloader import load_dataset, ThreeRoomDataset
 from diff_gfdn.model import DiffGFDNVarReceiverPos
 from diff_gfdn.solver import run_training_var_receiver_pos
 from diff_gfdn.utils import get_response
@@ -335,7 +335,8 @@ def inferencing(freqs_list: List,
     logger.info("Done...")
 
 
-if __name__ == '__main__':
+def main():
+    """Main function to run the training and inferencing"""
     freqs_list = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
     data_path = Path('resources/Georg_3room_FDTD').resolve()
     config_dicts = training(freqs_list, data_path, training_complete=True)
@@ -349,3 +350,7 @@ if __name__ == '__main__':
                 save_filename,
                 output_path,
                 use_amp_preserve_filterbank=True)
+
+
+if __name__ == '__main__':
+    main()

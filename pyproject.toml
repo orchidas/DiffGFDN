@@ -9,7 +9,6 @@ include = ["diff_gfdn"]
 # include the name of the folder containing the library
 # eg: include = ["diff_gfdn"]
 
-
 [project]
 name = "DiffGFDN"
 description = "Differentiable Grouped Feedback Delay Networks for dynamic and efficient late reverberation rendering in coupled spaces"
@@ -26,9 +25,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
-
 dependencies = [
-    "submodules/slope2noise"
     "loguru>=0.6.0",
     "notebook",
     "numpy==1.26.4",
@@ -48,6 +45,11 @@ dependencies = [
     "plotly",
     "kaleido",
 ]
+
+[project.scripts]
+run_model = "run_model:main"
+run_subband_training_treble = "run_subband_training_treble:main"
+convert_mat_to_pkl = "convert_mat_to_pkl:main"
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-cov", "tox"]
