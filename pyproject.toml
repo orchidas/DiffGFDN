@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 
 [tool.setuptools.packages.find]
-where = ["src", "submodules"]
-include = ["diff_gfdn", "slope2noise.config", "slope2noise.slope2noise", "slope2noise.DecayFitNet"]
+where = ["src"]
+include = ["diff_gfdn", "src"]
 # include the name of the folder containing the library
 # eg: include = ["diff_gfdn"]
 
@@ -28,6 +28,7 @@ classifiers = [
 
 
 dependencies = [
+    "submodules/slope2noise"
     "loguru>=0.6.0",
     "notebook",
     "numpy==1.26.4",

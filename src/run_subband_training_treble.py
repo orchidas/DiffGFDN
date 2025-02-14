@@ -1,20 +1,20 @@
 import os
-from pathlib import Path
 import shutil
+from pathlib import Path
 from typing import List
 
-from loguru import logger
 import numpy as np
 import pandas as pd
 import pyfar as pf
-from scipy.signal import fftconvolve, sosfilt, sosfreqz
 import soundfile as sf
 import torch
 import yaml
+from loguru import logger
+from scipy.signal import fftconvolve, sosfilt, sosfreqz
 
 from diff_gfdn.colorless_fdn.utils import get_colorless_fdn_params
 from diff_gfdn.config.config import DiffGFDNConfig
-from diff_gfdn.dataloader import load_dataset, ThreeRoomDataset
+from diff_gfdn.dataloader import ThreeRoomDataset, load_dataset
 from diff_gfdn.model import DiffGFDNVarReceiverPos
 from diff_gfdn.solver import run_training_var_receiver_pos
 from diff_gfdn.utils import get_response
@@ -61,7 +61,7 @@ def create_config(
     freq_range: List,
     config_path: str,
     write_config: bool = True,
-    seed_base: int = 23463,
+    # seed_base: int = 23463,
 ) -> DiffGFDNConfig:
     """Create config file for each subband"""
 
@@ -79,25 +79,26 @@ def create_config(
         num_hidden_layers = 3
         num_neurons_per_layer = 2**7
 
-    seed = seed_base + cur_freq_hz
+    # seed = seed_base + cur_freq_hz
     config_dict = {
         'room_dataset_path': data_path,
         'sample_rate': 32000.0,
         'num_delay_lines': 12,
         'use_absorption_filters': False,
-        'seed': seed,
+        # 'seed': seed,
         'trainer_config': {
-            'max_epochs': 10,
+            'max_epochs': 10 if cur_freq_hz == 1000 else 15,
             'batch_size': 32,
             'save_true_irs': True,
             'train_valid_split': 0.8,
             'num_freq_bins': 131072,
             'use_edc_mask': True,
             'use_colorless_loss': True,
+            'edc_loss_weight': 10,
             'train_dir':
-            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_seed={seed}/',
+            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_seed={seed}/',
+            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
@@ -318,7 +319,7 @@ def inferencing(freqs_list: List,
 
     # Convert to DataFrame if needed
     synth_rirs_df = synth_rirs.reset_index()
-    synth_rirs_df.columns = ['position', 'time_samples']
+    synth_rirs_df.columns = ['position', 'filtered_time_samples']
 
     if not os.path.isdir(output_path):
         os.makedir(output_path)
@@ -326,7 +327,7 @@ def inferencing(freqs_list: List,
     # Save each row's 'time_samples' as a WAV file
     for _, row in synth_rirs_df.iterrows():
         position = row['position']
-        values = row['time_samples']
+        values = row['filtered_time_samples']
 
         filename = f'{output_path.resolve()}/ir_({position[0]:.2f}, {position[1]:.2f}, {position[2]:.2f}).wav'
         sf.write(filename, values, int(config_dicts[0].sample_rate))
@@ -337,12 +338,12 @@ def inferencing(freqs_list: List,
 if __name__ == '__main__':
     freqs_list = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
     data_path = Path('resources/Georg_3room_FDTD').resolve()
-    config_dicts = training(freqs_list, data_path, training_complete=False)
+    config_dicts = training(freqs_list, data_path, training_complete=True)
     save_filename = Path(
-        'output/treble_data_grid_training_final_rirs_diff_delays_colorless_loss.pkl'
+        'output/treble_data_grid_training_final_rirs_colorless_loss.pkl'
     ).resolve()
     output_path = Path(
-        "audio/grid_rir_treble_subband_processing_diff_delays_colorless_loss")
+        "audio/grid_rir_treble_subband_processing_colorless_loss")
     inferencing(freqs_list,
                 config_dicts,
                 save_filename,

@@ -18,7 +18,7 @@ class sparsity_loss(nn.Module):
 
 
 class mse_loss(nn.Module):
-    """Means squared error between abs(x1) and x2"""
+    """Means squared error between abs(x1) and abs(x2)"""
 
     def forward(self, y_pred: torch.tensor, y_true: torch.tensor):
         """
@@ -37,7 +37,11 @@ class mse_loss(nn.Module):
 
 
 class amse_loss(nn.Module):
-    """Asymmetric Means squared error between abs(x1) and x2"""
+    """
+    Asymmetric Means squared error between abs(x1) and abs(x2)
+    If the magnitude exceeeds desired magnitude, then the loss is raised to the
+    fourth power difference
+    """
 
     def forward(self, y_pred: torch.tensor, y_true: torch.tensor):
         """
