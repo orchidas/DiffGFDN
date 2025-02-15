@@ -99,7 +99,7 @@ def create_config(
             'train_dir':
             f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_prototype/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_protoype/',
+            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_prototype/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
@@ -126,7 +126,8 @@ def create_config(
 
     # writing the dictionary to a YAML file
     if write_config:
-        cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz_colorless_protoype.yml'
+        logger.info("Writing to config file")
+        cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz_colorless_prototype.yml'
         with open(cur_config_path, "w", encoding="utf-8") as file:
             yaml.safe_dump(config_dict, file, default_flow_style=False)
 
@@ -150,6 +151,7 @@ def training(freqs_list: List, config_dicts: List[DiffGFDNConfig]):
             if config_dict.trainer_config.train_dir is not None:
                 # remove directory if it already exists, we want it to be overwritten
                 if os.path.isdir(config_dict.trainer_config.train_dir):
+                    print("I am here")
                     shutil.rmtree(config_dict.trainer_config.train_dir)
 
                 # create the output directory
