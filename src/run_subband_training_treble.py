@@ -94,17 +94,24 @@ def create_config(
             'train_valid_split': 0.8,
             'num_freq_bins': 131072,
             'use_edc_mask': True,
-            'use_colorless_loss': True,
-            'edc_loss_weight': 10,
+            # 'edc_loss_weight': 10,
+            # 'use_colorless_loss': True,
             'train_dir':
-            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
+            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_prototype/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
+            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_protoype/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
                 'frequency_range': freq_range,
             },
+        },
+        'colorless_fdn_config': {
+            'use_colorless_prototype': True,
+            'batch_size': 4000,
+            'max_epochs': 15,
+            'lr': 0.01,
+            'alpha': 1,
         },
         'feedback_loop_config': {
             'coupling_matrix_type': 'scalar_matrix',
@@ -119,7 +126,7 @@ def create_config(
 
     # writing the dictionary to a YAML file
     if write_config:
-        cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz_colorless_loss.yml'
+        cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz_colorless_protoype.yml'
         with open(cur_config_path, "w", encoding="utf-8") as file:
             yaml.safe_dump(config_dict, file, default_flow_style=False)
 
@@ -365,16 +372,18 @@ def main(freqs_list_train: Optional[List] = None):
         training(freqs_list_train, train_config_dicts)
 
     # inferencing
-    save_filename = Path(
-        'output/treble_data_grid_training_final_rirs_colorless_loss.pkl'
-    ).resolve()
-    output_path = Path(
-        "audio/grid_rir_treble_subband_processing_colorless_loss")
-    inferencing(freqs_list,
-                config_dicts,
-                save_filename,
-                output_path,
-                use_amp_preserve_filterbank=True)
+    if training_complete:
+        save_filename = Path(
+            'output/treble_data_grid_training_final_rirs_colorless_prototype.pkl'
+        ).resolve()
+        output_path = Path(
+            "audio/grid_rir_treble_subband_processing_colorless_prototype")
+
+        inferencing(freqs_list,
+                    config_dicts,
+                    save_filename,
+                    output_path,
+                    use_amp_preserve_filterbank=True)
 
 
 if __name__ == '__main__':

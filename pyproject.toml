@@ -44,6 +44,8 @@ dependencies = [
     "optuna",
     "plotly",
     "kaleido",
+    "pyfar",
+    "pandas",
 ]
 
 [project.scripts]

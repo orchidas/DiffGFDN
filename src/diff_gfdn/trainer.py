@@ -1,15 +1,15 @@
 import os
-import time
 from pathlib import Path
+import time
 from typing import Dict, Tuple
 
-import torch
-import torchaudio
 from loguru import logger
+import torch
 from torch.utils.data import DataLoader
+import torchaudio
 from tqdm import trange
 
-from .colorless_fdn.losses import mse_loss, sparsity_loss
+from .colorless_fdn.losses import amse_loss, mse_loss, sparsity_loss
 from .config.config import TrainerConfig
 from .losses import edc_loss, edr_loss, reg_loss, spatial_variance_loss
 from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
@@ -72,7 +72,10 @@ class Trainer:
 
         if self.use_colorless_loss:
             logger.info('Using colorless FDN loss for each sub-FDN')
-            self.colorless_criterion = [mse_loss(), sparsity_loss()]
+            if trainer_config.use_asym_spectral_loss:
+                self.colorless_criterion = [amse_loss(), sparsity_loss()]
+            else:
+                self.colorless_criterion = [mse_loss(), sparsity_loss()]
             self.colorless_loss_weights = torch.tensor([
                 trainer_config.spectral_loss_weight,
                 trainer_config.sparsity_loss_weight

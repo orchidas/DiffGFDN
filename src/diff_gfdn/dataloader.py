@@ -1,17 +1,17 @@
-import os
-import pickle
 from abc import ABC
 from dataclasses import dataclass
+import os
 from pathlib import Path
+import pickle
 from typing import Dict, List, Optional, Union
 
+from loguru import logger
 import matplotlib.pyplot as plt
 import numpy as np
-import soundfile as sf
-import torch
-from loguru import logger
 from numpy.typing import ArrayLike, NDArray
 from scipy.fft import rfft, rfftfreq
+import soundfile as sf
+import torch
 from torch.utils import data
 
 from .config.config import DiffGFDNConfig
@@ -764,7 +764,8 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
                  train_valid_split_ratio: float = 0.8,
                  batch_size: int = 32,
                  shuffle: bool = True,
-                 new_sampling_radius: Optional[float] = None):
+                 new_sampling_radius: Optional[float] = None,
+                 drop_last: bool = False):
     """
     Get training and validation dataset
     Args:
@@ -776,7 +777,8 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
         shuffle (bool): whether to randomly shuffle data during training
         new_sampling_radius (float): to reduce time aliasing artifacts due to insufficient sampling
                                      in the frequency domain, sample points on a circle whose radius
-                                     is larger than 1 
+                                     is larger than 1
+        drop_last (bool): whether to drop the last batch if it has less elements than batch_size
     """
     if isinstance(room_data, RoomDataset):
         dataset = MultiRIRDataset(device,
@@ -792,14 +794,14 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
                                       batch_size=batch_size,
                                       shuffle=shuffle,
                                       device=device,
-                                      drop_last=False,
+                                      drop_last=drop_last,
                                       collate_fn=custom_collate)
 
         valid_loader = get_dataloader(valid_set,
                                       batch_size=batch_size,
                                       shuffle=shuffle,
                                       device=device,
-                                      drop_last=False,
+                                      drop_last=drop_last,
                                       collate_fn=custom_collate)
         return train_loader, valid_loader
 
@@ -813,5 +815,5 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
                                       batch_size=batch_size,
                                       shuffle=shuffle,
                                       device=device,
-                                      drop_last=False)
+                                      drop_last=drop_last)
         return train_loader
