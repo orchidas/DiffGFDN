@@ -40,7 +40,7 @@ def split_dataset(dataset: data.Dataset, split: float):
     train_set_size = int(len(dataset) * split)
     valid_set_size = len(dataset) - train_set_size
 
-    seed = torch.Generator(device=get_device()).manual_seed(42)
+    seed = torch.Generator(device='cpu').manual_seed(42)
     train_set, valid_set = data.random_split(dataset,
                                              [train_set_size, valid_set_size],
                                              generator=seed)
@@ -48,13 +48,13 @@ def split_dataset(dataset: data.Dataset, split: float):
     return train_set, valid_set
 
 
-def get_dataloader(dataset: data.Dataset, batch_size: int, shuffle=True):
+def get_dataloader(dataset: data.Dataset, batch_size: int, device:'cpu', shuffle=True):
     """Create torch dataloader form given dataset"""
     dataloader = data.DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        generator=torch.Generator(device=get_device()),
+        generator=torch.Generator(device=device),
         drop_last=True)
     return dataloader
 
@@ -80,12 +80,14 @@ def load_colorless_fdn_dataset(
     train_loader = get_dataloader(
         train_set,
         batch_size=batch_size,
+        device=device,
         shuffle=shuffle,
     )
 
     valid_loader = get_dataloader(
         valid_set,
         batch_size=batch_size,
+        device=device,
         shuffle=shuffle,
     )
     return train_loader, valid_loader

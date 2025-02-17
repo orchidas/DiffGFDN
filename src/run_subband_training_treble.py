@@ -88,23 +88,31 @@ def create_config(
         'use_absorption_filters': False,
         # 'seed': seed,
         'trainer_config': {
-            'max_epochs': 10 if cur_freq_hz == 1000 else 15,
+            'max_epochs': 10,
             'batch_size': 32,
+            'device': 'cuda',
             'save_true_irs': True,
             'train_valid_split': 0.8,
             'num_freq_bins': 131072,
             'use_edc_mask': True,
-            'use_colorless_loss': True,
-            'edc_loss_weight': 10,
+            'use_colorless_loss': False,
+            # 'edc_loss_weight': 10,
             'train_dir':
-            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
+            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_prototype/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
+            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_prototype/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
                 'frequency_range': freq_range,
             },
+        },
+         'colorless_fdn_config': {
+            'use_colorless_prototype': True,
+            'batch_size': 4000,
+            'max_epochs': 15,
+            'lr': 0.01,
+            'alpha': 1,
         },
         'feedback_loop_config': {
             'coupling_matrix_type': 'scalar_matrix',
@@ -119,7 +127,7 @@ def create_config(
 
     # writing the dictionary to a YAML file
     if write_config:
-        cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz_colorless_loss.yml'
+        cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz_colorless_prototype.yml'
         with open(cur_config_path, "w", encoding="utf-8") as file:
             yaml.safe_dump(config_dict, file, default_flow_style=False)
 
@@ -210,9 +218,9 @@ def inferencing(freqs_list: List,
             trainer_config = config_dict.trainer_config
 
             # force the trainer config device to be CPU
-            if trainer_config.device != 'cpu':
-                trainer_config = trainer_config.model_copy(
-                    update={"device": 'cpu'})
+            #if trainer_config.device != 'cpu':
+            #    trainer_config = trainer_config.model_copy(
+            #        update={"device": 'cpu'})
 
             # prepare the training and validation data for DiffGFDN
             train_dataset, _ = load_dataset(
@@ -247,7 +255,7 @@ def inferencing(freqs_list: List,
             checkpoint = torch.load(
                 f'{checkpoint_dir}/model_e{trainer_config.max_epochs-1}.pt',
                 weights_only=True,
-                map_location=torch.device('cpu'))
+                map_location=trainer_config.device)
             # Load the trained model state
             model.load_state_dict(checkpoint)
             # in eval mode, no gradients are calculated
@@ -366,10 +374,10 @@ def main(freqs_list_train: Optional[List] = None):
 
     # inferencing
     save_filename = Path(
-        'output/treble_data_grid_training_final_rirs_colorless_loss.pkl'
+        'output/treble_data_grid_training_final_rirs_colorless_prototype.pkl'
     ).resolve()
     output_path = Path(
-        "audio/grid_rir_treble_subband_processing_colorless_loss")
+        "audio/grid_rir_treble_subband_processing_colorless_prototype")
     inferencing(freqs_list,
                 config_dicts,
                 save_filename,
@@ -379,11 +387,18 @@ def main(freqs_list_train: Optional[List] = None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Process frequency list.")
-    parser.add_argument(
-        "--freqs",
-        nargs="+",  # Accepts multiple values
-        type=float,  # Convert to float
-        help="List of frequencies for training")
-
+    
+    #parser.add_argument(
+    #    "--freqs",
+    #    nargs="+",  # Accepts multiple values
+    #    type=float,  # Convert to float
+    #    help="List of frequencies for training")
+   
+    # Expect space-separated values and split them
+    parser.add_argument('--freqs', type=str, 
+                        help="Space-separated list of frequencies", required=True)
     args = parser.parse_args()
-    main(args.freqs)
+
+    # Split the string by spaces and convert to a list of floats
+    freqs_list = [float(x) for x in args.freqs.split()]
+    main(freqs_list)
