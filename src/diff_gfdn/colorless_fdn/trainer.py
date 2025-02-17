@@ -8,7 +8,7 @@ from tqdm import trange
 
 from ..config.config import ColorlessFDNConfig, TrainerConfig
 from ..utils import get_frequency_samples, get_response, get_str_results
-from .losses import mse_loss, sparsity_loss
+from .losses import amse_loss, mse_loss, sparsity_loss
 from .model import ColorlessFDN
 
 # pylint: disable=W0632
@@ -34,7 +34,10 @@ class ColorlessFDNTrainer:
 
         self.optimizer = torch.optim.Adam(self.net.parameters(),
                                           lr=colorless_fdn_config.lr)
-        self.criterion = [mse_loss(), sparsity_loss()]
+        if trainer_config.use_asym_spectral_loss:
+            self.criterion = [amse_loss(), sparsity_loss()]
+        else:
+            self.criterion = [mse_loss(), sparsity_loss()]
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=10,
                                                          gamma=0.1)

@@ -334,11 +334,15 @@ class DiffGFDNVarSourceReceiverPos(DiffGFDN):
                 position_type="input_gains",
                 device=self.device)
 
-    def forward(self, x: Dict) -> torch.tensor:
+    def forward(
+        self,
+        x: Dict,
+    ) -> torch.tensor:
         """
         Compute H(z) = c(z)^T (D - A(z)Gamma(z))^{-1} b(z) + d(z)
         Args:
             x(dict) : input feature dict
+
         Returns:
             H (tensor): tensor of size num_src x num_rec x num_freq_points
         """
@@ -532,11 +536,15 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
                 output_filter_config.encoding_type,
                 device=self.device)
 
-    def forward(self, x: Dict) -> torch.tensor:
+    def forward(self,
+                x: Dict,
+                output_scalars: Optional[torch.tensor] = None) -> torch.tensor:
         """
         Compute H(z) = c(z)^T (D - A(z)Gamma(z))^{-1} b(z) + d(z)
         Args:
             x(dict) : input feature dict
+            output_scalars (Optional, tensor): Matrix of size batch_size x num_groups of receiver gains,
+                                              if not learned by MLP
         """
         z = x['z_values']
         self.batch_size = x['listener_position'].shape[0]
@@ -549,7 +557,22 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
         if self.use_svf_in_output:
             C = self.output_filters(x) * C_init
         else:
-            C = to_complex(self.output_scalars(x)) * C_init
+            # learn from MLP
+            if output_scalars is None:
+                C = to_complex(self.output_scalars(x)) * C_init
+            # optimum receiver gains provided already
+            else:
+                assert output_scalars.shape == (self.batch_size,
+                                                self.num_groups)
+
+                # expand the gains to have shape (B, Ngroup x N_del_per_group)
+                expanded_gains = output_scalars.repeat_interleave(
+                    self.num_delay_lines_per_group, dim=1)
+
+                # fill the output gains of size B x N x K
+                output_scalars_exp = expanded_gains.unsqueeze(-1).repeat(
+                    1, 1, len(z))
+                C = output_scalars_exp.to(torch.complex32) * C_init
 
         # this is also of size B x Ndel x num_freq_points
         B = to_complex(

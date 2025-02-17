@@ -97,6 +97,7 @@ def create_config(
             'use_edc_mask': True,
             'use_colorless_loss': False,
             # 'edc_loss_weight': 10,
+            # 'use_colorless_loss': True,
             'train_dir':
             f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_prototype/',
             'ir_dir':
@@ -107,7 +108,7 @@ def create_config(
                 'frequency_range': freq_range,
             },
         },
-         'colorless_fdn_config': {
+        'colorless_fdn_config': {
             'use_colorless_prototype': True,
             'batch_size': 4000,
             'max_epochs': 15,
@@ -127,6 +128,7 @@ def create_config(
 
     # writing the dictionary to a YAML file
     if write_config:
+        logger.info("Writing to config file")
         cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz_colorless_prototype.yml'
         with open(cur_config_path, "w", encoding="utf-8") as file:
             yaml.safe_dump(config_dict, file, default_flow_style=False)
@@ -151,6 +153,7 @@ def training(freqs_list: List, config_dicts: List[DiffGFDNConfig]):
             if config_dict.trainer_config.train_dir is not None:
                 # remove directory if it already exists, we want it to be overwritten
                 if os.path.isdir(config_dict.trainer_config.train_dir):
+                    print("I am here")
                     shutil.rmtree(config_dict.trainer_config.train_dir)
 
                 # create the output directory
@@ -367,22 +370,22 @@ def main(freqs_list_train: Optional[List] = None):
             freqs_list.index(elem) if elem in freqs_list else -1
             for elem in freqs_list_train
         ]
-
         train_config_dicts = [config_dicts[idx] for idx in freq_idx_to_train]
         # run training
         training(freqs_list_train, train_config_dicts)
 
-    # inferencing
-    save_filename = Path(
-        'output/treble_data_grid_training_final_rirs_colorless_prototype.pkl'
-    ).resolve()
-    output_path = Path(
-        "audio/grid_rir_treble_subband_processing_colorless_prototype")
-    inferencing(freqs_list,
-                config_dicts,
-                save_filename,
-                output_path,
-                use_amp_preserve_filterbank=True)
+    if training_complete:
+        save_filename = Path(
+            'output/treble_data_grid_training_final_rirs_colorless_prototype.pkl'
+        ).resolve()
+        output_path = Path(
+            "audio/grid_rir_treble_subband_processing_colorless_prototype")
+
+        inferencing(freqs_list,
+                    config_dicts,
+                    save_filename,
+                    output_path,
+                    use_amp_preserve_filterbank=True)
 
 
 if __name__ == '__main__':

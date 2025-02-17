@@ -8,6 +8,8 @@ trainer_config:
   save_true_irs: True
   train_valid_split: 0.8
   use_edc_mask: True
+  # edc_loss_weight: 10
+  use_asym_spectral_loss: True
   use_colorless_loss: True
   train_dir: 'output/grid_rir_treble_full_band_colorless_loss/'
   ir_dir: 'audio/grid_rir_rir_treble_full_band_colorless_loss/'
@@ -15,5 +17,6 @@ feedback_loop_config:
   coupling_matrix_type: 'scalar_matrix'
 output_filter_config:
   use_svfs: True
-  num_hidden_layers: 3
-  num_neurons_per_layer: 32
+  num_hidden_layers: 5
+  num_neurons_per_layer: 24
+  num_fourier_features: 20

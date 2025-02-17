@@ -48,14 +48,16 @@ def split_dataset(dataset: data.Dataset, split: float):
     return train_set, valid_set
 
 
-def get_dataloader(dataset: data.Dataset, batch_size: int, device:'cpu', shuffle=True):
+def get_dataloader(dataset: data.Dataset,
+                   batch_size: int,
+                   device='cpu',
+                   shuffle=True):
     """Create torch dataloader form given dataset"""
-    dataloader = data.DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        generator=torch.Generator(device=device),
-        drop_last=True)
+    dataloader = data.DataLoader(dataset,
+                                 batch_size=batch_size,
+                                 shuffle=shuffle,
+                                 generator=torch.Generator(device=device),
+                                 drop_last=True)
     return dataloader
 
 

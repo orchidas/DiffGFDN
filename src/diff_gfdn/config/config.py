@@ -105,6 +105,7 @@ class TrainerConfig(BaseModel):
     use_erb_edr_loss: bool = False
     # whether to use colorless loss in the DiffGFDN's loss itself
     use_colorless_loss: bool = False
+    use_asym_spectral_loss: bool = False
     # weights for edc and edr loss
     edc_loss_weight: float = 1.0
     edr_loss_weight: float = 1.0

@@ -1,19 +1,18 @@
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
-import matplotlib.pyplot as plt
-import numpy as np
-import torch
 from IPython import display
 from loguru import logger
 from matplotlib import animation
+import matplotlib.pyplot as plt
+import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.fft import rfftfreq
 from scipy.signal import freqz, sos2zpk, sosfreqz
 from scipy.spatial.distance import cdist
 from slope2noise.rooms import RoomGeometry
-from slope2noise.utils import (calculate_amplitudes_least_squares,
-                               octave_filtering, schroeder_backward_int)
+from slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering, schroeder_backward_int
+import torch
 from tqdm import tqdm
 
 from .analysis import get_amps_for_rir
@@ -739,7 +738,10 @@ def plot_amps_in_space(room_data: RoomDataset,
             room_data.sample_rate,
             est_rirs_filtered,
             band_centre_hz,
-            use_non_linear_ls=False)
+            use_non_linear_ls=True)
+
+        # ignore the noise term
+        cur_est_amps = cur_est_amps[:, 1:, :]
 
         # if amplitudes are specified in subbands
         if is_in_subbands:
@@ -776,7 +778,6 @@ def plot_amps_in_space(room_data: RoomDataset,
                 cur_src_pos,
                 amps_mid_band,
                 scatter_plot=scatter,
-                cur_freq_hz=freq_to_plot,
                 save_path=Path(f'{save_name}_actual_amplitudes_in_space.png'
                                ).resolve() if save_path is not None else None)
 
@@ -785,7 +786,6 @@ def plot_amps_in_space(room_data: RoomDataset,
             cur_src_pos,
             cur_est_amps_mid_band,
             scatter_plot=scatter,
-            cur_freq_hz=freq_to_plot,
             save_path=Path(f'{save_name}_learnt_amplitudes_in_space.png'
                            ).resolve() if save_path is not None else None)
 
@@ -813,7 +813,6 @@ def plot_amps_in_space(room_data: RoomDataset,
                 cur_src_pos,
                 var_to_plot,
                 scatter_plot=scatter,
-                cur_freq_hz=freq_to_plot,
                 save_path=Path(f'{save_name}_amplitude_error_in_space.png'
                                ).resolve() if save_path is not None else None)
 
