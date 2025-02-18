@@ -231,7 +231,7 @@ class VarReceiverPosTrainer(Trainer):
                     all_loss = {key: 0.0 for key in cur_all_loss}
 
                 for key, value in cur_all_loss.items():
-                    all_loss[key] += value
+                    all_loss[key] += value.item()
 
             self.scheduler.step()
             self.train_loss.append(epoch_loss / len(train_dataset))
