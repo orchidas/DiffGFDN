@@ -1,12 +1,12 @@
 from typing import List, Optional, Tuple
 
-from DecayFitNet.python.toolbox.DecayFitNetToolbox import DecayFitNetToolbox
-from DecayFitNet.python.toolbox.core import decay_model, discard_last_n_percent, PreprocessRIR
-from DecayFitNet.python.toolbox.utils import calc_mse
+from slope2noise.DecayFitNet.python.toolbox.DecayFitNetToolbox import DecayFitNetToolbox
+from slope2noise.DecayFitNet.python.toolbox.core import decay_model, discard_last_n_percent, PreprocessRIR
+from slope2noise.DecayFitNet.python.toolbox.utils import calc_mse
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering
+from slope2noise.slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering
 import torch
 
 from .filters.geq import octave_bands
