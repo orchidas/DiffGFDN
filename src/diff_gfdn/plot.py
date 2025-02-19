@@ -608,6 +608,7 @@ def plot_edc_error_in_space(
         else:
             cur_original_rirs_filtered = cur_original_rirs[..., np.newaxis]
             cur_est_rirs_filtered = cur_est_rirs[..., np.newaxis]
+
             save_name = f'{save_path}_src=({cur_src_pos[0]:.2f}, {cur_src_pos[1]:.2f}, {cur_src_pos[2]:.2f})'
 
         est_rec_pos = np.asarray(all_pos)

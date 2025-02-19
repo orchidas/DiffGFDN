@@ -51,7 +51,7 @@ class dynamic_rendering_moving_receiver:
     def win_size(self) -> int:
         """Window size for each update"""
         assert self.update_len_samp % 2 == 0
-        return 2 * self.update_len_samp - 1
+        return 2 * self.update_len_samp
 
     @property
     def hop_size(self) -> int:
