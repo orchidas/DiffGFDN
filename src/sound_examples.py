@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.signal import fftconvolve
-from slope2noise.rooms import RoomGeometry
+from slope2noise.slope2noise.rooms import RoomGeometry
 
 from diff_gfdn.dataloader import RoomDataset
 from diff_gfdn.utils import ms_to_samps

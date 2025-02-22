@@ -8,7 +8,7 @@ from loguru import logger
 import matplotlib.pyplot as plt
 import numpy as np
 import optuna
-from slope2noise.dataclass import Slope2NoiseUnpickler
+from slope2noise.slope2noise.dataclass import Slope2NoiseUnpickler
 import torch
 
 from .colorless_fdn.dataloader import load_colorless_fdn_dataset

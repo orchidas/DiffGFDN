@@ -50,7 +50,7 @@ def save_subband_rirs(rirs: NDArray, sample_rate: float, common_t60: NDArray,
         }
         # Specify the output pickle file path
         pickle_file_path = Path(
-            f"resources/Georg_3room_FDTD/srirs_band_centre={centre_freqs[band]:.0f}Hz.pkl"
+            f"/scratch/elec/t412-asp/Georg_3room_FDTD/srirs_band_centre={centre_freqs[band]:.0f}Hz.pkl"
         ).resolve()
 
         # Write the data to a pickle file
@@ -126,7 +126,7 @@ def main():
     logger.info("Reading mat file")
 
     # Load the MATLAB v7.3 .mat file using h5py
-    file_path = Path("resources/Georg_3room_FDTD/srirs.mat").resolve()
+    file_path = Path("/scratch/elec/t412-asp/Georg_3room_FDTD/srirs.mat").resolve()
 
     with h5py.File(file_path, 'r') as mat_file:
         # Get the dataset
@@ -140,7 +140,7 @@ def main():
 
     # load the common slopes from the other mat files
     file_path = Path(
-        "resources/Georg_3room_FDTD/Common_Slope_Analysis_Results/")
+        "/scratch/elec/t412-asp/Georg_3room_FDTD/Common_Slope_Analysis_Results/")
     filename = 'cs_analysis_results_omni'
     freqs = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
 
@@ -182,7 +182,7 @@ def main():
     }
 
     # Specify the output pickle file path
-    pickle_file_path = Path("resources/Georg_3room_FDTD/srirs.pkl").resolve()
+    pickle_file_path = Path("/scratch/elec/t412-asp/Georg_3room_FDTD/srirs.pkl").resolve()
 
     # Write the data to a pickle file
     with open(pickle_file_path, 'wb') as pickle_file:

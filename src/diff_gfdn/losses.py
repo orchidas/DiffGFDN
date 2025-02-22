@@ -5,7 +5,7 @@ from loguru import logger
 import numpy as np
 import pyfar as pf
 from scipy.fft import rfftfreq
-from slope2noise.utils import get_bandpass_filters
+from slope2noise.slope2noise.utils import get_bandpass_filters
 import torch
 from torch import nn
 import torch.nn.functional as F
