@@ -97,9 +97,9 @@ def create_config(
             'edc_loss_weight': 10,
             'use_colorless_loss': True,
             'train_dir':
-            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
+            f'/scratch/elec/t412-asp/DiffGFDN/output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
+            f'/scratch/elec/t412-asp/DiffGFDN/audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
@@ -346,7 +346,7 @@ def main(freqs_list_train: Optional[List] = None):
     # generate config file
     freqs_list = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
     config_path = Path("data/config").resolve()
-    data_path = Path('resources/Georg_3room_FDTD').resolve()
+    data_path = Path('/scratch/elec/t412-asp/Georg_3room_FDTD').resolve()
     config_dicts = []
     training_complete = freqs_list_train is None
 
@@ -375,10 +375,10 @@ def main(freqs_list_train: Optional[List] = None):
     # inferencing
     if training_complete:
         save_filename = Path(
-            'output/treble_data_grid_training_final_rirs_colorless_loss.pkl'
+            '/scratch/elec/t412-asp/DiffGFDN/output/treble_data_grid_training_final_rirs_colorless_loss.pkl'
         ).resolve()
         output_path = Path(
-            "audio/grid_rir_treble_subband_processing_colorless_loss")
+            "/scratch/elec/t412-asp/DiffGFDN/audio/grid_rir_treble_subband_processing_colorless_loss")
 
         inferencing(freqs_list,
                     config_dicts,
