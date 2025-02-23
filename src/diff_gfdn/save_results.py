@@ -120,7 +120,7 @@ def save_loss(train_loss: List,
 
             for key in keys:
                 loss_values = [
-                    d[key].detach().numpy() for d in individual_losses
+                    d[key] for d in individual_losses
                 ]
                 individual_losses_mat[key] = loss_values
                 plt.semilogy(range(1, n_epochs + 1), loss_values, label=key)
