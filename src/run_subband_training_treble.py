@@ -95,6 +95,9 @@ def create_config(
             'num_freq_bins': 131072,
             'use_edc_mask': True,
             'edc_loss_weight': 10,
+            'edr_loss_weight': 1,
+            'spectral_loss_weight': 0,
+            'sparsity_loss_weight': 0,
             'use_colorless_loss': True,
             'train_dir':
             f'/scratch/elec/t412-asp/DiffGFDN/output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
