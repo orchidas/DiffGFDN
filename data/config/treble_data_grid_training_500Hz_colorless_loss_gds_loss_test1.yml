@@ -1,0 +1,31 @@
+feedback_loop_config:
+  coupling_matrix_type: scalar_matrix
+num_delay_lines: 12
+output_filter_config:
+  num_fourier_features: 20
+  num_hidden_layers: 3
+  num_neurons_per_layer: 128
+  use_svfs: false
+room_dataset_path: /scratch/elec/t412-asp/Georg_3room_FDTD/srirs_band_centre=500Hz.pkl
+sample_rate: 32000.0
+trainer_config:
+  batch_size: 32
+  edc_loss_weight: 10
+  edr_loss_weight: 1
+  spectral_loss_weight: 0
+  sparsity_loss_weight: 0
+  ir_dir: /scratch/elec/t412-asp/DiffGFDN/audio/grid_rir_treble_band_centre=500Hz_colorless_loss/
+  max_epochs: 20
+  num_freq_bins: 131072
+  save_true_irs: true
+  subband_process_config:
+    centre_frequency: 500
+    frequency_range:
+    - 63
+    - 8000
+    num_fraction_octaves: 1
+  train_dir: /scratch/elec/t412-asp/DiffGFDN/output/grid_rir_treble_band_centre=500Hz_colorless_loss/
+  train_valid_split: 0.8
+  use_colorless_loss: true
+  use_edc_mask: true
+use_absorption_filters: false
