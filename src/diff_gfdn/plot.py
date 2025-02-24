@@ -628,6 +628,8 @@ def plot_edc_error_in_space(
             logger.info(f'The RMSE in matching EDC is {error_mse} dB')
             var_to_plot = db2lin(error_func)
 
+        print(var_to_plot.shape)
+
         # plot the error in amplitude matching
         room.plot_edc_error_at_receiver_points(
             rec_points,
@@ -636,6 +638,120 @@ def plot_edc_error_in_space(
             scatter_plot=scatter,
             cur_freq_hz=freq_to_plot,
             save_path=Path(f'{save_name}_edc_error_in_space.png').resolve()
+            if save_path is not None else None)
+
+
+def plot_edr_error_in_space(
+    room_data: RoomDataset,
+    all_rirs: Union[NDArray, List],
+    all_pos: Union[NDArray, List],
+    scatter: bool = False,
+    save_path: Optional[str] = None,
+    pos_sorted: bool = False,
+):
+    """
+    Plot the EDR matching error in dB as a function of spatial location
+    Args:
+        room_data (RoomDataset): object containing information of room geometry, decay times and amplitudes
+        all_rirs (List): list of RIRs at all positions synthesized by the GFDN
+        all_pos (List): list of positions at which the RIRs are synthesized
+        freq_to_plot (optional, float): which frequency to plot the amplitudes at
+        scatter (bool): whether to make a scatter plot (discrete), or a surface plot (continuous)
+        save_path (optional, str): path to save the file
+        mixing_time_ms (float): truncate RIR before this time
+        pos_sorted (bool): whether the positions are sorted in all_{src,rec}_pos
+    """
+
+    def get_edr_error(
+        original_rirs: NDArray,
+        original_points: NDArray,
+        estimated_rirs: NDArray,
+        est_points: NDArray,
+        sample_rate: float,
+        win_size: int = 2**12,
+        hop_size: int = 2**11,
+    ):
+        """Get MSE error between the EDC mismatch"""
+
+        if not pos_sorted:
+            ordered_pos_idx = order_position_matrices(original_points,
+                                                      est_points)
+        else:
+            ordered_pos_idx = np.arange(0, len(est_points), dtype=np.int32)
+        est_rirs_ordered = estimated_rirs[ordered_pos_idx, ...]
+
+        S_orig, _, _ = get_stft_torch(
+            torch.tensor(original_rirs),
+            sample_rate,
+            win_size=win_size,
+            hop_size=hop_size,
+            nfft=win_size,
+        )
+        original_edr = get_edr_from_stft(S_orig).cpu().detach().numpy()
+
+        S_est, _, _ = get_stft_torch(
+            torch.tensor(est_rirs_ordered),
+            sample_rate,
+            win_size=win_size,
+            hop_size=hop_size,
+            nfft=win_size,
+        )
+        est_edr = get_edr_from_stft(S_est).cpu().detach().numpy()
+
+        # take mean error along time and frequency axies - first axis contains location
+        error_db = np.abs(original_edr - est_edr).mean(axis=(1, 2))
+        error_mse = np.linalg.norm(error_db) / original_points.shape[0]
+        return error_db, error_mse
+
+    num_rooms = room_data.num_rooms
+    room_dims = room_data.room_dims
+    start_coordinates = room_data.room_start_coord
+    aperture_coordinates = room_data.aperture_coords
+    room = RoomGeometry(room_data.sample_rate,
+                        num_rooms,
+                        np.array(room_dims),
+                        np.array(start_coordinates),
+                        aperture_coords=aperture_coordinates)
+    rec_points = np.array(room_data.receiver_position)
+    src_pos = np.array(room_data.source_position)
+    if src_pos.ndim == 1:
+        src_pos = src_pos[np.newaxis, :]
+    original_rirs = room_data.rirs
+
+    for src_idx in tqdm(range(len(src_pos))):
+        cur_src_pos = np.squeeze(src_pos[src_idx])
+        cur_est_rirs = np.squeeze(
+            all_rirs[[src_idx],
+                     ...]) if len(src_pos) > 1 else np.asarray(all_rirs)
+
+        cur_original_rirs = np.squeeze(
+            original_rirs[src_idx, ...]) if len(src_pos) > 1 else original_rirs
+
+        rir_len_samps = min(cur_original_rirs.shape[-1],
+                            cur_est_rirs.shape[-1])
+
+        cur_est_rirs = cur_est_rirs[..., :rir_len_samps]
+        cur_original_rirs = cur_original_rirs[..., :rir_len_samps]
+
+        est_rec_pos = np.asarray(all_pos)
+        # get error metrics
+        error_func, error_mse = get_edr_error(cur_original_rirs.copy(),
+                                              rec_points, cur_est_rirs.copy(),
+                                              est_rec_pos,
+                                              room_data.sample_rate)
+
+        logger.info(f'The RMSE in matching EDR is {error_mse} dB')
+        var_to_plot = db2lin(error_func)
+        save_name = f'{save_path}_src=({cur_src_pos[0]:.2f}, {cur_src_pos[1]:.2f}, {cur_src_pos[2]:.2f})'
+
+        # plot the error in amplitude matching
+        room.plot_edc_error_at_receiver_points(
+            rec_points,
+            cur_src_pos,
+            var_to_plot[..., np.newaxis],
+            scatter_plot=scatter,
+            cur_freq_hz=None,
+            save_path=Path(f'{save_name}_edr_error_in_space.png').resolve()
             if save_path is not None else None)
 
 

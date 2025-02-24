@@ -12,7 +12,7 @@ trainer_config:
   batch_size: 32
   edc_loss_weight: 10
   ir_dir: audio/grid_rir_treble_band_centre=1000Hz_colorless_loss/
-  max_epochs: 10
+  max_epochs: 15
   num_freq_bins: 131072
   save_true_irs: true
   subband_process_config:

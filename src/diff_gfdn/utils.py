@@ -150,7 +150,10 @@ def get_response(x: Union[Dict, torch.tensor],
     with torch.no_grad():
         try:
             if net.use_colorless_loss:
-                H, H_sub_fdn = net(x, output_scalars)
+                if output_scalars is not None:
+                    H, H_sub_fdn = net(x, output_scalars)
+                else:
+                    H, H_sub_fdn = net(x)
                 h = torch.fft.irfft(H, dim=-1)
                 return H, H_sub_fdn, h
             else:

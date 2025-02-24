@@ -88,7 +88,7 @@ def create_config(
         'use_absorption_filters': False,
         # 'seed': seed,
         'trainer_config': {
-            'max_epochs': 10 if cur_freq_hz == 1000 else 15,
+            'max_epochs': 15,
             'batch_size': 32,
             'save_true_irs': True,
             'train_valid_split': 0.8,
