@@ -11,7 +11,7 @@ from tqdm import trange
 
 from .colorless_fdn.losses import amse_loss, mse_loss, sparsity_loss
 from .config.config import TrainerConfig
-from .losses import edc_loss, edr_loss, reg_loss, spatial_variance_loss
+from .losses import edc_loss, edr_loss, reg_loss
 from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
 from .utils import get_response, get_str_results, ms_to_samps
 
@@ -53,7 +53,6 @@ class Trainer:
             edc_loss(self.net.common_decay_times.max() * 1e3,
                      self.net.sample_rate,
                      use_mask=trainer_config.use_edc_mask),
-            spatial_variance_loss(),
         ]
         self.loss_weights = torch.tensor(
             [trainer_config.edr_loss_weight, trainer_config.edc_loss_weight])
@@ -292,9 +291,19 @@ class VarReceiverPosTrainer(Trainer):
             spectral_loss_val = 0.0
             sparsity_loss_val = 0.0
             for k in range(self.net.num_groups):
-                spectral_loss_val += self.colorless_loss_weights[
-                    0] * self.colorless_criterion[0](
-                        H_sub_fdn[..., k], torch.ones_like(H_sub_fdn[..., k]))
+                group_idx = torch.arange(
+                    k * self.net.num_delay_lines_per_group,
+                    (k + 1) * self.net.num_delay_lines_per_group,
+                    dtype=torch.int32)
+
+                # mean over all freq bins, and mean over delay lines
+                spectral_loss_val += self.colorless_loss_weights[0] * (
+                    self.colorless_criterion[0]
+                    (H_sub_fdn[0][..., k], torch.ones_like(
+                        H_sub_fdn[0][..., k])) + self.colorless_criterion[0]
+                    (H_sub_fdn[1][group_idx, :, k],
+                     torch.ones_like(H_sub_fdn[1][group_idx, :, k])))
+
                 sparsity_loss_val = self.colorless_loss_weights[
                     1] * self.colorless_criterion[1](
                         self.net.feedback_loop.ortho_param(
@@ -339,13 +348,10 @@ class VarReceiverPosTrainer(Trainer):
                 data['target_rir_response'], H)
             edc_loss_val = self.loss_weights[1] * self.criterion[1](
                 data['target_rir_response'], H)
-            # spatial_var_loss_val = self.criterion[2](
-            #     self.net.output_scalars.gains)
 
             cur_all_losses = {
                 'edc_loss': edc_loss_val,
                 'edr_loss': edr_loss_val,
-                # 'spatial_loss': spatial_var_loss_val
             }
 
             if self.use_reg_loss:
@@ -357,10 +363,18 @@ class VarReceiverPosTrainer(Trainer):
                 spectral_loss_val = 0.0
                 sparsity_loss_val = 0.0
                 for k in range(self.net.num_groups):
-                    spectral_loss_val += self.colorless_loss_weights[
-                        0] * self.colorless_criterion[0](
-                            H_sub_fdn[..., k],
-                            torch.ones_like(H_sub_fdn[..., k]))
+
+                    group_idx = torch.arange(
+                        k * self.net.num_delay_lines_per_group,
+                        (k + 1) * self.net.num_delay_lines_per_group,
+                        dtype=torch.int32)
+                    spectral_loss_val += self.colorless_loss_weights[0] * (
+                        self.colorless_criterion[0](H_sub_fdn[0][
+                            ..., k], torch.ones_like(H_sub_fdn[0][..., k])) +
+                        self.colorless_criterion[0]
+                        (H_sub_fdn[1][group_idx, :, ..., k],
+                         torch.ones_like(H_sub_fdn[1][group_idx, :, k])))
+
                     sparsity_loss_val += self.colorless_loss_weights[
                         1] * self.colorless_criterion[1](
                             self.net.feedback_loop.ortho_param(
@@ -390,7 +404,8 @@ class VarReceiverPosTrainer(Trainer):
 
         if self.use_colorless_loss:
             _, H_sub_fdn, _ = get_response(data, self.net)
-            energyH_sub = torch.mean(torch.pow(torch.abs(H_sub_fdn), 2), dim=0)
+            energyH_sub = torch.mean(torch.pow(torch.abs(H_sub_fdn[0]), 2),
+                                     dim=0)
             for name, prm in self.net.named_parameters():
                 if name in ('input_gains', 'output_gains'):
                     for k in range(self.net.num_groups):
@@ -545,9 +560,18 @@ class SinglePosTrainer(Trainer):
             spectral_loss_val = 0.0
             sparsity_loss_val = 0.0
             for k in range(self.net.num_groups):
-                spectral_loss_val += self.colorless_loss_weights[
-                    0] * self.colorless_criterion[0](
-                        H_sub_fdn[..., k], torch.ones_like(H_sub_fdn[..., k]))
+
+                group_idx = torch.arange(
+                    k * self.net.num_delay_lines_per_group,
+                    (k + 1) * self.net.num_delay_lines_per_group,
+                    dtype=torch.int32)
+                spectral_loss_val += self.colorless_loss_weights[0] * (
+                    self.colorless_criterion[0]
+                    (H_sub_fdn[0][..., k], torch.ones_like(
+                        H_sub_fdn[0][..., k])) + self.colorless_criterion[0]
+                    (H_sub_fdn[1][group_idx, :, k],
+                     torch.ones_like(H_sub_fdn[1][group_idx, :, k])))
+
                 sparsity_loss_val += self.colorless_loss_weights[
                     1] * self.colorless_criterion[1](
                         self.net.feedback_loop.ortho_param(
@@ -570,7 +594,8 @@ class SinglePosTrainer(Trainer):
 
         if self.use_colorless_loss:
             H, H_sub_fdn, _ = get_response(data, self.net)
-            energyH_sub = torch.mean(torch.pow(torch.abs(H_sub_fdn), 2), dim=0)
+            energyH_sub = torch.mean(torch.pow(torch.abs(H_sub_fdn[0]), 2),
+                                     dim=0)
             for name, prm in self.net.named_parameters():
                 if name in ('input_gains', 'output_gains'):
                     for k in range(self.net.num_groups):

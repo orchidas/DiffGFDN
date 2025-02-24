@@ -190,12 +190,24 @@ class DiffGFDN(nn.Module):
                 colorless_feedback_matrix=colorless_feedback_matrix,
                 device=self.device)
 
-    def sub_fdn_output(self, z: torch.Tensor) -> torch.Tensor:
-        """Get the magnitude response of each FDN (without the absorption)"""
+    def sub_fdn_output(self,
+                       z: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Get the magnitude response of each FDN (without the absorption)
+        Returns:
+            Hout: num_freq_bins x num_groups matrix, output of each FDN
+            Hout_per_del: num_delay_lines x num_freq_bins x num_groups, 
+                          output of each delay line, weighted by c_i
+        """
         num_freq_pts = len(z)
         Hout = torch.zeros((num_freq_pts, self.num_groups),
                            dtype=torch.complex64,
                            device=self.device)
+
+        Hout_per_del = torch.zeros(
+            (self.num_delay_lines, num_freq_pts, self.num_groups),
+            dtype=torch.complex64,
+            device=self.device)
         for k in range(self.num_groups):
             group_idx = torch.arange(k * self.num_delay_lines_per_group,
                                      (k + 1) * self.num_delay_lines_per_group,
@@ -210,10 +222,18 @@ class DiffGFDN(nn.Module):
             D = torch.diag_embed(
                 torch.unsqueeze(z, dim=-1)**self.delays_by_group[k])
             P = torch.linalg.inv(D - A).to(torch.complex64)
+
+            # output of each delay line scaled by c_i
+            H_tmp = torch.einsum('kn, knm -> knm', C.permute(1, 0),
+                                 P).permute(1, -1, 0)
+            Hout_per_del[group_idx, :,
+                         k] = torch.einsum('nmk, mk -> nk', H_tmp, B)
+
+            # output of the entire FDN
             H = torch.einsum('kn, knm -> km', C.permute(1, 0), P).permute(1, 0)
             Hout[..., k] = torch.einsum('mk, mk -> k', H, B)
 
-        return Hout
+        return (Hout, Hout_per_del)
 
     def design_lowpass_filter(
         self,
