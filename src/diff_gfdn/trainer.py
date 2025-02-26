@@ -53,6 +53,8 @@ class Trainer:
             self.subband_filter_freq_resp = torch.fft.rfft(
                 subband_filter, n=trainer_config.num_freq_bins)
 
+            print(subband_filter_idx)
+
         self.init_scheduler(trainer_config)
 
         if not os.path.exists(self.ir_dir):

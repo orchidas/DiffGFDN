@@ -8,7 +8,7 @@ from loguru import logger
 import numpy as np
 import pandas as pd
 import pyfar as pf
-from scipy.signal import fftconvolve, sosfilt, sosfreqz
+from scipy.signal import fftconvolve, sosfilt
 import soundfile as sf
 import torch
 import yaml
@@ -30,37 +30,6 @@ def sum_arrays(group):
     filtered = np.stack(group['filtered_time_samples'].values)
     summed_filtered = np.sum(filtered, axis=0)
     return summed_filtered
-
-
-def sum_and_normalize(group, subband_filters):
-    """
-    Ensure that the subband RIR has the same energy as the broadband RIR in each frequency band
-    """
-    filtered = np.stack(group['filtered_time_samples'].values)
-    num_time_samp = filtered.shape[-1]
-    num_bands = filtered.shape[0]
-
-    # filters are in SOS format
-    if subband_filters.coefficients.ndim > 2:
-        h = np.array([
-            sosfreqz(subband_filters.coefficients[b_idx, ...],
-                     worN=num_time_samp // 2 + 1)[1]
-            for b_idx in range(num_bands)
-        ])
-        norm_factor = 1.0 / np.sqrt(
-            np.sum(np.fft.irfft(h, axis=-1)**2, axis=-1))
-
-    # filters are in FIR format
-    else:
-        norm_factor = 1.0 / np.sqrt(
-            np.sum(np.power(subband_filters.coefficients, 2), axis=-1))
-
-    normalized_filtered = filtered * np.repeat(
-        norm_factor[:, np.newaxis], num_time_samp, axis=-1)
-
-    # sum along frequencies
-    summed_normalized_filtered = np.sum(normalized_filtered, axis=0)
-    return summed_normalized_filtered
 
 
 def create_config(
@@ -102,8 +71,7 @@ def create_config(
             'num_freq_bins': 131072,
             'use_edc_mask': True,
             'edc_loss_weight': 10,
-            # 'spectral_loss_weight': 10,
-            # 'use_colorless_loss': True,
+            'use_colorless_loss': True,
             'use_asym_spectral_loss': True,
             'train_dir':
             f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_prototype/',
@@ -115,13 +83,13 @@ def create_config(
                 'frequency_range': freq_range,
             },
         },
-        'colorless_fdn_config': {
-            'use_colorless_prototype': True,
-            'batch_size': 4000,
-            'max_epochs': 15,
-            'lr': 0.01,
-            'alpha': 1,
-        },
+        # 'colorless_fdn_config': {
+        #     'use_colorless_prototype': True,
+        #     'batch_size': 4000,
+        #     'max_epochs': 15,
+        #     'lr': 0.01,
+        #     'alpha': 1,
+        # },
         'feedback_loop_config': {
             'coupling_matrix_type': 'scalar_matrix',
         },
@@ -324,8 +292,11 @@ def inferencing(freqs_list: List,
 
     # Group by position and sum the filtered_time_samples over each frequency band,
     # and normalise by the energy of 'time_samples'
-    synth_rirs = synth_subband_rirs.groupby('position').apply(
-        lambda group: sum_and_normalize(group, subband_filters))
+    # synth_rirs = synth_subband_rirs.groupby('position').apply(
+    #     lambda group: sum_and_normalize(group, subband_filters))
+
+    # Group by position and sum the filtered_time_samples over each frequency band,
+    synth_rirs = synth_subband_rirs.groupby('position').apply(sum_arrays)
 
     # Convert to DataFrame if needed
     synth_rirs_df = synth_rirs.reset_index()
