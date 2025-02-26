@@ -23,6 +23,7 @@ trainer_config:
     num_fraction_octaves: 1
   train_dir: output/grid_rir_treble_band_centre=1000Hz_colorless_loss/
   train_valid_split: 0.8
+  use_asym_spectral_loss: true
   use_colorless_loss: true
   use_edc_mask: true
 use_absorption_filters: false

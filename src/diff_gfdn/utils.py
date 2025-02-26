@@ -162,7 +162,7 @@ def get_response(x: Union[Dict, torch.tensor],
                 return H, h
         except AttributeError as e:
             logger.warning(e)
-            H = net(x)
+            H, _ = net(x)
             h = torch.fft.irfft(H, dim=-1)
             return H, h
 

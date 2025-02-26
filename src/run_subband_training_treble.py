@@ -25,6 +25,13 @@ from run_model import dump_config_to_pickle
 # pylint: disable=W0621, W0632, E0402
 
 
+def sum_arrays(group):
+    """Sum subband RIRs to get a broadband RIR"""
+    filtered = np.stack(group['filtered_time_samples'].values)
+    summed_filtered = np.sum(filtered, axis=0)
+    return summed_filtered
+
+
 def sum_and_normalize(group, subband_filters):
     """
     Ensure that the subband RIR has the same energy as the broadband RIR in each frequency band
@@ -95,24 +102,26 @@ def create_config(
             'num_freq_bins': 131072,
             'use_edc_mask': True,
             'edc_loss_weight': 10,
-            'use_colorless_loss': True,
+            # 'spectral_loss_weight': 10,
+            # 'use_colorless_loss': True,
+            'use_asym_spectral_loss': True,
             'train_dir':
-            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
+            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_prototype/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
+            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_prototype/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
                 'frequency_range': freq_range,
             },
         },
-        # 'colorless_fdn_config': {
-        #     'use_colorless_prototype': True,
-        #     'batch_size': 4000,
-        #     'max_epochs': 15,
-        #     'lr': 0.01,
-        #     'alpha': 1,
-        # },
+        'colorless_fdn_config': {
+            'use_colorless_prototype': True,
+            'batch_size': 4000,
+            'max_epochs': 15,
+            'lr': 0.01,
+            'alpha': 1,
+        },
         'feedback_loop_config': {
             'coupling_matrix_type': 'scalar_matrix',
         },
@@ -127,7 +136,7 @@ def create_config(
     # writing the dictionary to a YAML file
     if write_config:
         logger.info("Writing to config file")
-        cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz_colorless_loss.yml'
+        cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz_colorless_prototype.yml'
         with open(cur_config_path, "w", encoding="utf-8") as file:
             yaml.safe_dump(config_dict, file, default_flow_style=False)
 
@@ -375,10 +384,10 @@ def main(freqs_list_train: Optional[List] = None):
     # inferencing
     if training_complete:
         save_filename = Path(
-            'output/treble_data_grid_training_final_rirs_colorless_loss.pkl'
+            'output/treble_data_grid_training_final_rirs_colorless_prototype.pkl'
         ).resolve()
         output_path = Path(
-            "audio/grid_rir_treble_subband_processing_colorless_loss")
+            "audio/grid_rir_treble_subband_processing_colorless_prototype")
 
         inferencing(freqs_list,
                     config_dicts,

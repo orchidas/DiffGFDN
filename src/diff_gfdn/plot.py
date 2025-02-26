@@ -628,8 +628,6 @@ def plot_edc_error_in_space(
             logger.info(f'The RMSE in matching EDC is {error_mse} dB')
             var_to_plot = db2lin(error_func)
 
-        print(var_to_plot.shape)
-
         # plot the error in amplitude matching
         room.plot_edc_error_at_receiver_points(
             rec_points,

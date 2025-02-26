@@ -57,17 +57,17 @@ class amse_loss(nn.Module):
         # loss on system's output
         loss = self.p_loss(y_pred, y_true)
         if y_pred.ndim > 1:
+            # loss along frequencies
             return torch.mean(loss)
         else:
             return loss
 
     def p_loss(self, y_pred: torch.tensor, y_true: torch.tensor):
         """Higher loss if the magnitude exceeds the desired magnitude"""
-        gT = 2 * torch.ones(y_pred.shape[0])
+        gT = 2 * torch.ones(y_pred.shape, dtype=torch.float32)
         gT = gT + 2 * torch.gt(
             (torch.abs(y_pred) - torch.abs(y_true)), 1).type(torch.uint8)
         loss = torch.mean(torch.pow((torch.abs(y_pred) - torch.abs(y_true)),
                                     gT),
                           dim=0)
-
         return loss

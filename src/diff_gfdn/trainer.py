@@ -4,6 +4,8 @@ import time
 from typing import Dict, Optional, Tuple
 
 from loguru import logger
+import numpy as np
+import pyfar as pf
 import torch
 from torch.utils.data import DataLoader
 import torchaudio
@@ -34,6 +36,23 @@ class Trainer:
         self.use_reg_loss = trainer_config.use_reg_loss
         self.use_colorless_loss = trainer_config.use_colorless_loss
         self.reduced_pole_radius = trainer_config.reduced_pole_radius
+        self.subband_process_config = trainer_config.subband_process_config
+
+        if self.subband_process_config is not None:
+            subband_filters, subband_freqs = pf.dsp.filter.reconstructing_fractional_octave_bands(
+                None,
+                num_fractions=self.subband_process_config.num_fraction_octaves,
+                frequency_range=self.subband_process_config.frequency_range,
+                sampling_rate=self.net.sample_rate,
+            )
+            subband_filter_idx = np.argmin(
+                np.abs(subband_freqs -
+                       self.subband_process_config.centre_frequency))
+            subband_filter = torch.tensor(
+                subband_filters.coefficients[subband_filter_idx])
+            self.subband_filter_freq_resp = torch.fft.rfft(
+                subband_filter, n=trainer_config.num_freq_bins)
+
         self.init_scheduler(trainer_config)
 
         if not os.path.exists(self.ir_dir):
@@ -48,7 +67,6 @@ class Trainer:
                 reduced_pole_radius=self.reduced_pole_radius,
                 use_erb_grouping=trainer_config.use_erb_edr_loss,
                 use_weight_fn=trainer_config.use_frequency_weighting,
-                subband_process_config=trainer_config.subband_process_config,
             ),
             edc_loss(self.net.common_decay_times.max() * 1e3,
                      self.net.sample_rate,
@@ -225,18 +243,11 @@ class Trainer:
             spectral_loss_val = 0.0
             sparsity_loss_val = 0.0
             for k in range(self.net.num_groups):
-                group_idx = torch.arange(
-                    k * self.net.num_delay_lines_per_group,
-                    (k + 1) * self.net.num_delay_lines_per_group,
-                    dtype=torch.int32)
-
-                # mean over all freq bins, and mean over delay lines
-                spectral_loss_val += self.colorless_loss_weights[0] * (
-                    self.colorless_criterion[0]
-                    (H_sub_fdn[0][..., k], torch.ones_like(
-                        H_sub_fdn[0][..., k])) + self.colorless_criterion[0]
-                    (H_sub_fdn[1][group_idx, :, k],
-                     torch.ones_like(H_sub_fdn[1][group_idx, :, k])))
+                # mean over all freq bins
+                spectral_loss_val += self.colorless_loss_weights[
+                    0] * self.colorless_criterion[0](H_sub_fdn[0][..., k],
+                                                     torch.ones_like(
+                                                         H_sub_fdn[0][..., k]))
 
                 sparsity_loss_val = self.colorless_loss_weights[
                     1] * self.colorless_criterion[1](
@@ -326,10 +337,16 @@ class VarReceiverPosTrainer(Trainer):
         self.optimizer.zero_grad()
         if self.use_colorless_loss:
             H, H_sub_fdn = self.net(data)
-            all_losses = super().calculate_losses(data, H, H_sub_fdn)
+            if self.subband_process_config is not None:
+                # filter H in subbands before calculating loss
+                H_subband = H * self.subband_filter_freq_resp
+            all_losses = super().calculate_losses(data, H_subband, H_sub_fdn)
         else:
             H = self.net(data)
-            all_losses = super().calculate_losses(data, H)
+            if self.subband_process_config is not None:
+                # filter H in subbands before calculating loss
+                H_subband = H * self.subband_filter_freq_resp
+            all_losses = super().calculate_losses(data, H_subband)
 
         loss = sum(all_losses.values())
         loss.backward()
@@ -354,7 +371,11 @@ class VarReceiverPosTrainer(Trainer):
                                             src_pos=src_position,
                                             rec_pos=rec_position,
                                             filename_prefix="valid_ir")
-                cur_all_losses = super().calculate_losses(data, H, H_sub_fdn)
+                if self.subband_process_config is not None:
+                    # filter H in subbands before calculating loss
+                    H_subband = H * self.subband_filter_freq_resp
+                cur_all_losses = super().calculate_losses(
+                    data, H_subband, H_sub_fdn)
 
             else:
                 H = self.save_ir(data,
@@ -362,7 +383,10 @@ class VarReceiverPosTrainer(Trainer):
                                  src_pos=src_position,
                                  rec_pos=rec_position,
                                  filename_prefix="valid_ir")
-                cur_all_losses = super().calculate_losses(data, H)
+                if self.subband_process_config is not None:
+                    # filter H in subbands before calculating loss
+                    H_subband = H * self.subband_filter_freq_resp
+                cur_all_losses = super().calculate_losses(data, H_subband)
 
             cur_loss = sum(cur_all_losses.values())
             total_loss += cur_loss
@@ -521,10 +545,16 @@ class SinglePosTrainer(Trainer):
         self.optimizer.zero_grad()
         if self.use_colorless_loss:
             H, H_sub_fdn = self.net(data)
-            all_losses = super().calculate_losses(data, H, H_sub_fdn)
+            if self.subband_process_config is not None:
+                # filter H in subbands before calculating loss
+                H_subband = H * self.subband_filter_freq_resp
+            all_losses = super().calculate_losses(data, H_subband, H_sub_fdn)
         else:
             H = self.net(data)
-            all_losses = super().calculate_losses(data, H)
+            if self.subband_process_config is not None:
+                # filter H in subbands before calculating loss
+                H_subband = H * self.subband_filter_freq_resp
+            all_losses = super().calculate_losses(data, H_subband)
 
         loss = sum(all_losses.values())
         loss.backward(retain_graph=True)
