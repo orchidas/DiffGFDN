@@ -259,3 +259,21 @@ def is_unitary(A: torch.tensor, max_tol: float = 1e-6) -> bool:
     T -= torch.eye(N)
     max_off_diag_value = torch.max(torch.abs(T))
     return max_off_diag_value < max_tol, max_off_diag_value
+
+
+def spectral_flatness(X: ArrayLike, eps: float = 1e-10):
+    """
+    Compute spectral flatness of a power spectrum or magnitude spectrum.
+
+    Args:
+        X (numpy.ndarray): Power spectrum or magnitude spectrum of shape (K,).
+        eps (float): Small value to avoid log(0).
+
+    Returns:
+        float: Spectral flatness value between 0 and 1.
+    """
+    X = np.abs(X)  # Ensure magnitude spectrum
+    geometric_mean = np.exp(np.mean(np.log(X + eps)))  # Avoid log(0)
+    arithmetic_mean = np.mean(X + eps)
+
+    return geometric_mean / arithmetic_mean

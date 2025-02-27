@@ -13,13 +13,15 @@ from scipy.spatial.distance import cdist
 from slope2noise.rooms import RoomGeometry
 from slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering, schroeder_backward_int
 import torch
+from torch import nn
 from tqdm import tqdm
 
 from .analysis import get_amps_for_rir
+from .config.config import DiffGFDNConfig
 from .dataloader import RoomDataset
 from .filters.geq import eq_freqs
 from .losses import get_edr_from_stft, get_stft_torch
-from .utils import db, db2lin, ms_to_samps
+from .utils import db, db2lin, ms_to_samps, spectral_flatness
 
 # flake8: noqa:E231
 
@@ -75,6 +77,72 @@ def plot_t60_filter_response(
     if save_path is not None:
         fig.savefig(
             Path(f'{save_path}_absorption_filter_response.png').resolve())
+
+
+def plot_magnitude_response(
+    room_data: RoomDataset,
+    config_dict: DiffGFDNConfig,
+    model: nn.Module,
+    save_path: Optional[str] = None,
+):
+    """Plot the magnitude response of each FDN"""
+
+    trainer_config = config_dict.trainer_config
+    freq_bins_rad = torch.tensor(room_data.freq_bins_rad)
+    freq_bins_hz = room_data.freq_bins_hz
+    z_values = torch.polar(torch.ones_like(freq_bins_rad),
+                           freq_bins_rad * 2 * np.pi)
+
+    max_epochs = trainer_config.max_epochs
+    checkpoint_dir = Path(trainer_config.train_dir + 'checkpoints/').resolve()
+    init_checkpoint = torch.load(f'{checkpoint_dir}/model_e-1.pt',
+                                 weights_only=True,
+                                 map_location=torch.device('cpu'))
+    model.load_state_dict(init_checkpoint)
+    model.eval()
+    H_sub_fdn_init, _ = model.sub_fdn_output(z_values)
+
+    final_checkpoint = torch.load(f'{checkpoint_dir}/model_e{max_epochs-1}.pt',
+                                  weights_only=True,
+                                  map_location=torch.device('cpu'))
+    # Load the trained model state
+    model.load_state_dict(final_checkpoint)
+    model.eval()
+    H_sub_fdn_final, _ = model.sub_fdn_output(z_values)
+
+    # Create subplots
+    fig, axes = plt.subplots(room_data.num_rooms,
+                             1,
+                             figsize=(8, 10),
+                             sharex=True)
+
+    for i in range(room_data.num_rooms):
+        axes[i].semilogx(freq_bins_hz,
+                         db(H_sub_fdn_init[:, i].detach().numpy()),
+                         label="Initial",
+                         linestyle="--")
+        axes[i].semilogx(freq_bins_hz,
+                         db(H_sub_fdn_final[:, i].detach().numpy()),
+                         label="Final",
+                         linestyle="-")
+
+        axes[i].set_ylabel("Magnitude (dB)")
+        axes[i].set_xlabel('Frequencies (Hz)')
+        axes[i].set_title(f"FDN {i+1}")
+        axes[i].grid(True)
+        axes[i].legend()
+        logger.info(
+            f'Init FDN spectral flatness is {spectral_flatness(db(H_sub_fdn_init[:, i].detach().numpy())):.3f}'
+        )
+        logger.info(
+            f'Final FDN spectral flatness is {spectral_flatness(db(H_sub_fdn_final[:, i].detach().numpy())):.3f}'
+        )
+
+    if save_path is not None:
+        fig.savefig(save_path)
+
+    plt.show()
+    return axes
 
 
 def plot_polynomial_matrix_impulse_response(

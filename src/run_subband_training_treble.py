@@ -74,9 +74,9 @@ def create_config(
             'use_colorless_loss': True,
             'use_asym_spectral_loss': True,
             'train_dir':
-            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_prototype/',
+            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_prototype/',
+            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
@@ -104,7 +104,7 @@ def create_config(
     # writing the dictionary to a YAML file
     if write_config:
         logger.info("Writing to config file")
-        cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz_colorless_prototype.yml'
+        cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz_colorless_loss.yml'
         with open(cur_config_path, "w", encoding="utf-8") as file:
             yaml.safe_dump(config_dict, file, default_flow_style=False)
 
@@ -355,10 +355,10 @@ def main(freqs_list_train: Optional[List] = None):
     # inferencing
     if training_complete:
         save_filename = Path(
-            'output/treble_data_grid_training_final_rirs_colorless_prototype.pkl'
+            'output/treble_data_grid_training_final_rirs_colorless_loss.pkl'
         ).resolve()
         output_path = Path(
-            "audio/grid_rir_treble_subband_processing_colorless_prototype")
+            "audio/grid_rir_treble_subband_processing_colorless_loss")
 
         inferencing(freqs_list,
                     config_dicts,
