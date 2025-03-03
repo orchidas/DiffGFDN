@@ -188,6 +188,8 @@ class DiffGFDNConfig(BaseModel):
     delay_range_ms: List[float] = [20.0, 50.0]
     # whether to use scalar or frequency-dependent gains in delay lines
     use_absorption_filters: bool = True
+    # whether to learn the common decay times or not
+    learn_common_decay_times: bool = False
     # config for the feedback loop
     feedback_loop_config: FeedbackLoopConfig = FeedbackLoopConfig()
     # number of biquads in SVF

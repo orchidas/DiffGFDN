@@ -54,8 +54,8 @@ def db2lin(
         return np.power(10.0, x * exp_factor)
 
 
-def ms_to_samps(ms: Union[float, ArrayLike],
-                fs: float) -> Union[int, ArrayLike]:
+def ms_to_samps(ms: Union[float, ArrayLike, torch.Tensor],
+                fs: float) -> Union[int, ArrayLike, torch.Tensor]:
     """
     Convert ms to samples
     Args:
@@ -64,15 +64,19 @@ def ms_to_samps(ms: Union[float, ArrayLike],
     Returns:
         int, ArrayLike: time in samples
     """
-    samp = ms * 1e-3 * fs
-    if np.isscalar(samp):
-        return int(samp)
+    if isinstance(ms, torch.Tensor):
+        samp = ms * 1e-3 * torch.tensor(fs)
+        return samp.int()
     else:
-        return samp.astype(np.int32)
+        samp = ms * 1e-3 * fs
+        if np.isscalar(samp):
+            return int(samp)
+        else:
+            return samp.astype(np.int32)
 
 
-def samps_to_ms(samps: Union[int, ArrayLike],
-                fs: float) -> Union[float, ArrayLike]:
+def samps_to_ms(samps: Union[int, ArrayLike, torch.Tensor],
+                fs: float) -> Union[float, ArrayLike, torch.Tensor]:
     """
     Convert samples to ms
     Args:
@@ -81,7 +85,10 @@ def samps_to_ms(samps: Union[int, ArrayLike],
     Returns:
         float, ArrayLike: time in ms
     """
-    ms = float(samps) / fs * 1e3
+    if isinstance(samps, torch.Tensor):
+        ms = samps.float() / torch.tensor(fs) * 1e3
+    else:
+        ms = float(samps) / fs * 1e3
     return ms
 
 

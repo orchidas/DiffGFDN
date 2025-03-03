@@ -171,6 +171,8 @@ class edc_loss(nn.Module):
                 sample_rate, band_centre_hz)
             self.filter_order = self.filter_coeffs_sos.shape[0]
         self.use_mask = use_mask
+        if self.use_mask:
+            logger.info("Using masked EDC loss")
 
     def schroeder_backward_integral(self,
                                     signal: torch.tensor,
@@ -234,8 +236,8 @@ class edc_loss(nn.Module):
                     self.filter_coeffs_sos[...,
                                            b_idx].copy()).to(torch.float32)
 
-                target_rir_band = target_rir.detach().clone()
-                achieved_rir_band = achieved_rir.detach().clone()
+                target_rir_band = target_rir.clone()
+                achieved_rir_band = achieved_rir.clone()
 
                 for j in range(self.filter_order):
                     target_rir_band = lfilter(target_rir_band.to(

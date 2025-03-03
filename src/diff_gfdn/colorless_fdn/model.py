@@ -52,6 +52,7 @@ class ColorlessFDN(nn.Module):
                                             device=self.device)
 
         self.feedback_loop = FeedbackLoop(
+            self.sample_rate,
             num_groups=1,
             num_delay_lines_per_group=self.num_delay_lines,
             delays=self.delays,

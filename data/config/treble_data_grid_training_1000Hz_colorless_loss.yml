@@ -1,5 +1,6 @@
 feedback_loop_config:
   coupling_matrix_type: scalar_matrix
+learn_common_decay_times: true
 num_delay_lines: 12
 output_filter_config:
   num_fourier_features: 20
@@ -11,7 +12,7 @@ sample_rate: 32000.0
 trainer_config:
   batch_size: 32
   edc_loss_weight: 10
-  ir_dir: audio/grid_rir_treble_band_centre=1000Hz_colorless_loss/
+  ir_dir: audio/grid_rir_treble_band_centre=1000Hz_colorless_loss_learnt_decay_times/
   max_epochs: 15
   num_freq_bins: 131072
   save_true_irs: true
@@ -21,7 +22,7 @@ trainer_config:
     - 63
     - 8000
     num_fraction_octaves: 1
-  train_dir: output/grid_rir_treble_band_centre=1000Hz_colorless_loss/
+  train_dir: output/grid_rir_treble_band_centre=1000Hz_colorless_loss_learnt_decay_times/
   train_valid_split: 0.8
   use_asym_spectral_loss: true
   use_colorless_loss: true

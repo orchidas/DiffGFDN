@@ -1,11 +1,10 @@
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
 
 from .filters.geq import design_geq
-from .filters.prony import (interpolate_magnitude_spectrum, prony_warped,
-                            tf2minphase)
+from .filters.prony import interpolate_magnitude_spectrum, prony_warped, tf2minphase
 from .plot import plot_t60_filter_response
 from .utils import db, db2lin
 
@@ -38,13 +37,19 @@ def absorption_to_gain_per_sample(room_dims: Tuple, absorption_coeff: float,
     return (rt60, gain_per_sample)
 
 
-def decay_times_to_gain_per_sample(common_decay_times: float,
-                                   delay_length_samp: List[int],
+def decay_times_to_gain_per_sample(common_decay_times: Union[float,
+                                                             torch.Tensor],
+                                   delay_length_samp: Union[List[int],
+                                                            torch.Tensor],
                                    fs: float) -> List:
     """Convert broadband decay times to delay line gains"""
-    # list should be converted to numpy array, otherwise division wont work
-    gain_per_sample = db2lin(-60 * np.array(delay_length_samp) /
-                             (fs * common_decay_times))
+    if isinstance(common_decay_times, torch.Tensor):
+        gain_per_sample = db2lin(-60 * delay_length_samp /
+                                 (fs * common_decay_times))
+    else:
+        # list should be converted to numpy array, otherwise division wont work
+        gain_per_sample = db2lin(-60 * np.array(delay_length_samp) /
+                                 (fs * common_decay_times))
     return gain_per_sample
 
 

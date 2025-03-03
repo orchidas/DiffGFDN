@@ -53,16 +53,17 @@ class Trainer:
             self.subband_filter_freq_resp = torch.fft.rfft(
                 subband_filter, n=trainer_config.num_freq_bins)
 
-            print(subband_filter_idx)
-
         self.init_scheduler(trainer_config)
 
         if not os.path.exists(self.ir_dir):
             os.makedirs(self.ir_dir)
 
-        if trainer_config.use_edc_mask:
-            logger.info("Using masked EDC loss")
+        if self.net.common_decay_times is None:
+            max_ir_len_ms = 2000
+        else:
+            max_ir_len_ms = self.net.common_decay_times.max() * 1e3
 
+        # energy decay loss criteria
         self.criterion = [
             edr_loss(
                 self.net.sample_rate,
@@ -70,7 +71,7 @@ class Trainer:
                 use_erb_grouping=trainer_config.use_erb_edr_loss,
                 use_weight_fn=trainer_config.use_frequency_weighting,
             ),
-            edc_loss(self.net.common_decay_times.max() * 1e3,
+            edc_loss(max_ir_len_ms,
                      self.net.sample_rate,
                      use_mask=trainer_config.use_edc_mask),
         ]
@@ -196,10 +197,11 @@ class Trainer:
                             individual_losses=self.individual_train_loss if
                             hasattr(self, 'individual_train_loss') else None))
 
-        # for debugging
+        # # for debugging
         # for name, param in self.net.named_parameters():
-        #     if name in ('input_scalars',
-        #                 'output_scalars') and param.requires_grad:
+        #     if name in ('input_scalars', 'output_scalars',
+        #                 'feedback_loop.common_decay_times'
+        #                 ) and param.requires_grad:
         #         print(f"Parameter {name}: {param.data}")
         #         print(f"Parameter {name} gradient: {param.grad.norm()}")
 
@@ -231,6 +233,7 @@ class Trainer:
             data['target_rir_response'], H)
         edc_loss_val = self.loss_weights[1] * self.criterion[1](
             data['target_rir_response'], H)
+
         all_losses = {
             'edc_loss': edc_loss_val,
             'edr_loss': edr_loss_val,
@@ -260,6 +263,7 @@ class Trainer:
                 'sparsity_loss': sparsity_loss_val
             }
             all_losses.update(colorless_losses)
+
         return all_losses
 
 
@@ -299,7 +303,7 @@ class VarReceiverPosTrainer(Trainer):
                     all_loss = {key: 0.0 for key in cur_all_loss}
 
                 for key, value in cur_all_loss.items():
-                    all_loss[key] += value
+                    all_loss[key] += value.detach().item()
 
             self.scheduler.step()
             self.train_loss.append(epoch_loss / len(train_dataset))
@@ -351,8 +355,9 @@ class VarReceiverPosTrainer(Trainer):
             all_losses = super().calculate_losses(data, H_subband)
 
         loss = sum(all_losses.values())
-        loss.backward()
+        loss.backward(retain_graph=True)
         self.optimizer.step()
+
         return loss.item(), all_losses
 
     @torch.no_grad()
