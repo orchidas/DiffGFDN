@@ -49,7 +49,7 @@ def create_config(
     elif cur_freq_hz == 125:
         num_hidden_layers = 1
         num_neurons_per_layer = 2**4
-    elif cur_freq_hz in (250, 500):
+    elif cur_freq_hz in (250, 500, 1000):
         num_hidden_layers = 5
         num_neurons_per_layer = 2**4
     else:

@@ -3,8 +3,8 @@ feedback_loop_config:
 num_delay_lines: 12
 output_filter_config:
   num_fourier_features: 20
-  num_hidden_layers: 3
-  num_neurons_per_layer: 128
+  num_hidden_layers: 5
+  num_neurons_per_layer: 16
   use_svfs: false
 room_dataset_path: /Users/k2478454/Documents/FDN/GroupedFDN/DiffGFDN/resources/Georg_3room_FDTD/srirs_band_centre=1000Hz.pkl
 sample_rate: 32000.0

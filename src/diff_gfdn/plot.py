@@ -121,10 +121,13 @@ def plot_magnitude_response(
                          db(H_sub_fdn_init[:, i].detach().numpy()),
                          label="Initial",
                          linestyle="--")
-        axes[i].semilogx(freq_bins_hz,
-                         db(H_sub_fdn_final[:, i].detach().numpy()),
-                         label="Final",
-                         linestyle="-")
+        axes[i].semilogx(
+            freq_bins_hz,
+            db(H_sub_fdn_final[:, i].detach().numpy()),
+            label="Final",
+            linestyle="-",
+            alpha=0.8,
+        )
 
         axes[i].set_ylabel("Magnitude (dB)")
         axes[i].set_xlabel('Frequencies (Hz)')
