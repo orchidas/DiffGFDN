@@ -29,6 +29,7 @@ class DiffGFDN(nn.Module):
             device: torch.device,
             feedback_loop_config: FeedbackLoopConfig,
             use_absorption_filters: bool,
+            learn_common_decay_times: bool,
             common_decay_times: Optional[List] = None,
             band_centre_hz: Optional[List] = None,
             colorless_fdn_params: Optional[List[ColorlessFDNResults]] = None,
@@ -69,6 +70,7 @@ class DiffGFDN(nn.Module):
         ]
         self.band_centre_hz = band_centre_hz
         self.common_decay_times = common_decay_times
+        self.learn_common_decay_times = learn_common_decay_times
         self.use_colorless_loss = use_colorless_loss
 
         self.delays = torch.tensor(delays,
@@ -83,7 +85,7 @@ class DiffGFDN(nn.Module):
         # initialise input-output gains
         self._init_io_gains(colorless_fdn_params)
         # initialise absorption filters in delay lines
-        self._init_absorption(common_decay_times, band_centre_hz)
+        self._init_absorption(band_centre_hz)
         # initialise feedback loop
         self._init_feedback(feedback_loop_config, colorless_fdn_params)
 
@@ -118,12 +120,10 @@ class DiffGFDN(nn.Module):
             ],
                                              device=self.device).view(-1, 1)
 
-    def _init_absorption(self,
-                         common_decay_times: Optional[List] = None,
-                         band_centre_hz: Optional[List] = None):
+    def _init_absorption(self, band_centre_hz: Optional[List] = None):
         """Initialise absorption gains/filters in the delay lines"""
         # then decay rates are learnable parameters
-        if common_decay_times is None:
+        if self.common_decay_times is None or self.learn_common_decay_times:
             self.gain_per_sample = None
         else:
             # frequency-dependent absorption filters
@@ -133,7 +133,7 @@ class DiffGFDN(nn.Module):
                 self.gain_per_sample = torch.tensor([
                     decay_times_to_gain_filters_geq(
                         band_centre_hz,
-                        np.squeeze(common_decay_times)[:, i],
+                        np.squeeze(self.common_decay_times)[:, i],
                         self.delays_by_group[i], self.sample_rate).tolist()
                     for i in range(self.num_groups)
                 ],
@@ -154,7 +154,7 @@ class DiffGFDN(nn.Module):
                 self.gain_per_sample = torch.flatten(
                     torch.tensor([
                         decay_times_to_gain_per_sample(
-                            np.squeeze(common_decay_times)[i],
+                            np.squeeze(self.common_decay_times)[i],
                             self.delays_by_group[i],
                             self.sample_rate).tolist()
                         for i in range(self.num_groups)
@@ -176,9 +176,10 @@ class DiffGFDN(nn.Module):
                 self.num_delay_lines_per_group,
                 self.delays,
                 self.use_absorption_filters,
+                gains=self.gain_per_sample,
+                common_decay_times=self.common_decay_times,
                 coupling_matrix_type=feedback_loop_config.coupling_matrix_type,
                 coupling_matrix_order=feedback_loop_config.pu_matrix_order,
-                gains=self.gain_per_sample,
             )
         else:
             # convert list of numpy arrays to list of torch tensors
@@ -196,12 +197,11 @@ class DiffGFDN(nn.Module):
                 self.num_delay_lines_per_group,
                 self.delays,
                 self.use_absorption_filters,
+                gains=self.gain_per_sample,
+                common_decay_times=self.common_decay_times,
                 coupling_matrix_type=feedback_loop_config.coupling_matrix_type,
                 colorless_feedback_matrix=colorless_feedback_matrix,
-                gains=self.gain_per_sample,
                 device=self.device)
-
-        self.feedback_loop.print()
 
     def sub_fdn_output(self,
                        z: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -284,7 +284,8 @@ class DiffGFDNVarSourceReceiverPos(DiffGFDN):
             output_filter_config: OutputFilterConfig,
             input_filter_config: OutputFilterConfig,
             use_absorption_filters: bool,
-            common_decay_times: List = None,
+            learn_common_decay_times: bool,
+            common_decay_times: Optional[List] = None,
             band_centre_hz: Optional[List] = None,
             colorless_fdn_params: Optional[List[ColorlessFDNResults]] = None,
             use_colorless_loss: bool = False):
@@ -309,8 +310,9 @@ class DiffGFDNVarSourceReceiverPos(DiffGFDN):
         """
         super().__init__(sample_rate, num_groups, delays, device,
                          feedback_loop_config, use_absorption_filters,
-                         common_decay_times, band_centre_hz,
-                         colorless_fdn_params, use_colorless_loss)
+                         learn_common_decay_times, common_decay_times,
+                         band_centre_hz, colorless_fdn_params,
+                         use_colorless_loss)
 
         self.use_svf_in_output = output_filter_config.use_svfs
         self.use_svf_in_input = input_filter_config.use_svfs
@@ -517,7 +519,8 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
             feedback_loop_config: FeedbackLoopConfig,
             output_filter_config: OutputFilterConfig,
             use_absorption_filters: bool,
-            common_decay_times: List = None,
+            learn_common_decay_times: Optional[bool] = False,
+            common_decay_times: Optional[List] = None,
             band_centre_hz: Optional[List] = None,
             colorless_fdn_params: Optional[List[ColorlessFDNResults]] = None,
             use_colorless_loss: bool = False):
@@ -541,8 +544,9 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
         """
         super().__init__(sample_rate, num_groups, delays, device,
                          feedback_loop_config, use_absorption_filters,
-                         common_decay_times, band_centre_hz,
-                         colorless_fdn_params, use_colorless_loss)
+                         learn_common_decay_times, common_decay_times,
+                         band_centre_hz, colorless_fdn_params,
+                         use_colorless_loss)
 
         self.use_svf_in_output = output_filter_config.use_svfs
         self.input_scalars = torch.ones(self.num_groups, 1)
@@ -719,7 +723,8 @@ class DiffGFDNSinglePos(DiffGFDN):
             feedback_loop_config: FeedbackLoopConfig,
             output_filter_config: OutputFilterConfig,
             use_absorption_filters: bool,
-            common_decay_times: List,
+            learn_common_decay_times: Optional[bool] = False,
+            common_decay_times: Optional[List] = None,
             band_centre_hz: Optional[List] = None,
             colorless_fdn_params: Optional[List[ColorlessFDNResults]] = None,
             use_colorless_loss: bool = False,
@@ -743,8 +748,9 @@ class DiffGFDNSinglePos(DiffGFDN):
         """
         super().__init__(sample_rate, num_groups, delays, device,
                          feedback_loop_config, use_absorption_filters,
-                         common_decay_times, band_centre_hz,
-                         colorless_fdn_params, use_colorless_loss)
+                         learn_common_decay_times, common_decay_times,
+                         band_centre_hz, colorless_fdn_params,
+                         use_colorless_loss)
 
         if input_filter_config is not None:
             self.use_svf_in_input = input_filter_config.use_svfs

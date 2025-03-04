@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from loguru import logger
 import numpy as np
@@ -151,10 +151,11 @@ class FeedbackLoop(nn.Module):
                  num_delay_lines_per_group: int,
                  delays: torch.tensor,
                  use_absorption_filters: bool,
-                 gains: Optional[torch.tensor] = None,
                  coupling_matrix_type: CouplingMatrixType = None,
                  coupling_matrix_order: Optional[int] = None,
                  colorless_feedback_matrix: Optional[torch.tensor] = None,
+                 gains: Optional[torch.Tensor] = None,
+                 common_decay_times: Optional[List] = None,
                  device: torch.device = 'cpu'):
         """
         Class implementing the feedback loop of the FDN (D_m(z) - A(z)Gamma(z))^{-1}
@@ -163,6 +164,8 @@ class FeedbackLoop(nn.Module):
             num_delay_lines_per_group (int): number of delay lines in each group
             delays (List): delay line lengths in samples
             gains (List): delay line absorption gains / filters, can be learnable
+            common_decay_times (list, optional): list of initial common decay times (one for each room). 
+                                                 If none, they are learned by network
             use_absorption_filters (bool): whether the delay line gains are gains or filters
             coupling_matrix_type (CouplingMatrixType): scalar or filter coupling
             coupling_matrix_order (optional, int): order of the PU filter coupling matrix
@@ -178,18 +181,40 @@ class FeedbackLoop(nn.Module):
         self.num_delays = len(self.delays)
         self.use_absorption_filters = use_absorption_filters
         self.device = device
+        self._eps = 1e-9
+        self.coupling_matrix_type = coupling_matrix_type
+        self.coupling_matrix_order = coupling_matrix_order
+        self._init_absorption(gains, common_decay_times)
+        self._init_feedback_matrix(colorless_feedback_matrix)
 
+    def _init_absorption(self,
+                         gains: Optional[torch.Tensor] = None,
+                         common_decay_times: Optional[List] = None):
+        """
+        Initialise the absorption gains/filters
+        Args:
+            gains : Delay line gains/filters. If None, they are learnable
+        """
         if gains is None:
             if self.use_absorption_filters:
                 logger.error("Cannot learn absorption filters yet")
             else:
                 logger.info("Learning common decay times...")
-                lower_decay_time = 100 * 1e-3
-                upper_decay_time = 2000 * 1e-3
-                random_init_decay_times = lower_decay_time + (
-                    upper_decay_time - lower_decay_time) * torch.rand(
-                        self.num_groups)
-                self.common_decay_times = nn.Parameter(random_init_decay_times)
+                if common_decay_times is None:
+                    lower_decay_time = 100 * 1e-3
+                    upper_decay_time = 2000 * 1e-3
+                    random_init_decay_times = lower_decay_time + (
+                        upper_decay_time - lower_decay_time) * torch.rand(
+                            self.num_groups)
+                    self.common_decay_times = nn.Parameter(
+                        random_init_decay_times)
+                else:
+                    logger.info(
+                        "Initialising with known common decay times...")
+                    # initialise with pre-calculated decay times and then fine-tune it
+                    self.common_decay_times = nn.Parameter(
+                        torch.tensor(common_decay_times.squeeze()))
+
                 self.delays_by_group = [
                     torch.tensor(
                         self.delays[i:i + self.num_delay_lines_per_group],
@@ -227,14 +252,14 @@ class FeedbackLoop(nn.Module):
             else:
                 self.delay_line_gains = gains
 
-        self._eps = 1e-9
-        self.coupling_matrix_type = coupling_matrix_type
-        self.coupling_matrix_order = coupling_matrix_order
-        self._init_feedback_matrix(colorless_feedback_matrix)
-
     def _init_feedback_matrix(self,
                               colorless_feedback_matrix: Optional[
                                   torch.tensor] = None):
+        """
+        Initialise feedback matrix
+        Args:
+            colorless_feedback_matrix: If pre-optimised feedback matrix is provided, then use it
+        """
         # orthonormal parameterisation of the matrices in M
         self.ortho_param = nn.Sequential(Skew(), MatrixExponential())
 

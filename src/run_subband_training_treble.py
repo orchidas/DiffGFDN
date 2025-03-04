@@ -61,8 +61,11 @@ def create_config(
         'room_dataset_path': data_path,
         'sample_rate': 32000.0,
         'num_delay_lines': 12,
-        'use_absorption_filters': False,
-        'learn_common_decay_times': True,
+        'decay_filter_config': {
+            'use_absorption_filters': False,
+            'learn_common_decay_times': True,
+            'initialise_with_opt_values': True,
+        },
         # 'seed': seed,
         'trainer_config': {
             'max_epochs': 15,
@@ -75,9 +78,9 @@ def create_config(
             'use_colorless_loss': True,
             'use_asym_spectral_loss': True,
             'train_dir':
-            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_learnt_decay_times/',
+            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_learnt_decay_times_opt_init/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_learnt_decay_times/',
+            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_learnt_decay_times_opt_init/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
@@ -105,7 +108,8 @@ def create_config(
     # writing the dictionary to a YAML file
     if write_config:
         logger.info("Writing to config file")
-        cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz_colorless_loss.yml'
+        cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz'\
+        '_colorless_loss_learnt_decay_times_opt_init.yml'
         with open(cur_config_path, "w", encoding="utf-8") as file:
             yaml.safe_dump(config_dict, file, default_flow_style=False)
 
@@ -221,9 +225,12 @@ def inferencing(freqs_list: List,
                 trainer_config.device,
                 config_dict.feedback_loop_config,
                 config_dict.output_filter_config,
-                use_absorption_filters=False,
-                common_decay_times=None if config_dict.learn_common_decay_times
-                else room_data.common_decay_times,
+                config_dict.decay_filter_config.use_absorption_filters,
+                common_decay_times=room_data.common_decay_times
+                if config_dict.decay_filter_config.initialise_with_opt_values
+                else None,
+                learn_common_decay_times=config_dict.decay_filter_config.
+                learn_common_decay_times,
                 use_colorless_loss=trainer_config.use_colorless_loss,
                 colorless_fdn_params=colorless_fdn_params)
 
@@ -357,10 +364,10 @@ def main(freqs_list_train: Optional[List] = None):
     # inferencing
     if training_complete:
         save_filename = Path(
-            'output/treble_data_grid_training_final_rirs_colorless_loss_learnt_decay_times.pkl'
+            'output/treble_data_grid_training_final_rirs_colorless_loss_learnt_decay_times_opt_init.pkl'
         ).resolve()
         output_path = Path(
-            "audio/grid_rir_treble_subband_processing_colorless_loss_learnt_decay_times"
+            "audio/grid_rir_treble_subband_processing_colorless_loss_learnt_decay_times_opt_init"
         )
 
         inferencing(freqs_list,

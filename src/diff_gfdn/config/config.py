@@ -79,6 +79,15 @@ class OutputFilterConfig(BaseModel):
     encoding_type: FeatureEncodingType = FeatureEncodingType.SINE
 
 
+class DecayFilterConfig(BaseModel):
+    # whether to use scalar or frequency-dependent gains in delay lines
+    use_absorption_filters: bool = True
+    # whether to learn the common decay times or not
+    learn_common_decay_times: bool = False
+    # whether to initialise decay filters with pre-found values
+    initialise_with_opt_values: bool = False
+
+
 class TrainerConfig(BaseModel):
     # config file with training parameters
     # number of receivers in each training batch
@@ -186,12 +195,11 @@ class DiffGFDNConfig(BaseModel):
     num_delay_lines: int = 12
     # delay range in ms - first delay should be after the mixing time
     delay_range_ms: List[float] = [20.0, 50.0]
-    # whether to use scalar or frequency-dependent gains in delay lines
-    use_absorption_filters: bool = True
-    # whether to learn the common decay times or not
-    learn_common_decay_times: bool = False
+
     # config for the feedback loop
     feedback_loop_config: FeedbackLoopConfig = FeedbackLoopConfig()
+    # config for decay filters
+    decay_filter_config: DecayFilterConfig = DecayFilterConfig()
     # number of biquads in SVF
     output_filter_config: OutputFilterConfig = OutputFilterConfig()
     input_filter_config: Optional[OutputFilterConfig] = OutputFilterConfig()
