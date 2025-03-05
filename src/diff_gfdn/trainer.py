@@ -286,15 +286,13 @@ class VarReceiverPosTrainer(Trainer):
             logger.info(f'Epoch #{epoch}')
             st_epoch = time.time()
 
-            # normalise b, c at each epoch to ensure the sub-FDNs have
-            # unit energy
-            data = next(iter(train_dataset))
-            self.normalize(data)
-
             # training
             epoch_loss = 0.0
             all_loss = {}
             for data in train_dataset:
+                # normalise b, c at each training step to ensure the sub-FDNs have
+                # unit energy
+                self.normalize(data)
                 cur_loss, cur_all_loss = self.train_step(data)
                 epoch_loss += cur_loss
 
@@ -567,7 +565,6 @@ class SinglePosTrainer(Trainer):
         self.optimizer.step()
         return loss.item(), all_losses
 
-    @torch.no_grad()
     def normalize(self, data: Dict):
         # average energy normalization - this normalises the energy
         # of the initial FDN to the target impulse response
@@ -583,9 +580,7 @@ class SinglePosTrainer(Trainer):
                             k * self.net.num_delay_lines_per_group,
                             (k + 1) * self.net.num_delay_lines_per_group,
                             dtype=torch.int32)
-                        prm.data[ind_slice].copy_(
-                            torch.div(prm.data[ind_slice],
-                                      torch.pow(energyH_sub[k], 1 / 4)))
+                        prm.data[ind_slice] /= torch.pow(energyH_sub[k], 1 / 4)
         else:
             H, _ = get_response(data, self.net)
         energyH = torch.mean(torch.pow(torch.abs(H), 2))
@@ -595,8 +590,7 @@ class SinglePosTrainer(Trainer):
         # apply energy normalization on input and output gains only
         for name, prm in self.net.named_parameters():
             if name in ('input_scalars', 'output_scalars'):
-                prm.data.copy_(
-                    torch.div(prm.data, torch.pow(energy_diff, 1 / 4)))
+                prm.data /= torch.pow(energy_diff, 1 / 4)
 
     @torch.no_grad()
     def save_ir(self,
