@@ -200,7 +200,6 @@ class Trainer:
         # # for debugging
         # for name, param in self.net.named_parameters():
         #     if name in ('input_scalars', 'output_scalars',
-        #                 'feedback_loop.common_decay_times'
         #                 ) and param.requires_grad:
         #         print(f"Parameter {name}: {param.data}")
         #         print(f"Parameter {name} gradient: {param.grad.norm()}")

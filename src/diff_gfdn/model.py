@@ -671,9 +671,13 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
         """Return the parameters as a dict"""
         param_np = {}
         param_np['delays'] = self.delays.squeeze().cpu().numpy()
-        param_np[
-            'gains_per_sample'] = self.feedback_loop.delay_line_gains.squeeze(
-            ).cpu().numpy()
+        try:
+            param_np[
+                'gains_per_sample'] = self.feedback_loop.delay_line_gains.squeeze(
+                ).cpu().numpy()
+        except AttributeError as e:
+            logger.warning(e)
+
         param_np['input_scalars'] = self.input_scalars.squeeze().cpu().numpy()
         param_np['input_gains'] = self.input_gains.squeeze().cpu().numpy()
         param_np['output_gains'] = self.output_gains.squeeze().cpu().numpy()

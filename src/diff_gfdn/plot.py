@@ -98,7 +98,7 @@ def plot_magnitude_response(
     init_checkpoint = torch.load(f'{checkpoint_dir}/model_e-1.pt',
                                  weights_only=True,
                                  map_location=torch.device('cpu'))
-    model.load_state_dict(init_checkpoint)
+    model.load_state_dict(init_checkpoint, strict=False)
     model.eval()
     H_sub_fdn_init, _ = model.sub_fdn_output(z_values)
 
@@ -106,7 +106,7 @@ def plot_magnitude_response(
                                   weights_only=True,
                                   map_location=torch.device('cpu'))
     # Load the trained model state
-    model.load_state_dict(final_checkpoint)
+    model.load_state_dict(final_checkpoint, strict=False)
     model.eval()
     H_sub_fdn_final, _ = model.sub_fdn_output(z_values)
 

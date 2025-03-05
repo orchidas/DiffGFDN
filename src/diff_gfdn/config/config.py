@@ -85,7 +85,7 @@ class DecayFilterConfig(BaseModel):
     # whether to learn the common decay times or not
     learn_common_decay_times: bool = False
     # whether to initialise decay filters with pre-found values
-    initialise_with_opt_values: bool = False
+    initialise_with_opt_values: bool = True
 
 
 class TrainerConfig(BaseModel):

@@ -58,6 +58,7 @@ def create_config(
 
     # seed = seed_base + cur_freq_hz
     config_dict = {
+        # 'seed': seed,
         'room_dataset_path': data_path,
         'sample_rate': 32000.0,
         'num_delay_lines': 12,
@@ -66,7 +67,6 @@ def create_config(
             'learn_common_decay_times': True,
             'initialise_with_opt_values': True,
         },
-        # 'seed': seed,
         'trainer_config': {
             'max_epochs': 15,
             'batch_size': 32,
@@ -109,7 +109,7 @@ def create_config(
     if write_config:
         logger.info("Writing to config file")
         cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz'\
-        '_colorless_loss_learnt_decay_times_opt_init.yml'
+        + '_colorless_loss_learnt_decay_times_opt_init.yml'
         with open(cur_config_path, "w", encoding="utf-8") as file:
             yaml.safe_dump(config_dict, file, default_flow_style=False)
 
