@@ -2,7 +2,7 @@ from typing import Dict, List, Optional, Union
 
 from loguru import logger
 import numpy as np
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, NDArray
 import torch
 from torch import nn
 import torchaudio.functional as Faudio
@@ -284,3 +284,68 @@ def spectral_flatness(X: ArrayLike, eps: float = 1e-10):
     arithmetic_mean = np.mean(X + eps)
 
     return geometric_mean / arithmetic_mean
+
+
+def normalised_echo_density(rir: NDArray,
+                            fs: float,
+                            window_length_ms: float = 30,
+                            window_type: str = 'hann',
+                            use_local_avg: bool = False):
+    """
+    Compute the Echo Density Profile as defined by Abel.
+    window_type should be one of ['rect', 'bart', 'blac', 'hamm', 'hann']
+    """
+
+    def weighted_std(signal: NDArray, window_func: NDArray,
+                     use_local_avg: bool):
+        """Returnsthe weighted standard deviation."""
+        if use_local_avg:
+            average = np.average(signal, weights=window_func)
+            variance = np.average((signal - average)**2, weights=window_func)
+        else:
+            variance = np.average((signal)**2, weights=window_func)
+        return np.sqrt(variance)
+
+    if isinstance(rir, torch.Tensor):
+        rir = rir.detach().cpu().numpy()
+
+    # erfc(1/√2)
+    ERFC = 0.3173
+    window_length_frames = ms_to_samps(window_length_ms, fs)
+
+    if not window_length_frames % 2:
+        window_length_frames += 1
+    half_window = int((window_length_frames - 1) / 2)
+
+    padded_rir = np.zeros(len(rir) + 2 * half_window)
+    padded_rir[half_window:-half_window] = rir
+    output = np.zeros(len(rir) + 2 * half_window)
+
+    if window_type == 'rect':
+        window_func = (1 /
+                       window_length_frames) * np.ones(window_length_frames)
+    elif window_type == 'hann':
+        window_func = np.hanning(window_length_frames)
+        window_func = window_func / sum(window_func)
+    elif window_type == 'hamm':
+        window_func = np.hamming(window_length_frames)
+        window_func = window_func / sum(window_func)
+    elif window_type == 'blac':
+        window_func = np.blackman(window_length_frames)
+        window_func = window_func / sum(window_func)
+    elif window_type == 'bart':
+        window_func = np.bartlett(window_length_frames)
+        window_func = window_func / sum(window_func)
+    else:
+        raise ValueError('Unavailable window type.')
+
+    for cursor in range(len(rir)):
+        frame = padded_rir[cursor:cursor + window_length_frames]
+        std = weighted_std(frame, window_func, use_local_avg)
+
+        count = ((np.abs(frame) > std) * window_func).sum()
+
+        output[cursor] = (1 / ERFC) * count
+
+    ned = output[:-window_length_frames]
+    return ned

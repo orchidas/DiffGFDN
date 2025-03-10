@@ -64,7 +64,7 @@ def create_config(
         'num_delay_lines': 12,
         'decay_filter_config': {
             'use_absorption_filters': False,
-            'learn_common_decay_times': True,
+            'learn_common_decay_times': False,
             'initialise_with_opt_values': True,
         },
         'trainer_config': {
@@ -78,9 +78,9 @@ def create_config(
             'use_colorless_loss': True,
             'use_asym_spectral_loss': True,
             'train_dir':
-            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_learnt_decay_times_opt_init/',
+            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_bc_norm_grad/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_learnt_decay_times_opt_init/',
+            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_bc_norm_grad/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
@@ -109,7 +109,7 @@ def create_config(
     if write_config:
         logger.info("Writing to config file")
         cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz'\
-        + '_colorless_loss_learnt_decay_times_opt_init.yml'
+        + '_colorless_loss.yml'
         with open(cur_config_path, "w", encoding="utf-8") as file:
             yaml.safe_dump(config_dict, file, default_flow_style=False)
 
@@ -300,11 +300,6 @@ def inferencing(freqs_list: List,
     logger.info('Saving synthesised RIRs')
 
     # Group by position and sum the filtered_time_samples over each frequency band,
-    # and normalise by the energy of 'time_samples'
-    # synth_rirs = synth_subband_rirs.groupby('position').apply(
-    #     lambda group: sum_and_normalize(group, subband_filters))
-
-    # Group by position and sum the filtered_time_samples over each frequency band,
     synth_rirs = synth_subband_rirs.groupby('position').apply(sum_arrays)
 
     # Convert to DataFrame if needed
@@ -364,10 +359,10 @@ def main(freqs_list_train: Optional[List] = None):
     # inferencing
     if training_complete:
         save_filename = Path(
-            'output/treble_data_grid_training_final_rirs_colorless_loss_learnt_decay_times_opt_init.pkl'
+            'output/treble_data_grid_training_final_rirs_colorless_loss_bc_norm_grad.pkl'
         ).resolve()
         output_path = Path(
-            "audio/grid_rir_treble_subband_processing_colorless_loss_learnt_decay_times_opt_init"
+            "audio/grid_rir_treble_subband_processing_colorless_loss_bc_norm_grad"
         )
 
         inferencing(freqs_list,

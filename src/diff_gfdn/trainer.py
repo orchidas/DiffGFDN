@@ -413,7 +413,7 @@ class VarReceiverPosTrainer(Trainer):
         net_valid_loss = total_loss / len(valid_dataset)
         logger.info(f"The net validation loss is {net_valid_loss:.4f}")
 
-    @torch.no_grad()
+    # @torch.no_grad()
     def normalize(self, data: Dict):
         # average energy normalization - this normalises the energy
         # of each of the sub-FDNs to be unity
@@ -429,9 +429,7 @@ class VarReceiverPosTrainer(Trainer):
                             k * self.net.num_delay_lines_per_group,
                             (k + 1) * self.net.num_delay_lines_per_group,
                             dtype=torch.int32)
-                        prm.data[ind_slice].copy_(
-                            torch.div(prm.data[ind_slice],
-                                      torch.pow(energyH_sub[k], 1 / 4)))
+                        prm.data[ind_slice] /= torch.pow(energyH_sub[k], 1 / 4)
 
     @torch.no_grad()
     def save_ir(
