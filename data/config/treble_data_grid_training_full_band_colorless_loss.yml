@@ -4,14 +4,15 @@ num_delay_lines: 12
 decay_filter_config:
   use_absorption_filters: True
 trainer_config:
-  max_epochs: 10
+  max_epochs: 20
   batch_size: 32
   save_true_irs: True
   train_valid_split: 0.8
   use_edc_mask: True
-  # edc_loss_weight: 10
+  edc_loss_weight: 10
   use_asym_spectral_loss: True
   use_colorless_loss: True
+  num_freq_bins: 131072
   train_dir: 'output/grid_rir_treble_full_band_colorless_loss/'
   ir_dir: 'audio/grid_rir_rir_treble_full_band_colorless_loss/'
 feedback_loop_config:

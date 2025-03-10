@@ -95,7 +95,8 @@ class DiffGFDN(nn.Module):
     def _init_io_gains(self, colorless_fdn_params: Optional[List] = None):
         """Initialise input/output gains"""
         if colorless_fdn_params is None:
-            logger.info('Using learnable gains and feedback matrix')
+            logger.info(
+                'Using learnable input/output gains and feedback matrix')
             self.input_gains = nn.Parameter(
                 (2 * torch.randn(self.num_delay_lines, 1) - 1) /
                 self.num_delay_lines)

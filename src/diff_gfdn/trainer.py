@@ -227,7 +227,6 @@ class Trainer:
         Returns:
             Dict: dictionary of all losses
         """
-
         edr_loss_val = self.loss_weights[0] * self.criterion[0](
             data['target_rir_response'], H)
         edc_loss_val = self.loss_weights[1] * self.criterion[1](
@@ -343,16 +342,21 @@ class VarReceiverPosTrainer(Trainer):
             if self.subband_process_config is not None:
                 # filter H in subbands before calculating loss
                 H_subband = H * self.subband_filter_freq_resp
-            all_losses = super().calculate_losses(data, H_subband, H_sub_fdn)
+                all_losses = super().calculate_losses(data, H_subband,
+                                                      H_sub_fdn)
+            else:
+                all_losses = super().calculate_losses(data, H, H_sub_fdn)
         else:
             H = self.net(data)
             if self.subband_process_config is not None:
                 # filter H in subbands before calculating loss
                 H_subband = H * self.subband_filter_freq_resp
-            all_losses = super().calculate_losses(data, H_subband)
+                all_losses = super().calculate_losses(data, H_subband)
+            else:
+                all_losses = super().calculate_losses(data, H)
 
         loss = sum(all_losses.values())
-        loss.backward(retain_graph=True)
+        loss.backward(retain_graph=self.net.learn_common_decay_times)
         self.optimizer.step()
 
         return loss.item(), all_losses
@@ -378,8 +382,11 @@ class VarReceiverPosTrainer(Trainer):
                 if self.subband_process_config is not None:
                     # filter H in subbands before calculating loss
                     H_subband = H * self.subband_filter_freq_resp
-                cur_all_losses = super().calculate_losses(
-                    data, H_subband, H_sub_fdn)
+                    cur_all_losses = super().calculate_losses(
+                        data, H_subband, H_sub_fdn)
+                else:
+                    cur_all_losses = super().calculate_losses(
+                        data, H, H_sub_fdn)
 
             else:
                 H = self.save_ir(data,
@@ -390,7 +397,9 @@ class VarReceiverPosTrainer(Trainer):
                 if self.subband_process_config is not None:
                     # filter H in subbands before calculating loss
                     H_subband = H * self.subband_filter_freq_resp
-                cur_all_losses = super().calculate_losses(data, H_subband)
+                    cur_all_losses = super().calculate_losses(data, H_subband)
+                else:
+                    cur_all_losses = super().calculate_losses(data, H)
 
             cur_loss = sum(cur_all_losses.values())
             total_loss += cur_loss
@@ -561,7 +570,7 @@ class SinglePosTrainer(Trainer):
             all_losses = super().calculate_losses(data, H_subband)
 
         loss = sum(all_losses.values())
-        loss.backward(retain_graph=True)
+        loss.backward(retain_graph=self.net.learn_common_decay_times)
         self.optimizer.step()
         return loss.item(), all_losses
 
