@@ -4,7 +4,7 @@ num_delay_lines: 12
 decay_filter_config:
   use_absorption_filters: True
 trainer_config:
-  max_epochs: 15
+  max_epochs: 10
   batch_size: 32
   save_true_irs: True
   train_valid_split: 0.8

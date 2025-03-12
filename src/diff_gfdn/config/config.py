@@ -61,6 +61,7 @@ class SubbandProcessingConfig(BaseModel):
     centre_frequency: float
     frequency_range: Tuple
     num_fraction_octaves: int = 3
+    use_amp_preserving_filterbank: bool = False
 
 
 class OutputFilterConfig(BaseModel):

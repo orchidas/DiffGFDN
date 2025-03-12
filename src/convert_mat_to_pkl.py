@@ -17,15 +17,17 @@ def save_subband_rirs(rirs: NDArray, sample_rate: float, common_t60: NDArray,
                       amplitudes: NDArray, noise_floor: NDArray,
                       centre_freqs: List, source_position: Union[NDArray,
                                                                  ArrayLike],
-                      receiver_position: NDArray):
+                      receiver_position: NDArray,
+                      use_amp_preserving_filterbank: bool):
     """Filter RIRs into subbands and save the parameters"""
 
     logger.info("Saving subband RIRs after filtering")
     # filter the RIRs in octave bands
-    filtered_rirs = octave_filtering(rirs,
-                                     sample_rate,
-                                     centre_freqs,
-                                     use_pyfar_filterbank=True)
+    filtered_rirs = octave_filtering(
+        rirs,
+        sample_rate,
+        centre_freqs,
+        use_amp_preserving_filterbank=use_amp_preserving_filterbank)
 
     num_bands = len(centre_freqs)
     for band in range(num_bands):
@@ -50,7 +52,7 @@ def save_subband_rirs(rirs: NDArray, sample_rate: float, common_t60: NDArray,
         }
         # Specify the output pickle file path
         pickle_file_path = Path(
-            f"resources/Georg_3room_FDTD/srirs_band_centre={centre_freqs[band]:.0f}Hz.pkl"
+            f"resources/Georg_3room_FDTD/srirs_band_centre={centre_freqs[band]:.0f}Hz_energy_preserve.pkl"
         ).resolve()
 
         # Write the data to a pickle file
@@ -67,7 +69,8 @@ def calculate_cs_params_custom(
         t_vals: NDArray,
         f_bands: List,
         fs: int,
-        batch_size: int = 50) -> Tuple[NDArray, NDArray]:
+        batch_size: int = 50,
+        use_amp_preserving_filterbank: bool = True) -> Tuple[NDArray, NDArray]:
     """
     Calculate custom CS parameters from the common decay times
     Args:
@@ -102,10 +105,11 @@ def calculate_cs_params_custom(
             -1] == len(f_bands)
 
         # of shape n_rirs x ir_len x n_bands
-        cur_srirs_filtered = octave_filtering(cur_srirs,
-                                              fs,
-                                              f_bands,
-                                              use_pyfar_filterbank=True)
+        cur_srirs_filtered = octave_filtering(
+            cur_srirs,
+            fs,
+            f_bands,
+            use_amp_preserving_filterbank=use_amp_preserving_filterbank)
         logger.info("Done with octave filtering for LS estimation")
 
         # calculate amplitudes and noise floor - this is of shape nrirs x n_slopes+1 x n_bands
@@ -143,6 +147,7 @@ def main():
         "resources/Georg_3room_FDTD/Common_Slope_Analysis_Results/")
     filename = 'cs_analysis_results_omni'
     freqs = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
+    use_amp_preserving_filterbank = False
 
     common_t60 = []
     amplitudes_norm = []
@@ -165,7 +170,8 @@ def main():
         np.array(common_t60),
         freqs,
         sample_rate,
-        batch_size=receiver_position.shape[-1])
+        batch_size=receiver_position.shape[-1],
+        use_amp_preserving_filterbank=use_amp_preserving_filterbank)
 
     # Convert the list to a NumPy array if needed
     data_dict = {
@@ -181,8 +187,9 @@ def main():
         'noise_floor': noise_ls,
     }
 
-    # Specify the output pickle file path
-    pickle_file_path = Path("resources/Georg_3room_FDTD/srirs.pkl").resolve()
+    # Specify output pickle path
+    pickle_file_path = Path(
+        "resources/Georg_3room_FDTD/srirs_energy_preserve.pkl").resolve()
 
     # Write the data to a pickle file
     with open(pickle_file_path, 'wb') as pickle_file:
@@ -193,7 +200,8 @@ def main():
     save_subband_rirs(srirs.copy().T, sample_rate, np.asarray(common_t60),
                       np.asarray(amplitudes_norm),
                       np.asarray(noise_floor_norm), amps_ls, noise_ls, freqs,
-                      source_position, receiver_position)
+                      source_position, receiver_position,
+                      use_amp_preserving_filterbank)
 
 
 if __name__ == '__main__':

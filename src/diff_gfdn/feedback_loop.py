@@ -231,6 +231,7 @@ class FeedbackLoop(nn.Module):
             logger.info("Using provided common decay times...")
             # whether to use absorption filters or scalar gains in delay lines
             if self.use_absorption_filters:
+                logger.info("Using absorption filters")
                 filter_order = gains.shape[1]
                 # absorption gains as IIR filters with Prony's method
                 if gains.ndim == 3:
@@ -250,6 +251,7 @@ class FeedbackLoop(nn.Module):
                                       delay_line_biquads,
                                       device=self.device))
             else:
+                logger.info("Using absorption gains")
                 self.delay_line_gains = gains
 
     def _init_feedback_matrix(self,

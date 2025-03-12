@@ -38,7 +38,7 @@ def create_config(
     freq_range: List,
     config_path: str,
     write_config: bool = True,
-    # seed_base: int = 23463,
+    seed_base: int = 23463,
 ) -> DiffGFDNConfig:
     """Create config file for each subband"""
 
@@ -56,9 +56,9 @@ def create_config(
         num_hidden_layers = 3
         num_neurons_per_layer = 2**7
 
-    # seed = seed_base + cur_freq_hz
+    seed = seed_base + cur_freq_hz
     config_dict = {
-        # 'seed': seed,
+        'seed': seed,
         'room_dataset_path': data_path,
         'sample_rate': 32000.0,
         'num_delay_lines': 12,
@@ -78,13 +78,14 @@ def create_config(
             'use_colorless_loss': True,
             'use_asym_spectral_loss': True,
             'train_dir':
-            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_bc_norm_grad/',
+            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_bc_norm_grad/',
+            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
                 'frequency_range': freq_range,
+                'use_amp_preserve_filterbank': False,
             },
         },
         # 'colorless_fdn_config': {
@@ -109,7 +110,7 @@ def create_config(
     if write_config:
         logger.info("Writing to config file")
         cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz'\
-        + '_colorless_loss.yml'
+        + '_colorless_diff_delays.yml'
         with open(cur_config_path, "w", encoding="utf-8") as file:
             yaml.safe_dump(config_dict, file, default_flow_style=False)
 
@@ -149,15 +150,17 @@ def training(freqs_list: List, config_dicts: List[DiffGFDNConfig]):
         logger.info('Training complete')
 
 
-def inferencing(freqs_list: List,
-                config_dicts: List[DiffGFDNConfig],
-                save_filename: str,
-                output_path: Path,
-                use_amp_preserve_filterbank: bool = True):
+def inferencing(
+    freqs_list: List,
+    config_dicts: List[DiffGFDNConfig],
+    save_filename: str,
+    output_path: Path,
+):
     """Run inferencing and save the full band RIRs for each position"""
 
     # prepare the reconstructing filterbank
-    if use_amp_preserve_filterbank:
+    if config_dicts[
+            0].trainer_config.subband_process_config.use_amp_preserving_filterbank:
         subband_filters, _ = pf.dsp.filter.reconstructing_fractional_octave_bands(
             None,
             num_fractions=config_dicts[0].trainer_config.
@@ -262,7 +265,7 @@ def inferencing(freqs_list: List,
                 for num_pos in range(position.shape[0]):
                     cur_rir = h[num_pos, :].detach().cpu().numpy()
 
-                    if use_amp_preserve_filterbank:
+                    if trainer_config.subband_process_config.use_amp_preserving_filterbank:
                         cur_rir_filtered = fftconvolve(
                             cur_rir,
                             subband_filters.coefficients[k, :],
@@ -335,7 +338,7 @@ def main(freqs_list_train: Optional[List] = None):
     training_complete = freqs_list_train is None
 
     for k in range(len(freqs_list)):
-        cur_data_path = f'{data_path}/srirs_band_centre={freqs_list[k]}Hz.pkl'
+        cur_data_path = f'{data_path}/srirs_band_centre={freqs_list[k]}Hz_energy_preserve.pkl'
 
         # generate config file
         config_dict = create_config(freqs_list[k],
@@ -359,17 +362,13 @@ def main(freqs_list_train: Optional[List] = None):
     # inferencing
     if training_complete:
         save_filename = Path(
-            'output/treble_data_grid_training_final_rirs_colorless_loss_bc_norm_grad.pkl'
+            'output/treble_data_grid_training_final_rirs_colorless_loss_diff_delays.pkl'
         ).resolve()
         output_path = Path(
-            "audio/grid_rir_treble_subband_processing_colorless_loss_bc_norm_grad"
+            "audio/grid_rir_treble_subband_processing_colorless_loss_diff_delays"
         )
 
-        inferencing(freqs_list,
-                    config_dicts,
-                    save_filename,
-                    output_path,
-                    use_amp_preserve_filterbank=True)
+        inferencing(freqs_list, config_dicts, save_filename, output_path)
 
 
 if __name__ == '__main__':

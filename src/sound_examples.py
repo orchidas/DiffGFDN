@@ -6,6 +6,7 @@ from matplotlib import animation, patches
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+import pyloudnorm as pyln
 from scipy.signal import fftconvolve
 from slope2noise.rooms import RoomGeometry
 
@@ -173,6 +174,21 @@ class dynamic_rendering_moving_receiver:
                      writer=animation.FFMpegWriter(fps=1000 // self.update_ms))
 
         plt.show()
+
+    @staticmethod
+    def normalise_loudness(output_signal: NDArray,
+                           sample_rate: float,
+                           db_lufs: float = -18.0):
+        """Normalise the output signal to _ dB LUFS"""
+        # measure the loudness first
+        meter = pyln.Meter(sample_rate)
+        # create BS.1770 meter
+        loudness = meter.integrated_loudness(output_signal)
+
+        # loudness normalize audio
+        loudness_normalized_audio = pyln.normalize.loudness(
+            output_signal, loudness, db_lufs)
+        return loudness_normalized_audio
 
     @staticmethod
     def combine_animation_and_sound(mp4_file_path: str, wav_file_path: str,

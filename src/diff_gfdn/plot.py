@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.fft import rfftfreq
-from scipy.signal import freqz, sos2zpk, sosfreqz
+from scipy.signal import freqz, sos2zpk, sosfilt, sosfreqz
 from scipy.spatial.distance import cdist
 from slope2noise.rooms import RoomGeometry
 from slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering, schroeder_backward_int
@@ -419,11 +419,12 @@ def plot_subband_edc(h_true: ArrayLike,
     crop_end_samp = ms_to_samps(crop_end_ms, fs)
 
     trunc_true_ir = h_true[mixing_time_samp:-crop_end_samp]
-    filtered_true_ir = octave_filtering(trunc_true_ir,
-                                        fs,
-                                        band_centre_hz,
-                                        compensate_filter_energy=True,
-                                        use_pyfar_filterbank=True)
+    filtered_true_ir = octave_filtering(
+        trunc_true_ir,
+        fs,
+        band_centre_hz,
+        compensate_filter_energy=True,
+    )
     time = np.linspace(0, (len(trunc_true_ir) - 1) / fs, len(trunc_true_ir))
 
     num_bands = len(band_centre_hz)
@@ -437,11 +438,12 @@ def plot_subband_edc(h_true: ArrayLike,
         approx_ir = h_approx[epoch]
         trunc_approx_ir = approx_ir[mixing_time_samp:mixing_time_samp +
                                     len(trunc_true_ir)]
-        filtered_approx_ir = octave_filtering(trunc_approx_ir,
-                                              fs,
-                                              band_centre_hz,
-                                              compensate_filter_energy=True,
-                                              use_pyfar_filterbank=True)
+        filtered_approx_ir = octave_filtering(
+            trunc_approx_ir,
+            fs,
+            band_centre_hz,
+            compensate_filter_energy=True,
+        )
         leg.append(f'Epoch = {epoch}')
 
         for k in range(num_bands):
@@ -464,6 +466,7 @@ def plot_subband_edc(h_true: ArrayLike,
         display.display(fig)  # Display the updated figure
         display.clear_output(
             wait=True)  # Clear the previous output to keep updates in place
+        plt.pause(0.1)
 
     # Collect handles and labels from all axes
     handles, labels = [], []
@@ -666,13 +669,13 @@ def plot_edc_error_in_space(
                 room_data.sample_rate,
                 room_data.band_centre_hz,
                 compensate_filter_energy=True,
-                use_pyfar_filterbank=True)
+            )
             cur_est_rirs_filtered = octave_filtering(
                 cur_est_rirs,
                 room_data.sample_rate,
                 room_data.band_centre_hz,
                 compensate_filter_energy=True,
-                use_pyfar_filterbank=True)
+            )
             save_name = f'{save_path}_{freq_to_plot / 1000: .0f}kHz\
             _src=({cur_src_pos[0]:.2f}, {cur_src_pos[1]:.2f}, {cur_src_pos[2]:.2f})'
 
@@ -896,11 +899,12 @@ def plot_amps_in_space(room_data: RoomDataset,
 
         # do subband filtering
         if is_in_subbands:
-            est_rirs_filtered = octave_filtering(est_rirs,
-                                                 room_data.sample_rate,
-                                                 room_data.band_centre_hz,
-                                                 compensate_filter_energy=True,
-                                                 use_pyfar_filterbank=True)
+            est_rirs_filtered = octave_filtering(
+                est_rirs,
+                room_data.sample_rate,
+                room_data.band_centre_hz,
+                compensate_filter_energy=True,
+            )
             t_vals_expanded = np.tile(
                 np.squeeze(t_vals)[np.newaxis, ...], (num_est_rirs, 1, 1))
             band_centre_hz = room_data.band_centre_hz
@@ -1060,6 +1064,11 @@ def plot_learned_svf_response(
             opt_svf_params = svf_params
 
         # loop over groups
+        ir_len = 2 * fs
+        ir = np.zeros((ir_len, num_groups))
+        impulse = np.zeros(ir_len)
+
+        impulse[0] = 1.0
         for n in range(num_groups):
             cur_biquad_coeffs = opt_output_biquad_coeffs[n]
             num_biquads = cur_biquad_coeffs.shape[0]
@@ -1071,6 +1080,8 @@ def plot_learned_svf_response(
             freqs, filt_response = sosfreqz(cur_biquad_coeffs,
                                             worN=2**9,
                                             fs=fs)
+
+            # plot magnitude response
             ax[n].semilogx(freqs,
                            db(filt_response),
                            label=f'Group {n}, epoch {i}')
@@ -1087,27 +1098,36 @@ def plot_learned_svf_response(
                         label=f'Group {n}, epoch {i}')
 
             if verbose:
-
-                # print the theoretical poles and zeros
-                cur_svf_params = opt_svf_params[n, ...]
-                svf_res = cur_svf_params[:, 0]
-                svf_gain = cur_svf_params[:, 1]
-                pole_radius = np.sqrt(
-                    (1 - svf_freqs**2)**2 + 4 * (svf_freqs**2) *
-                    (1 - svf_res**2)) / (svf_freqs**2 + 1 +
-                                         2 * svf_freqs * svf_res)
-                pole_freqs = np.atan2(2 * svf_freqs * np.sqrt(1 - svf_res**2),
-                                      (1 - svf_freqs**2))
-
-                print(f'Pole frequencies (exp): {pole_freqs / np.pi * fs / 2}')
-                print(
-                    f'Pole frequencies (est): {np.angle(poles[np.angle(poles) > 0]) / np.pi * fs / 2}'
+                # energy of the filters
+                ir[:, n] = sosfilt(cur_biquad_coeffs, impulse)
+                logger.info(
+                    f'Energy of the filters for {n+1} group is {np.sqrt(np.sum(np.power(ir[:, n], 2))):.3f}'
                 )
-                print(f'Pole radius (exp): {pole_radius}')
-                print(f'Pole radius (est): {np.abs(poles)}')
 
-                print(f'SVF gain: {db2lin(svf_gain)}')
-                print(f'SVF Q factor: {svf_res}')
+                if opt_svf_params is not None:
+                    # print the theoretical poles and zeros
+                    cur_svf_params = opt_svf_params[n, ...]
+                    svf_res = cur_svf_params[:, 0]
+                    svf_gain = cur_svf_params[:, 1]
+                    pole_radius = np.sqrt(
+                        (1 - svf_freqs**2)**2 + 4 * (svf_freqs**2) *
+                        (1 - svf_res**2)) / (svf_freqs**2 + 1 +
+                                             2 * svf_freqs * svf_res)
+                    pole_freqs = np.atan2(
+                        2 * svf_freqs * np.sqrt(1 - svf_res**2),
+                        (1 - svf_freqs**2))
+
+                    print(
+                        f'Pole frequencies (exp): {pole_freqs / np.pi * fs / 2}'
+                    )
+                    print(
+                        f'Pole frequencies (est): {np.angle(poles[np.angle(poles) > 0]) / np.pi * fs / 2}'
+                    )
+                    print(f'Pole radius (exp): {pole_radius}')
+                    print(f'Pole radius (est): {np.abs(poles)}')
+
+                    print(f'SVF gain: {db2lin(svf_gain)}')
+                    print(f'SVF Q factor: {svf_res}')
 
     # set axis labels
     ax[0].legend(loc='upper right', bbox_to_anchor=(1.5, 1.0))

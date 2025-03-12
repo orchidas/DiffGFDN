@@ -6,6 +6,8 @@ from typing import Dict, Optional, Tuple
 from loguru import logger
 import numpy as np
 import pyfar as pf
+from scipy.fft import rfftfreq
+from scipy.signal import sosfreqz
 import torch
 from torch.utils.data import DataLoader
 import torchaudio
@@ -39,19 +41,7 @@ class Trainer:
         self.subband_process_config = trainer_config.subband_process_config
 
         if self.subband_process_config is not None:
-            subband_filters, subband_freqs = pf.dsp.filter.reconstructing_fractional_octave_bands(
-                None,
-                num_fractions=self.subband_process_config.num_fraction_octaves,
-                frequency_range=self.subband_process_config.frequency_range,
-                sampling_rate=self.net.sample_rate,
-            )
-            subband_filter_idx = np.argmin(
-                np.abs(subband_freqs -
-                       self.subband_process_config.centre_frequency))
-            subband_filter = torch.tensor(
-                subband_filters.coefficients[subband_filter_idx])
-            self.subband_filter_freq_resp = torch.fft.rfft(
-                subband_filter, n=trainer_config.num_freq_bins)
+            self.init_subband_filters(trainer_config)
 
         self.init_scheduler(trainer_config)
 
@@ -100,6 +90,44 @@ class Trainer:
                 trainer_config.spectral_loss_weight,
                 trainer_config.sparsity_loss_weight
             ])
+
+    def init_subband_filters(self, trainer_config: TrainerConfig):
+        """Initialise subband filters, if they are being used"""
+        if self.subband_process_config.use_amp_preserving_filterbank:
+            subband_filters, subband_freqs = pf.dsp.filter.reconstructing_fractional_octave_bands(
+                None,
+                num_fractions=self.subband_process_config.num_fraction_octaves,
+                frequency_range=self.subband_process_config.frequency_range,
+                sampling_rate=self.net.sample_rate,
+            )
+            subband_filter_idx = np.argmin(
+                np.abs(subband_freqs -
+                       self.subband_process_config.centre_frequency))
+            subband_filter = torch.tensor(
+                subband_filters.coefficients[subband_filter_idx])
+            self.subband_filter_freq_resp = torch.fft.rfft(
+                subband_filter, n=trainer_config.num_freq_bins)
+        else:
+            subband_filters = pf.dsp.filter.fractional_octave_bands(
+                None,
+                num_fractions=self.subband_process_config.num_fraction_octaves,
+                frequency_range=self.subband_process_config.frequency_range,
+                sampling_rate=self.net.sample_rate,
+            )
+            subband_freqs, _ = pf.dsp.filter.fractional_octave_frequencies(
+                num_fractions=self.subband_process_config.num_fraction_octaves,
+                frequency_range=self.subband_process_config.frequency_range,
+            )
+
+            subband_filter_idx = np.argmin(
+                np.abs(subband_freqs -
+                       self.subband_process_config.centre_frequency))
+            freqs_hz = rfftfreq(trainer_config.num_freq_bins,
+                                d=1.0 / self.net.sample_rate)
+            _, self.subband_filter_freq_resp = torch.tensor(
+                sosfreqz(subband_filters.coefficients[subband_filter_idx, ...],
+                         freqs_hz,
+                         fs=float(self.net.sample_rate)))
 
     def init_scheduler(self, trainer_config: TrainerConfig):
         """
@@ -288,10 +316,19 @@ class VarReceiverPosTrainer(Trainer):
             # training
             epoch_loss = 0.0
             all_loss = {}
+
+            if self.net.use_svf_in_output:
+                # normalise b, c at each epoch (but only once)
+                # if a full-band GFDN is trained
+                data = next(iter(train_dataset))
+                self.normalize(data)
+
             for data in train_dataset:
                 # normalise b, c at each training step to ensure the sub-FDNs have
                 # unit energy
-                self.normalize(data)
+                if not self.net.use_svf_in_output:
+                    self.normalize(data)
+
                 cur_loss, cur_all_loss = self.train_step(data)
                 epoch_loss += cur_loss
 
@@ -413,7 +450,6 @@ class VarReceiverPosTrainer(Trainer):
         net_valid_loss = total_loss / len(valid_dataset)
         logger.info(f"The net validation loss is {net_valid_loss:.4f}")
 
-    # @torch.no_grad()
     def normalize(self, data: Dict):
         # average energy normalization - this normalises the energy
         # of each of the sub-FDNs to be unity

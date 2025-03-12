@@ -417,8 +417,9 @@ class DiffGFDNVarSourceReceiverPos(DiffGFDN):
         H = torch.einsum('bmk, bmk -> bk', Htemp, B) + direct_filter
 
         # pass through a lowpass filter
-        # lowpass_response = self.lowpass_filter(z, self.lowpass_biquad)
-        # H_lp = H * lowpass_response
+        # if self.use_svf_in_output or self.use_svf_in_input:
+        #     lowpass_response = self.lowpass_filter(z, self.lowpass_biquad)
+        #     H_lp = H * lowpass_response
 
         if self.use_colorless_loss:
             H_sub_fdn = super().sub_fdn_output(z)
