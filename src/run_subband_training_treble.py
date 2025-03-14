@@ -8,7 +8,7 @@ from loguru import logger
 import numpy as np
 import pandas as pd
 import pyfar as pf
-from scipy.signal import fftconvolve, sosfilt
+from scipy.signal import fftconvolve, sosfiltfilt
 import soundfile as sf
 import torch
 import yaml
@@ -78,14 +78,16 @@ def create_config(
             'use_colorless_loss': True,
             'use_asym_spectral_loss': True,
             'train_dir':
-            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays/',
+            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays'\
+            + '_energy_preserve_filterbank/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays/',
+            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays'\
+            + '_energy_preserve_filterbank/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
                 'frequency_range': freq_range,
-                'use_amp_preserve_filterbank': False,
+                'use_amp_preserving_filterbank': False,
             },
         },
         # 'colorless_fdn_config': {
@@ -110,7 +112,7 @@ def create_config(
     if write_config:
         logger.info("Writing to config file")
         cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz'\
-        + '_colorless_diff_delays.yml'
+        + '_colorless_loss_diff_delays_energy_preserve_filterbank.yml'
         with open(cur_config_path, "w", encoding="utf-8") as file:
             yaml.safe_dump(config_dict, file, default_flow_style=False)
 
@@ -271,7 +273,7 @@ def inferencing(
                             subband_filters.coefficients[k, :],
                             mode='same')
                     else:
-                        cur_rir_filtered = sosfilt(
+                        cur_rir_filtered = sosfiltfilt(
                             subband_filters.coefficients[k, ...], cur_rir)
 
                     # save filtered RIRs
@@ -362,10 +364,10 @@ def main(freqs_list_train: Optional[List] = None):
     # inferencing
     if training_complete:
         save_filename = Path(
-            'output/treble_data_grid_training_final_rirs_colorless_loss_diff_delays.pkl'
+            'output/treble_data_grid_training_final_rirs_colorless_loss_diff_delays_energy_preserve_filterbank.pkl'
         ).resolve()
         output_path = Path(
-            "audio/grid_rir_treble_subband_processing_colorless_loss_diff_delays"
+            "audio/grid_rir_treble_subband_processing_colorless_loss_diff_delays_energy_preserve_filterbank"
         )
 
         inferencing(freqs_list, config_dicts, save_filename, output_path)

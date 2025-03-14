@@ -134,7 +134,7 @@ class RIRData:
     @property
     def freq_bins_rad(self):
         """Frequency bins in radians"""
-        return rfftfreq(self.num_freq_bins)
+        return rfftfreq(self.num_freq_bins) * 2 * np.pi
 
     @property
     def freq_bins_hz(self):
@@ -271,7 +271,7 @@ class RoomDataset(ABC):
     @property
     def freq_bins_rad(self):
         """Frequency bins in radians"""
-        return rfftfreq(self.num_freq_bins)
+        return rfftfreq(self.num_freq_bins) * 2 * np.pi
 
     @property
     def freq_bins_hz(self):

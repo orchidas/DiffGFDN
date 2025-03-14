@@ -1,8 +1,10 @@
 from typing import Dict, List, Optional, Union
 
 from loguru import logger
+import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+from scipy.fft import rfft
 import torch
 from torch import nn
 import torchaudio.functional as Faudio
@@ -349,3 +351,62 @@ def normalised_echo_density(rir: NDArray,
 
     ned = output[:-window_length_frames]
     return ned
+
+
+def get_time_reversed_fir_filterbank(
+        h: NDArray,
+        freq_bins_rad: ArrayLike,
+        num_freq_bins: int,
+        plot: bool = False,
+        freq_labels: Optional[List] = None) -> NDArray:
+    """
+    Time reverse an FIR filterbank according to flip{H}_k(z) = H_k(z^{-1)) / sum_i H_i(z) H_i(z^{-1})
+    Args:
+        h : FIR filter coefficients of size num_bands x num_coeffs
+        freq_bins_rad: the frequency bins in radians for which the response will be calculated
+        num_freq_bins: number of points for FFT
+        plot: whether to plot the response or not
+        freq_labels: the labels of the different frequency bands
+    Returns:
+        h_time_rev: frequency response of time reversed FIR filter
+    """
+    num_bands, num_coeffs = h.shape
+    num = np.conj(rfft(h, n=num_freq_bins, axis=-1))
+    norm_factor = np.zeros((num_bands, len(freq_bins_rad)), dtype=np.float64)
+    # calculate normalising factor
+    for b_idx in range(num_bands):
+        cur_h = h[b_idx, :]
+
+        # Compute autocorrelation (sum_coeffs for all k at once)
+        sum_coeffs = np.array([
+            np.dot(cur_h[:num_coeffs - k], cur_h[k:])
+            for k in range(num_coeffs)
+        ])
+        # the first term should not have 2*cos
+        # sum_coeffs[0] /= 2
+
+        # Compute cosine modulation for all k at once and sum over k
+        norm_factor[b_idx, :] = 2 * np.sum(sum_coeffs[:, None] * np.cos(
+            np.arange(num_coeffs)[:, None] * freq_bins_rad),
+                                           axis=0)
+
+    h_time_rev = num / np.sum(norm_factor, axis=0)
+    if plot:
+        fig, ax = plt.subplots(3, 1)
+        ax[0].semilogx(
+            freq_bins_rad,
+            db(rfft(h, n=num_freq_bins, axis=-1)).T,
+            label=[f"{freq_labels[k]} Hz" for k in range(len(freq_labels))])
+        ax[0].set_title('Original mag response')
+        ax[0].legend()
+        ax[1].semilogx(freq_bins_rad, db(norm_factor).T)
+        ax[1].set_title('Denominator mag response')
+        ax[2].semilogx(
+            freq_bins_rad,
+            db(h_time_rev).T,
+            label=[f"{freq_labels[k]} Hz" for k in range(len(freq_labels))])
+        ax[2].set_title('Time reversed mag response')
+        fig.suptitle('Time reversed FIR filterbank')
+        plt.show()
+
+    return h_time_rev

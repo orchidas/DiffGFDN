@@ -402,7 +402,8 @@ def plot_subband_edc(h_true: ArrayLike,
                      pos_to_investigate: List,
                      mixing_time_ms: float = 20.0,
                      crop_end_ms: float = 5.0,
-                     save_path: Optional[str] = None):
+                     save_path: Optional[str] = None,
+                     use_amp_preserving_filterbank: bool = False):
     """
     Plot true and synthesised EDC curves for each frequency band, as a function of epoch number
     Args:
@@ -424,6 +425,7 @@ def plot_subband_edc(h_true: ArrayLike,
         fs,
         band_centre_hz,
         compensate_filter_energy=True,
+        use_amp_preserving_filterbank=use_amp_preserving_filterbank,
     )
     time = np.linspace(0, (len(trunc_true_ir) - 1) / fs, len(trunc_true_ir))
 
@@ -443,7 +445,7 @@ def plot_subband_edc(h_true: ArrayLike,
             fs,
             band_centre_hz,
             compensate_filter_energy=True,
-        )
+            use_amp_preserving_filterbank=use_amp_preserving_filterbank)
         leg.append(f'Epoch = {epoch}')
 
         for k in range(num_bands):
@@ -587,6 +589,7 @@ def plot_edc_error_in_space(
     save_path: Optional[str] = None,
     pos_sorted: bool = False,
     norm_edc: bool = False,
+    use_amp_preserving_filterbank: bool = False,
 ):
     """
     Plot the EDC matching error in dB as a function of spatial location
@@ -669,13 +672,13 @@ def plot_edc_error_in_space(
                 room_data.sample_rate,
                 room_data.band_centre_hz,
                 compensate_filter_energy=True,
-            )
+                use_amp_preserving_filterbank=use_amp_preserving_filterbank)
             cur_est_rirs_filtered = octave_filtering(
                 cur_est_rirs,
                 room_data.sample_rate,
                 room_data.band_centre_hz,
                 compensate_filter_energy=True,
-            )
+                use_amp_preserving_filterbank=use_amp_preserving_filterbank)
             save_name = f'{save_path}_{freq_to_plot / 1000: .0f}kHz\
             _src=({cur_src_pos[0]:.2f}, {cur_src_pos[1]:.2f}, {cur_src_pos[2]:.2f})'
 
@@ -835,7 +838,8 @@ def plot_amps_in_space(room_data: RoomDataset,
                        save_path: Optional[str] = None,
                        pos_sorted: bool = False,
                        plot_original_amps: bool = True,
-                       plot_amp_error: bool = True):
+                       plot_amp_error: bool = True,
+                       use_amp_preserving_filterbank: bool = False):
     """
     Plot the amplitudes as a function of spatial location at frequency 'freq_to_plot' Hz
     Args:
@@ -904,7 +908,7 @@ def plot_amps_in_space(room_data: RoomDataset,
                 room_data.sample_rate,
                 room_data.band_centre_hz,
                 compensate_filter_energy=True,
-            )
+                use_amp_preserving_filterbank=use_amp_preserving_filterbank)
             t_vals_expanded = np.tile(
                 np.squeeze(t_vals)[np.newaxis, ...], (num_est_rirs, 1, 1))
             band_centre_hz = room_data.band_centre_hz

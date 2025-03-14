@@ -94,6 +94,7 @@ class Trainer:
     def init_subband_filters(self, trainer_config: TrainerConfig):
         """Initialise subband filters, if they are being used"""
         if self.subband_process_config.use_amp_preserving_filterbank:
+            logger.info("Using amplitude preserving FIR filterbank")
             subband_filters, subband_freqs = pf.dsp.filter.reconstructing_fractional_octave_bands(
                 None,
                 num_fractions=self.subband_process_config.num_fraction_octaves,
@@ -108,6 +109,7 @@ class Trainer:
             self.subband_filter_freq_resp = torch.fft.rfft(
                 subband_filter, n=trainer_config.num_freq_bins)
         else:
+            logger.info("Using energy preserving Butterworth filterbank")
             subband_filters = pf.dsp.filter.fractional_octave_bands(
                 None,
                 num_fractions=self.subband_process_config.num_fraction_octaves,
