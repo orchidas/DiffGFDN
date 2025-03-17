@@ -546,7 +546,7 @@ class MultiRIRDataset(data.Dataset):
         if new_sampling_radius in (1.0, None):
             # this ensures that we cover half the unit circle (other half is symmetric)
             self.z_values = torch.polar(torch.ones_like(freq_bins_rad),
-                                        freq_bins_rad * 2 * np.pi)
+                                        freq_bins_rad)
         else:
             assert new_sampling_radius > 1.0
             logger.info(
@@ -555,7 +555,7 @@ class MultiRIRDataset(data.Dataset):
             # sample outside the unit circle
             self.z_values = torch.polar(
                 new_sampling_radius * torch.ones_like(freq_bins_rad),
-                freq_bins_rad * 2 * np.pi)
+                freq_bins_rad)
 
         self.rir_mag_response = torch.tensor(room_data.rir_mag_response)
         self.late_rir_mag_response = torch.tensor(
@@ -621,7 +621,7 @@ class SingleRIRDataset(data.Dataset):
         if new_sampling_radius in (1.0, None):
             # this ensures that we cover half the unit circle (other half is symmetric)
             self.z_values = torch.polar(torch.ones_like(freq_bins_rad),
-                                        freq_bins_rad * 2 * np.pi)
+                                        freq_bins_rad)
         else:
             assert new_sampling_radius > 1.0
             logger.info(
@@ -630,7 +630,7 @@ class SingleRIRDataset(data.Dataset):
             # sample outside the unit circle
             self.z_values = torch.polar(
                 new_sampling_radius * torch.ones_like(freq_bins_rad),
-                freq_bins_rad * 2 * np.pi)
+                freq_bins_rad)
 
         self.rir_mag_response = torch.tensor(rir_data.rir_mag_response)
         self.late_rir_mag_response = torch.tensor(

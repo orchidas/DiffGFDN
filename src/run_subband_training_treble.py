@@ -78,16 +78,14 @@ def create_config(
             'use_colorless_loss': True,
             'use_asym_spectral_loss': True,
             'train_dir':
-            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays'\
-            + '_energy_preserve_filterbank/',
+            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays'\
-            + '_energy_preserve_filterbank/',
+            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
                 'frequency_range': freq_range,
-                'use_amp_preserving_filterbank': False,
+                'use_amp_preserving_filterbank': True,
             },
         },
         # 'colorless_fdn_config': {
@@ -112,7 +110,7 @@ def create_config(
     if write_config:
         logger.info("Writing to config file")
         cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz'\
-        + '_colorless_loss_diff_delays_energy_preserve_filterbank.yml'
+        + '_colorless_loss_diff_delays.yml'
         with open(cur_config_path, "w", encoding="utf-8") as file:
             yaml.safe_dump(config_dict, file, default_flow_style=False)
 
@@ -340,7 +338,7 @@ def main(freqs_list_train: Optional[List] = None):
     training_complete = freqs_list_train is None
 
     for k in range(len(freqs_list)):
-        cur_data_path = f'{data_path}/srirs_band_centre={freqs_list[k]}Hz_energy_preserve.pkl'
+        cur_data_path = f'{data_path}/srirs_band_centre={freqs_list[k]}Hz.pkl'
 
         # generate config file
         config_dict = create_config(freqs_list[k],
@@ -364,10 +362,10 @@ def main(freqs_list_train: Optional[List] = None):
     # inferencing
     if training_complete:
         save_filename = Path(
-            'output/treble_data_grid_training_final_rirs_colorless_loss_diff_delays_energy_preserve_filterbank.pkl'
+            'output/treble_data_grid_training_final_rirs_colorless_loss_diff_delays.pkl'
         ).resolve()
         output_path = Path(
-            "audio/grid_rir_treble_subband_processing_colorless_loss_diff_delays_energy_preserve_filterbank"
+            "audio/grid_rir_treble_subband_processing_colorless_loss_diff_delays"
         )
 
         inferencing(freqs_list, config_dicts, save_filename, output_path)

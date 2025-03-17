@@ -4,10 +4,12 @@ from loguru import logger
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from scipy.fft import rfft
+from scipy.fft import irfft, rfft, rfftfreq
 import torch
 from torch import nn
 import torchaudio.functional as Faudio
+
+# pylint: disable=E1126
 
 
 def db(x: Union[ArrayLike, torch.tensor],
@@ -368,7 +370,7 @@ def get_time_reversed_fir_filterbank(
         plot: whether to plot the response or not
         freq_labels: the labels of the different frequency bands
     Returns:
-        h_time_rev: frequency response of time reversed FIR filter
+        h_time_rev: frequency response of time reversed FIR filter, of shape num_bands x num_freq_bins
     """
     num_bands, num_coeffs = h.shape
     num = np.conj(rfft(h, n=num_freq_bins, axis=-1))
@@ -410,3 +412,54 @@ def get_time_reversed_fir_filterbank(
         plt.show()
 
     return h_time_rev
+
+
+def time_reversed_filtering(
+        input_signal: NDArray,
+        subband_filters: NDArray,
+        time_axis: int = 0,
+        plot: bool = False,
+        freq_labels: Optional[List[int]] = None) -> NDArray:
+    """
+    Time reversed filtering of the input_signal with the time-reversed version of subband_filters.
+    Ensure linear convolution instead of circular convolution by zero padding both signals
+    Args:
+        input_signal (ArrayLike): input signal in the time domain, of size num_samps x num_chans
+        subband_filters (NDArray): FIR filterbank coefficients of shape (num_bands, num_coeffs)
+        time_axis (int): time axis in the input signal
+        plot (bool): whether to plot the time reversed filter response
+        freq_labels (List[int]): centre frequencies of the filterbank
+    Returns:
+        NDArray: time domain filtered signal of shape (ir_len, num_bands)
+    """
+    ir_len = input_signal.shape[time_axis]
+    fft_size = 2**np.ceil(np.log2(ir_len)).astype(
+        np.int32) + subband_filters.shape[-1] - 1
+    freq_bins_rad = rfftfreq(fft_size) * 2 * np.pi
+
+    time_rev_filterbank_resp = get_time_reversed_fir_filterbank(
+        subband_filters,
+        freq_bins_rad,
+        fft_size,
+        plot=plot,
+        freq_labels=freq_labels)
+    input_signal_resp = rfft(input_signal, n=fft_size, axis=time_axis)
+
+    # Expand signal freq response for broadcasting
+    if input_signal.ndim == 1:
+        input_signal_resp = input_signal_resp[:, np.newaxis]
+
+    # Element-wise multiply each band’s response
+    filtered_signal_time_rev_freq_resp = np.einsum('bk, kn -> bkn',
+                                                   time_rev_filterbank_resp,
+                                                   input_signal_resp)
+    # shape: (num_freq_bins, num_chans, num_bands)
+    filtered_signal_time_rev_freq_resp = filtered_signal_time_rev_freq_resp.transpose(
+        1, -1, 0)
+
+    # Time-domain signals per band
+    filtered_signal_time_rev = irfft(
+        filtered_signal_time_rev_freq_resp, n=fft_size,
+        axis=0)[:ir_len, ...]  # shape: (ir_len, num_chans, num_bands)
+
+    return filtered_signal_time_rev
