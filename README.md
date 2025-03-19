@@ -44,7 +44,7 @@ Several different model configurations can be trained (see [config.py](.src/diff
 
 ## Model architecture
 
-!["Differentiable GFDN architecture"](./notes/diffGFDN_colorless_FDN.png)
+<img src="./notes/diffGFDN_colorless_FDN.png" alt="Differentiable GFDN architecture" width="400">
 
 - The network is trained with the frequency-sampling method to make it differentiable.
 - The delay line lengths, $\mathbf{m}_i$, are co-prime and fixed, and the absorption gains/filters, $\mathbf{\gamma}_i(z)$, are derived from the common decay times of the RIRs [4].
@@ -59,7 +59,7 @@ A(z) &=
 \begin{bmatrix}
 \mathbf{M_1} & \mathbf{0} & \ldots & \mathbf{0} \\
 \mathbf{0} &  \mathbf{M_2} & \ldots & \mathbf{0} \\
-\vdots & \vdots & \ddots & \vdots
+\vdots & \vdots & \ddots & \vdots \\
 \mathbf{0} & \mathbf{0} & \ldots & \mathbf{M}_{N_{group}}
 \end{bmatrix} \\
  &\mathbf{M_i}^H \mathbf{M_i} = \mathbf{I}
@@ -81,6 +81,23 @@ To match a desired impulse response at a source-receiver location $H_{ij}(z)$, w
 ``` math
 \begin{align*}
 \text{EDR}(k, m) &= 10 \log_{10} \left(\sum_{\tau=m}^M |H_{ij}(k, \tau) |^2 \right) \\
-\text{EDR}_{\text{loss}} &= \frac{ \sum_k \sum_m |EDR_{H_{ij}}(k, m) - EDR_{\hat{H}_{ij}}(k, m)|}{\sum_k \sum_m |EDR_{H_{ij}}(k, m)|}
+\mathcal{L}_{\text{EDR}} &= \frac{ \sum_k \sum_m |EDR_{H_{ij}}(k, m) - EDR_{\hat{H}_{ij}}(k, m)|}{\sum_k \sum_m |EDR_{H_{ij}}(k, m)|}
+\end{align*}
+```
+
+We also include an energy decay curve (EDC) matching loss, given by,
+
+```math
+\begin{align*}
+\text{EDC}(t) &= 10 \log_{10} \left(\sum_{l=t}^T h_{ij}(l)) \\
+\mathcal{L}_{\text{EDC}} &= \frac{1}{T} \sum_{t=1}^T \left| \text{EDC}_{H_{ij}}(t) - \text{EDC}_{\hat{H}_{ij}}(t) \right| 
+\end{align*}
+```
+
+To ensure that the GFDN is colourless, and has sufficient echo density, we also include spectral and colouration losses, given by:
+```math
+\begin{align*}
+\mathcal{L}_{\text{spectral}} &=\sum_{i=1}^{N_{group}} \frac{1}{K} \sum_{k=1}^K \left( |\mathbf{c}_i^T (D_{\mathbf{m}_i}}(z_k^{-1}) - \mathbf{M}_i)^{-1} \mathbf{b}_i |^2 - 1 \right), \qquad z_k = e^{j\omega_k} \\
+\mathcal{L}_{\text{sparsity}} &= \sum_{i=1}^{N_{group}} \frac{N_{del} \sqrt{N_{del}} - \sum_{m,n}|\mathbf{M}_i(m,n)|}{N_{del}\sqrt{N_{del}} - 1}
 \end{align*}
 ```
