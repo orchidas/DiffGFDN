@@ -44,7 +44,9 @@ Several different model configurations can be trained (see [config.py](.src/diff
 
 ## Model architecture
 
-<img src="./notes/diffGFDN_colorless_FDN.png" alt="Differentiable GFDN architecture" width="400">
+<div align="center">
+<img src="./notes/diffGFDN_colorless_FDN.png" alt="Differentiable GFDN architecture" width="500">
+</div>
 
 - The network is trained with the frequency-sampling method to make it differentiable.
 - The delay line lengths, $\mathbf{m}_i$, are co-prime and fixed, and the absorption gains/filters, $\mathbf{\gamma}_i(z)$, are derived from the common decay times of the RIRs [4].
@@ -89,7 +91,7 @@ We also include an energy decay curve (EDC) matching loss, given by,
 
 ```math
 \begin{align*}
-\text{EDC}(t) &= 10 \log_{10} \left(\sum_{l=t}^T h_{ij}(l)) \\
+\text{EDC}(t) &= 10 \log_{10} \left(\sum_{l=t}^T h_{ij}(l) \right) \\
 \mathcal{L}_{\text{EDC}} &= \frac{1}{T} \sum_{t=1}^T \left| \text{EDC}_{H_{ij}}(t) - \text{EDC}_{\hat{H}_{ij}}(t) \right| 
 \end{align*}
 ```
@@ -97,7 +99,7 @@ We also include an energy decay curve (EDC) matching loss, given by,
 To ensure that the GFDN is colourless, and has sufficient echo density, we also include spectral and colouration losses, given by:
 ```math
 \begin{align*}
-\mathcal{L}_{\text{spectral}} &=\sum_{i=1}^{N_{group}} \frac{1}{K} \sum_{k=1}^K \left( |\mathbf{c}_i^T (D_{\mathbf{m}_i}}(z_k^{-1}) - \mathbf{M}_i)^{-1} \mathbf{b}_i |^2 - 1 \right), \qquad z_k = e^{j\omega_k} \\
+\mathcal{L}_{\text{spectral}} &=\sum_{i=1}^{N_{group}} \frac{1}{K} \sum_{k=1}^K \left( |\mathbf{c}_i^T (D_{\mathbf{m}_i}(z_k^{-1}) - \mathbf{M}_i)^{-1} \mathbf{b}_i |^2 - 1 \right), \qquad z_k = e^{j\omega_k} \\
 \mathcal{L}_{\text{sparsity}} &= \sum_{i=1}^{N_{group}} \frac{N_{del} \sqrt{N_{del}} - \sum_{m,n}|\mathbf{M}_i(m,n)|}{N_{del}\sqrt{N_{del}} - 1}
 \end{align*}
 ```
