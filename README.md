@@ -77,11 +77,11 @@ where $\exp$ denotes the matrix exponential, and $\mathbf{W}_{i_\text{Tr}}$ is t
 - The input-output gains, $\mathbf{b, c}, \in \mathbb{R}^{N \times 1}$ are also learned during training.
 - The transfer function of the DiffGFDN for the $(p,q)$th source-receiver position is given by,
 ```math
-\begin{aligned*}
+\begin{align*}
 \hat{H}_{pq}(z) = \mathbf{c}_p^T(z) \left[\mathbf{D_m}^{-1}(z) \mathbf{\Gamma}^{-1}(z)- \mathbf{A}\right]^{-1} \mathbf{b}_q(z) + d(z), \\
 \mathbf{c}_p(z) &= \mathbf{c} \odot (\mathbf{g_i}_p(z) \otimes \mathbb{1}), \qquad \mathbf{b}_q(z) &= \mathbf{b} \odot (\mathbf{g_q}_j(z) \otimes \mathbb{1}) \\
 \mathbf{D_m}(z) &= \text{diag} \left(z^{-m_1}, \ldots, z^{-m_N} \right)
-\end{aligned*}
+\end{align*}
 ```
 
 ### Loss function
