@@ -1,12 +1,12 @@
 # Differentiable Grouped Feedback Delay Networks
 
 We proposed the Grouped Feedback Delay Network [1-3] to model multi-slope decay in late reverberation, which is commonly observed in coupled rooms and rooms with non-uniform absorption.
-While the network is highly parameterised, it is still tricky to model a measured space by tuning its parameters [2]. In this work, we automatically learn the parameters of the GFDN to model
-a measured coupled space. The network input and output filters are assumed to be functions of the source and listener positions, which determine the net perceived late reverberation in coupled spaces; for example: a receiver in the more reverberant space and a source in the less reverberant space will lead to two-stage decay with a fast early decay and late slow decay. If we swap the source and the listener, the effect changes. To model this spatial distribution of the late tail, we train the input and output filters of the GFDN with deep learning. The coupled feedback matrix, on the other hand, is hypothesised to be a function of the room geometries, diffusion properties and coupling apertures, and is position-independent. This is also learnt during training with backpropagation.
+While the network is highly parameterised, it is still tricky to model a measured space by tuning its parameters. In this work, we automatically learn the parameters of the GFDN to model
+a measured coupled space. The network has source and receiver filters at its input and output which are functions of the source and listener positions. The source-listener filter parameters are learned using a Multi-Layer Perceptron which takes Fourier encoded spatial coordinates as input. The coupled feedback matrix, and input-output gains, on the other hand, determine the echo density profile and colouration of the network, and are position-independent. These are also learnt during training with backpropagation.
 
-The idea to use a dataset of RIRs measured in a coupled space to learn the spatial embeddings. Now, if we want to extrapolate the RIR at a new (unmeasured) position, we can do that with the
-Differentiable GFDN. More powerfully, we can parameterise the late reverberation in the entire space with this very efficient network which is ideal for real-time rendering. This not only
-reduces memory requirements of storing measured RIRs, but is also faster than convolution for long reverberation tails.
+A dataset of RIRs measured in a coupled space can be used to train the Differentiable GFDN. Now, if we want to extrapolate the RIR at a new (unmeasured) position, we can do that with the
+GFDN. More powerfully, we can parameterise the late reverberation in the entire space with this very efficient network which is ideal for real-time rendering. This not only
+reduces memory requirements of storing measured RIRs, but is also faster than convolution with long reverberation tails.
 
 ## Dataset
 We have been using the dataset published [here](https://zenodo.org/records/13338346) which has three coupled rooms simulated with Treble.
@@ -25,12 +25,15 @@ To work with the files that we have tested on, use `git lfs`.
 - Add and commit the file. Push it to origin.
 - To download files tracked with LFS, run `git lfs pull origin <branch_name>`
 
+To use an open-source dataset:
+- Upcoming, not implemented yet!
+
 ## Training
 
 - To set up the repo, follow the instructions in [CONTRIBUTING.md](CONTRIBUTING.md). 
-- To run training on a single receiver position, create a config file (example [here](./data/config/single_rir_fit_random_coupling_out_gains.yml)). 
-- To run training on a grid of receiver positions, create a different config file (example [here](./data/config/antialiasing_reg_loss_more_layers_random_coupling.yml)) 
-- Then run `python3 src/run_model.py -c <config_file_path>`. 
+- To run training on a single receiver position, create a config file (example [here](./data/config/single_rir_fit_broadband_two_stage_decay_colorless_prototype.yml)). 
+- To run training of a full-band GFDN a grid of receiver positions, create a different config file (example [here](./data/config/treble_data_grid_training_full_band_colorless_loss.yml)). Then run `python3 src/run_model.py -c <config_file_path>`. 
+- To run training with one DiffGFDN for each subband, filter the dataset into octave bands (see `src/convert_mat_to_pkl`), create config files for each band, and run the training for each config file. Alternately, see `python3 src/run_subband_training_treble.py`
 
 Several different model configurations can be trained (see [config.py](.src/diff_gfdn/config/config.py)). There are options for:
 - Training the output filters for a single position (with stochastic gradient descent), or for a grid of positions (with deep learning).
@@ -41,28 +44,35 @@ Several different model configurations can be trained (see [config.py](.src/diff
 
 ## Model architecture
 
-!["Differentiable GFDN architecture"](./notes/diffGFDN.png)
+!["Differentiable GFDN architecture"](./notes/diffGFDN_colorless_FDN.png)
 
 - The network is trained with the frequency-sampling method to make it differentiable.
-- We use an MLP to train the input and output filters of the DiffGFDN. The inputs into the MLP are either 1) $(x,y,z)$ spatial coordinates encoded with Fourier transformations OR 2) a 3D meshgrid of the space's geometry with a 4th dimension (one-hot vector) denoting where the source/receivers are located in the space. The input tensor size is $(B, L)$
-- The output of the MLP are state-variable filter (SVF) coefficients which are then converted into a cascade of biquad IIR filters. For a model with $N$ delay lines and $K_{\text{biquad}}$ cascaded biquads, the MLP should output a tensor of size $(B, N, K_{\text{biquad}}, 5)$.
-- The feedback matrix, $A(z)$ has a unique structure that is given by
+- The delay line lengths, $\mathbf{m}_i$, are co-prime and fixed, and the absorption gains/filters, $\mathbf{\gamma}_i(z)$, are derived from the common decay times of the RIRs [4].
+- We use an MLP to train the source and receiver filters, $\mathbf{g}_i(z), \mathbf{g}_o(z)$, of the DiffGFDN. The inputs into the MLP are $(x,y,z)$ spatial coordinates encoded with Fourier transformations.
+- The outputs of the MLPs are:
+	- For a single full-band GFDN: state-variable filter (SVF) resonances and gains which are then converted into a parametric equaliser (PEQ). The PEQ consists of a cascade of biquad filters with cutoff frequencies at octave bands.
+	- For a subband GFDN: scalar gains.
+- For a GFDN with $N$ delay lines, $N_{group}$ groups and $N_{del} = \frac{N}{N_{group}}$ delay lines per group, the block diagonal feedback matrix, $\mathbf{A} \in \mathbb{R}^{N \times N}$ is given by, 
 ``` math
 \begin{align*}
 A(z) &=
 \begin{bmatrix}
-\Phi_{11}(z) \mathbf{M_1}^2 & \Phi_{12}(z) \mathbf{M_1M_2} & \Phi_{13}(z) \mathbf{M_1M_3} \\ \Phi_{21}(z) \mathbf{M_2M_1} & \Phi_{22}(z) \mathbf{M_2}^2 &   \Phi_{23}(z) \mathbf{M_2M_3}\\
-\Phi_{31}(z) \mathbf{M_3M_1} &  \Phi_{32}(z) \mathbf{M_3M_2} & 
- \Phi_{33}(z) \mathbf{M_3}^2
+\mathbf{M_1} & \mathbf{0} & \ldots & \mathbf{0} \\
+\mathbf{0} &  \mathbf{M_2} & \ldots & \mathbf{0} \\
+\vdots & \vdots & \ddots & \vdots
+\mathbf{0} & \mathbf{0} & \ldots & \mathbf{M}_{N_{group}}
 \end{bmatrix} \\
- &\Phi(z) \Phi^H(z^{-1}) = \mathbf{I}, \quad \mathbf{M_i}^H \mathbf{M_i} = \mathbf{I}
+ &\mathbf{M_i}^H \mathbf{M_i} = \mathbf{I}
  \end{align*}
 ```
-where $\mathbf{M_i} \in \mathbb{R}^{N_\text{del} \times N_\text{del}}$ is the unitary mixing matix for each individual room, and $\Phi(z) \in \mathbb{R}^{N_\text{room} \times N_\text{room} \times p}$ is the paraunitary coupling matrix. The unitary matrices are represented as exponentiated skew symmetric matrices which are learnt during training, and the paraunitary matrix is constructed from degree-1 Householder reflections, given by
+where $\mathbf{M_i} \in \mathbb{R}^{N_\text{del} \times N_\text{del}}$ is the unitary mixing matix for each individual group. The unitary matrices are parameterised as,
 ```math
-\Phi(z) = \prod_{i=1}^p (\mathbf{I} - (1-z^{-1})) \mathbf{u_i u_i}^H, \quad s.t., \ \mathbf{u_i}^H \mathbf{u_i} = 1
-```
-where the $\mathbf{u_i}$'s are learnt during training.
+\begin{align*}
+\mathbf{M_i} = \exp \left(\mathbf{W}_{i_\text{Tr}} - \mathbf{W}_{i_{\text{Tr}}}^T \right),
+\end{align*}
+``` 
+where $\exp$ denotes the matrix exponential, and $\mathbf{W}_{i_\text{Tr}}$ is the upper triangular part of a real-positive matrix $\mathbf{W_i} \in \mathbb{R}^{N_{del} \times N_{del}}$, which is learned during training.
+- The input-output gains, $\mathbf{b, c}, \in \mathbb{R}^{N \times 1}$ are also learned during training.
 
 ### Loss function
 

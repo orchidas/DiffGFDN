@@ -315,43 +315,39 @@ def normalised_echo_density(rir: NDArray,
 
     # erfc(1/√2)
     ERFC = 0.3173
-    window_length_frames = ms_to_samps(window_length_ms, fs)
+    window_length_samps = ms_to_samps(window_length_ms, fs)
 
-    if not window_length_frames % 2:
-        window_length_frames += 1
-    half_window = int((window_length_frames - 1) / 2)
+    if not window_length_samps % 2:
+        window_length_samps += 1
+    half_window = int((window_length_samps - 1) / 2)
 
     padded_rir = np.zeros(len(rir) + 2 * half_window)
     padded_rir[half_window:-half_window] = rir
     output = np.zeros(len(rir) + 2 * half_window)
 
     if window_type == 'rect':
-        window_func = (1 /
-                       window_length_frames) * np.ones(window_length_frames)
+        window_func = np.ones(window_length_samps)
     elif window_type == 'hann':
-        window_func = np.hanning(window_length_frames)
-        window_func = window_func / sum(window_func)
+        window_func = np.hanning(window_length_samps)
     elif window_type == 'hamm':
-        window_func = np.hamming(window_length_frames)
-        window_func = window_func / sum(window_func)
-    elif window_type == 'blac':
-        window_func = np.blackman(window_length_frames)
-        window_func = window_func / sum(window_func)
+        window_func = np.hamming(window_length_samps)
+    elif window_type == 'black':
+        window_func = np.blackman(window_length_samps)
     elif window_type == 'bart':
-        window_func = np.bartlett(window_length_frames)
-        window_func = window_func / sum(window_func)
+        window_func = np.bartlett(window_length_samps)
     else:
         raise ValueError('Unavailable window type.')
+    window_func = window_func / sum(window_func)
 
     for cursor in range(len(rir)):
-        frame = padded_rir[cursor:cursor + window_length_frames]
+        frame = padded_rir[cursor:cursor + window_length_samps]
         std = weighted_std(frame, window_func, use_local_avg)
 
         count = ((np.abs(frame) > std) * window_func).sum()
 
         output[cursor] = (1 / ERFC) * count
 
-    ned = output[:-window_length_frames]
+    ned = output[:-window_length_samps]
     return ned
 
 
@@ -384,8 +380,6 @@ def get_time_reversed_fir_filterbank(
             np.dot(cur_h[:num_coeffs - k], cur_h[k:])
             for k in range(num_coeffs)
         ])
-        # the first term should not have 2*cos
-        # sum_coeffs[0] /= 2
 
         # Compute cosine modulation for all k at once and sum over k
         norm_factor[b_idx, :] = 2 * np.sum(sum_coeffs[:, None] * np.cos(

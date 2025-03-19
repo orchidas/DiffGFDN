@@ -19,7 +19,7 @@ from diff_gfdn.dataloader import load_dataset, ThreeRoomDataset
 from diff_gfdn.model import DiffGFDNVarReceiverPos
 from diff_gfdn.solver import run_training_var_receiver_pos
 from diff_gfdn.utils import get_response
-from run_model import dump_config_to_pickle
+from run_model import dump_config_to_pickle, load_and_validate_config
 
 # flake8: noqa: E231
 # pylint: disable=W0621, W0632, E0402
@@ -56,7 +56,7 @@ def create_config(
         num_hidden_layers = 3
         num_neurons_per_layer = 2**7
 
-    seed = seed_base + cur_freq_hz
+    seed = seed_base + cur_freq_hz + np.random.randint(0, 100, 1).item()
     config_dict = {
         'seed': seed,
         'room_dataset_path': data_path,
@@ -75,6 +75,7 @@ def create_config(
             'num_freq_bins': 131072,
             'use_edc_mask': True,
             'edc_loss_weight': 10,
+            'sparsity_loss_weight': 2,
             'use_colorless_loss': True,
             'use_asym_spectral_loss': True,
             'train_dir':
@@ -337,30 +338,34 @@ def main(freqs_list_train: Optional[List] = None):
     config_dicts = []
     training_complete = freqs_list_train is None
 
-    for k in range(len(freqs_list)):
-        cur_data_path = f'{data_path}/srirs_band_centre={freqs_list[k]}Hz.pkl'
-
-        # generate config file
-        config_dict = create_config(freqs_list[k],
-                                    cur_data_path,
-                                    freq_range=[freqs_list[0], freqs_list[-1]],
-                                    config_path=config_path,
-                                    write_config=not training_complete)
-        config_dicts.append(config_dict)
-    logger.info("Done creating config files")
-
     if not training_complete:
-        freq_idx_to_train = [
-            freqs_list.index(elem) if elem in freqs_list else -1
-            for elem in freqs_list_train
-        ]
+        for k in range(len(freqs_list_train)):
+            cur_data_path = f'{data_path}/srirs_band_centre={int(freqs_list_train[k])}Hz.pkl'
 
-        train_config_dicts = [config_dicts[idx] for idx in freq_idx_to_train]
+            # generate config file
+            config_dict = create_config(
+                int(freqs_list_train[k]),
+                cur_data_path,
+                freq_range=[freqs_list[0], freqs_list[-1]],
+                config_path=config_path,
+                write_config=not training_complete)
+            config_dicts.append(config_dict)
+        logger.info("Done creating config files")
+
         # run training
-        training(freqs_list_train, train_config_dicts)
+        training(freqs_list_train, config_dicts)
 
     # inferencing
     if training_complete:
+        config_dicts = []
+        for k in range(len(freqs_list)):
+            cur_config_path = f'{config_path}/treble_data_grid_training_{freqs_list[k]}Hz'\
+            + '_colorless_loss_diff_delays.yml'
+            cur_config_dict = load_and_validate_config(cur_config_path,
+                                                       DiffGFDNConfig)
+            config_dicts.append(cur_config_dict)
+
+        logger.info("Done reading config files")
         save_filename = Path(
             'output/treble_data_grid_training_final_rirs_colorless_loss_diff_delays.pkl'
         ).resolve()
