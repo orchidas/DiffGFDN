@@ -75,15 +75,23 @@ where $\mathbf{M_i} \in \mathbb{R}^{N_\text{del} \times N_\text{del}}$ is the un
 ``` 
 where $\exp$ denotes the matrix exponential, and $\mathbf{W}_{i_\text{Tr}}$ is the upper triangular part of a real-positive matrix $\mathbf{W_i} \in \mathbb{R}^{N_{del} \times N_{del}}$, which is learned during training.
 - The input-output gains, $\mathbf{b, c}, \in \mathbb{R}^{N \times 1}$ are also learned during training.
+- The transfer function of the DiffGFDN for the $(p,q)$th source-receiver position is given by,
+```math
+\begin{aligned*}
+\hat{H}_{pq}(z) = \mathbf{c}_p^T(z) \left[\mathbf{D_m}^{-1}(z) \mathbf{\Gamma}^{-1}(z)- \mathbf{A}\right]^{-1} \mathbf{b}_q(z) + d(z), \\
+\mathbf{c}_p(z) &= \mathbf{c} \odot (\mathbf{g_i}_p(z) \otimes \mathbb{1}), \qquad \mathbf{b}_q(z) &= \mathbf{b} \odot (\mathbf{g_q}_j(z) \otimes \mathbb{1}) \\
+\mathbf{D_m}(z) &= \text{diag} \left(z^{-m_1}, \ldots, z^{-m_N} \right)
+\end{aligned*}
+```
 
 ### Loss function
 
-To match a desired impulse response at a source-receiver location $H_{ij}(z)$, we minimise the normalised energy decay relief (EDR) loss between the DiffGFDN's output, $\hat{H}_{ij}(z)$,  and the desired RIR at each location,
+To match a desired impulse response at a source-receiver location $H_{pq}(z)$, we minimise the normalised energy decay relief (EDR) loss between the DiffGFDN's output, $\hat{H}_{pq}(z)$,  and the desired RIR at each location,
 
 ``` math
 \begin{align*}
 \text{EDR}(k, m) &= 10 \log_{10} \left(\sum_{\tau=m}^M |H_{ij}(k, \tau) |^2 \right) \\
-\mathcal{L}_{\text{EDR}} &= \frac{ \sum_k \sum_m |EDR_{H_{ij}}(k, m) - EDR_{\hat{H}_{ij}}(k, m)|}{\sum_k \sum_m |EDR_{H_{ij}}(k, m)|}
+\mathcal{L}_{\text{EDR}} &= \frac{ \sum_k \sum_m |EDR_{H_{pq}}(k, m) - EDR_{\hat{H}_{pq}}(k, m)|}{\sum_k \sum_m |EDR_{H_{ij}}(k, m)|}
 \end{align*}
 ```
 
@@ -92,7 +100,7 @@ We also include an energy decay curve (EDC) matching loss, given by,
 ```math
 \begin{align*}
 \text{EDC}(t) &= 10 \log_{10} \left(\sum_{l=t}^T h_{ij}(l) \right) \\
-\mathcal{L}_{\text{EDC}} &= \frac{1}{T} \sum_{t=1}^T \left| \text{EDC}_{H_{ij}}(t) - \text{EDC}_{\hat{H}_{ij}}(t) \right| 
+\mathcal{L}_{\text{EDC}} &= \frac{1}{T} \sum_{t=1}^T \left| \text{EDC}_{h_{pq}}(t) - \text{EDC}_{\hat{h}_{pq}}(t) \right| 
 \end{align*}
 ```
 
