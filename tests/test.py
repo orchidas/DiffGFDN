@@ -121,13 +121,6 @@ def test_pyfar_filterbank_white_noise():
             mode='full')
     ind_noise_filtered_spectrum = rfft(ind_noise_filtered, n=fft_size, axis=0)
 
-    # plt.figure()
-    # plt.subplot(211)
-    # plt.stem(noise[:200])
-    # plt.subplot(212)
-    # plt.stem(np.sum(ind_noise[:200, :], axis=-1))
-    # plt.show()
-
     # plot the results
     fig, ax = plt.subplots(2, 1, figsize=(8, 8), gridspec_kw={'hspace': 0.5})
     freq_bins_hz = rfftfreq(n=fft_size, d=1.0 / fs)
