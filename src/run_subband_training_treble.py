@@ -81,7 +81,7 @@ def create_config(
             'train_dir':
             f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays/',
+            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
@@ -360,7 +360,7 @@ def main(freqs_list_train: Optional[List] = None):
         config_dicts = []
         for k in range(len(freqs_list)):
             cur_config_path = f'{config_path}/treble_data_grid_training_{freqs_list[k]}Hz'\
-            + '_colorless_loss_diff_delays.yml'
+            + '_colorless_loss.yml'
             cur_config_dict = load_and_validate_config(cur_config_path,
                                                        DiffGFDNConfig)
             config_dicts.append(cur_config_dict)
