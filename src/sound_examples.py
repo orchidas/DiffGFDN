@@ -49,20 +49,9 @@ class dynamic_rendering_moving_receiver:
         self.extended_stimulus = self.create_extended_stimulus()
 
     @property
-    def win_size(self) -> int:
-        """Window size for each update"""
-        assert self.update_len_samp % 2 == 0
-        return 2 * self.update_len_samp
-
-    @property
     def hop_size(self) -> int:
         """Hop size for each update"""
         return self.update_len_samp
-
-    @property
-    def window(self) -> ArrayLike:
-        """Window for fade in and fade out"""
-        return np.hanning(self.win_size)
 
     @property
     def total_sim_len(self) -> int:
@@ -110,8 +99,7 @@ class dynamic_rendering_moving_receiver:
 
         for k in range(self.num_pos):
             b_idx = np.arange(k * self.hop_size,
-                              min(k * self.hop_size + self.win_size,
-                                  self.total_sim_len),
+                              min((k + 1) * self.hop_size, self.total_sim_len),
                               dtype=np.int32)
             if use_whole_rir:
                 cur_filter = self.rirs[k, :]
@@ -122,11 +110,13 @@ class dynamic_rendering_moving_receiver:
             cur_filtered_signal = fftconvolve(cur_stimulus,
                                               cur_filter,
                                               mode='full')
-            cur_win_size = min(self.win_size, len(cur_filtered_signal),
-                               len(b_idx))
-            cur_filtered_signal_trunc = cur_filtered_signal[:cur_win_size]
-            output_signal[
-                b_idx] += self.window[:cur_win_size] * cur_filtered_signal_trunc
+            start_idx = k * self.hop_size
+            end_idx = min(start_idx + len(cur_filtered_signal),
+                          len(output_signal))
+            # cur_filtered_signal[:self.win_size] *= self.window
+            # cur_filtered_signal[-self.win_size:] *= self.window
+            output_signal[start_idx:end_idx] += cur_filtered_signal[:len(
+                np.arange(start_idx, end_idx))]
 
         return output_signal
 
