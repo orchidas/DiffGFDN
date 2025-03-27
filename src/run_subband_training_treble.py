@@ -270,7 +270,7 @@ def inferencing(
                         cur_rir_filtered = fftconvolve(
                             cur_rir,
                             subband_filters.coefficients[k, :],
-                            mode='same')
+                            mode='full')
                     else:
                         cur_rir_filtered = sosfiltfilt(
                             subband_filters.coefficients[k, ...], cur_rir)

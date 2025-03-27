@@ -155,7 +155,7 @@ def test_pyfar_filterbank_white_noise():
         ax[i].set_xlabel('Frequencies (Hz)')
         ax[i].grid(True)
         ax[i].set_xlim([20, 20000])
-        # ax[i].set_ylim([-60, 20])
+        ax[i].set_ylim([-60, 30])
 
     ax[0].legend(bbox_to_anchor=(1, 1))
     ax[0].set_title("Coherent sparse white noise filtered in subbands")

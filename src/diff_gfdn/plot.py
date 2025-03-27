@@ -403,7 +403,7 @@ def plot_subband_edc(h_true: ArrayLike,
                      mixing_time_ms: float = 20.0,
                      crop_end_ms: float = 5.0,
                      save_path: Optional[str] = None,
-                     use_amp_preserving_filterbank: bool = False):
+                     use_amp_preserving_filterbank: bool = True):
     """
     Plot true and synthesised EDC curves for each frequency band, as a function of epoch number
     Args:
@@ -475,6 +475,7 @@ def plot_subband_edc(h_true: ArrayLike,
     for handle, label in zip(*ax[-1].get_legend_handles_labels()):
         handles.append(handle)
         labels.append(label)
+
     fig.legend(handles,
                labels,
                loc="upper right",
@@ -589,7 +590,7 @@ def plot_edc_error_in_space(
     save_path: Optional[str] = None,
     pos_sorted: bool = False,
     norm_edc: bool = False,
-    use_amp_preserving_filterbank: bool = False,
+    use_amp_preserving_filterbank: bool = True,
 ):
     """
     Plot the EDC matching error in dB as a function of spatial location
@@ -839,7 +840,7 @@ def plot_amps_in_space(room_data: RoomDataset,
                        pos_sorted: bool = False,
                        plot_original_amps: bool = True,
                        plot_amp_error: bool = True,
-                       use_amp_preserving_filterbank: bool = False):
+                       use_amp_preserving_filterbank: bool = True):
     """
     Plot the amplitudes as a function of spatial location at frequency 'freq_to_plot' Hz
     Args:
@@ -1042,7 +1043,7 @@ def plot_learned_svf_response(
              torch.tensor([shelving_crossover[-1]]))) / fs
         svf_freqs = svf_freqs.numpy()
 
-    fig, ax = plt.subplots(num_groups, 1)
+    fig, ax = plt.subplots(num_groups, 1, figsize=(6, 8))
     fig2, ax2 = plt.subplots(num_groups,
                              1,
                              subplot_kw={'projection': 'polar'},
@@ -1148,7 +1149,7 @@ def plot_learned_svf_response(
             -22.5)  # Move radial labels away from plotted line
         ax2[n].grid(True)
 
-    fig.subplots_adjust(hspace=0.3 * num_groups)
+    fig.subplots_adjust(hspace=0.2 * num_groups)
     fig2.subplots_adjust(hspace=0.5)
 
     if save_path is not None:
