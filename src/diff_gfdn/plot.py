@@ -400,6 +400,7 @@ def plot_subband_edc(h_true: ArrayLike,
                      fs: float,
                      band_centre_hz: ArrayLike,
                      pos_to_investigate: List,
+                     epoch_numbers: Optional[List] = None,
                      mixing_time_ms: float = 20.0,
                      crop_end_ms: float = 5.0,
                      save_path: Optional[str] = None,
@@ -412,6 +413,7 @@ def plot_subband_edc(h_true: ArrayLike,
         fs (float): sampling rate
         band_centre_hz (ArrayLike): centre frequencies of the octave filters
         pos_to_investigate (List): cartesian coordinate of position where RIR was measured
+        epoch_numbers (optional, List): at which epochs are we plotting the EDCs?
         mixing_time_ms (float): truncate RIR before this time
         crop_end_ms (float): truncate last few samples of RIR
         save_path (optional, str): where to save figure
@@ -436,6 +438,10 @@ def plot_subband_edc(h_true: ArrayLike,
     leg = []
 
     num_epochs = len(h_approx)
+    epoch_num = np.arange(
+        -1, num_epochs -
+        1, dtype=np.int32) if epoch_numbers is None else epoch_numbers
+
     for epoch in range(num_epochs):
         approx_ir = h_approx[epoch]
         trunc_approx_ir = approx_ir[mixing_time_samp:mixing_time_samp +
@@ -446,7 +452,7 @@ def plot_subband_edc(h_true: ArrayLike,
             band_centre_hz,
             compensate_filter_energy=True,
             use_amp_preserving_filterbank=use_amp_preserving_filterbank)
-        leg.append(f'Epoch = {epoch}')
+        leg.append(f'Epoch = {epoch_num[epoch]}')
 
         for k in range(num_bands):
             if epoch == 0:
@@ -454,13 +460,13 @@ def plot_subband_edc(h_true: ArrayLike,
                     np.cumsum(np.flipud(filtered_true_ir[:, k]**2), axis=-1))
                 ax[k].plot(time,
                            db(true_edf, is_squared=True),
-                           label='True EDF')
+                           label='Reference')
 
             synth_edf = np.flipud(
                 np.cumsum(np.flipud(filtered_approx_ir[:, k]**2), axis=-1))
             ax[k].plot(time,
                        db(synth_edf, is_squared=True),
-                       label=f'Epoch={epoch}')
+                       label=f'Epoch={epoch_num[epoch]}')
             ax[k].set_title(f'{band_centre_hz[k]: .0f} Hz')
             ax[k].set_ylim([-80, 0])
             ax[k].set_xlim([0, 2.0])
@@ -1019,6 +1025,7 @@ def plot_learned_svf_response(
         fs: float,
         output_biquad_coeffs: Union[List[List], List[NDArray]],
         pos_to_investigate: List,
+        epoch_numbers: Optional[List] = None,
         verbose: bool = False,
         svf_params: Optional[Union[List[List], List[NDArray]]] = None,
         save_path: Optional[str] = None):
@@ -1031,6 +1038,7 @@ def plot_learned_svf_response(
         output_biquad_coeffs: output filter biquad coefficients, list containing num_group filters. 
                               Can also be a list of lists containing filters for each epoch
         pos_to_investigate (List): cartesian coordinates of the position under invesigation
+        epoch_numbers (option, List): At which epochs are we plotting the results?
         verbose (bool): whether to print theoretical SVF poles
         svf_params (optional): list containing learned SVF params for each group. 
                                Can also be a list of lists containing params for each epoch.
@@ -1053,6 +1061,9 @@ def plot_learned_svf_response(
     is_list_of_lists = all(
         isinstance(item, list) for item in output_biquad_coeffs)
     num_epochs = len(output_biquad_coeffs) if is_list_of_lists else 1
+    epoch_num = np.arange(
+        -1, num_epochs -
+        1, dtype=np.int32) if epoch_numbers is None else epoch_numbers
 
     # loop over epochs
     for i in range(0, num_epochs):
@@ -1089,18 +1100,18 @@ def plot_learned_svf_response(
             # plot magnitude response
             ax[n].semilogx(freqs,
                            db(filt_response),
-                           label=f'Group {n}, epoch {i}')
+                           label=f'Group {n}, epoch {epoch_num[i]}')
 
             # also plot the poles and zeros
             zeros, poles, _ = sos2zpk(cur_biquad_coeffs)
             ax2[n].plot(np.angle(zeros),
                         np.abs(zeros),
                         'o',
-                        label=f'Group {n}, epoch {i}')
+                        label=f'Group {n}, epoch {epoch_num[i]}')
             ax2[n].plot(np.angle(poles),
                         np.abs(poles),
                         'x',
-                        label=f'Group {n}, epoch {i}')
+                        label=f'Group {n}, epoch {epoch_num[i]}')
 
             if verbose:
                 # energy of the filters
@@ -1135,10 +1146,12 @@ def plot_learned_svf_response(
                     print(f'SVF Q factor: {svf_res}')
 
     # set axis labels
-    ax[0].legend(loc='upper right', bbox_to_anchor=(1.5, 1.0))
+    ax[0].legend(loc='lower right')
     for n in range(num_groups):
         ax[n].set_xlabel('Frequency (Hz)')
         ax[n].set_ylabel('Magnitude (dB)')
+        ax[n].set_xlim([20, fs / 2])
+        ax[n].set_ylim([-25, 10])
         ax[n].set_title(
             f'Output filter for group {n+1} at position {pos_to_investigate}')
         ax[n].grid(True)
