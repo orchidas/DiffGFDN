@@ -2,3 +2,11 @@ resources/synthetic_dataset/single_room/bb_wgn_0000.pkl filter=lfs diff=lfs merg
 resources/synthetic_dataset/single_room_freq_dep/bb_wgn_0000.pkl filter=lfs diff=lfs merge=lfs -text
 resources/synthetic_dataset/two_coupled_rooms/bb_wgn_0000.pkl filter=lfs diff=lfs merge=lfs -text
 resources/synthetic_dataset/two_coupled_rooms_freq_dep/bb_wgn_0000.pkl filter=lfs diff=lfs merge=lfs -text
+resources/Georg_3room_FDTD/srirs_band_centre=63Hz.pkl filter=lfs diff=lfs merge=lfs -text
+resources/Georg_3room_FDTD/srirs_band_centre=8000Hz.pkl filter=lfs diff=lfs merge=lfs -text
+resources/Georg_3room_FDTD/srirs_band_centre=1000Hz.pkl filter=lfs diff=lfs merge=lfs -text
+resources/Georg_3room_FDTD/srirs_band_centre=125Hz.pkl filter=lfs diff=lfs merge=lfs -text
+resources/Georg_3room_FDTD/srirs_band_centre=2000Hz.pkl filter=lfs diff=lfs merge=lfs -text
+resources/Georg_3room_FDTD/srirs_band_centre=250Hz.pkl filter=lfs diff=lfs merge=lfs -text
+resources/Georg_3room_FDTD/srirs_band_centre=4000Hz.pkl filter=lfs diff=lfs merge=lfs -text
+resources/Georg_3room_FDTD/srirs_band_centre=500Hz.pkl filter=lfs diff=lfs merge=lfs -text

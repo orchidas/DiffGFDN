@@ -8,7 +8,7 @@ from tqdm import trange
 
 from ..config.config import ColorlessFDNConfig, TrainerConfig
 from ..utils import get_frequency_samples, get_response, get_str_results
-from .losses import amse_loss, sparsity_loss
+from .losses import amse_loss, mse_loss, sparsity_loss
 from .model import ColorlessFDN
 
 # pylint: disable=W0632
@@ -34,7 +34,10 @@ class ColorlessFDNTrainer:
 
         self.optimizer = torch.optim.Adam(self.net.parameters(),
                                           lr=colorless_fdn_config.lr)
-        self.criterion = [amse_loss(), sparsity_loss()]
+        if trainer_config.use_asym_spectral_loss:
+            self.criterion = [amse_loss(), sparsity_loss()]
+        else:
+            self.criterion = [mse_loss(), sparsity_loss()]
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=10,
                                                          gamma=0.1)
@@ -91,7 +94,7 @@ class ColorlessFDNTrainer:
         # batch processing
         inputs, labels = data
         self.optimizer.zero_grad()
-        H = self.net(inputs)
+        H, _ = self.net(inputs)
         loss = self.criterion[0](H, labels) + self.alpha * self.criterion[1](
             self.net.feedback_loop.ortho_param(
                 self.net.feedback_loop.random_feedback_matrix))
@@ -105,10 +108,12 @@ class ColorlessFDNTrainer:
         # batch processing
         inputs, labels = data
         self.optimizer.zero_grad()
-        H = self.net(inputs)
-        loss = self.criterion[0](H, labels) + self.alpha * self.criterion[1](
-            self.net.feedback_loop.ortho_param(
-                self.net.feedback_loop.random_feedback_matrix))
+        H, H_per_del_line = self.net(inputs)
+        loss = (
+            self.criterion[0](H, labels) +
+            self.criterion[0](H_per_del_line, torch.ones_like(H_per_del_line))
+        ) + self.alpha * self.criterion[1](self.net.feedback_loop.ortho_param(
+            self.net.feedback_loop.random_feedback_matrix))
         return loss.item()
 
     @torch.no_grad()

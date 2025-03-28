@@ -76,8 +76,8 @@ def parse_args() -> argparse.Namespace:
     return arguments
 
 
-if __name__ == '__main__':
-
+def main():
+    """Read config file and run the training"""
     args = parse_args()
     if args.config_file:
         config_dict = load_and_validate_config(args.config_file,
@@ -113,3 +113,7 @@ if __name__ == '__main__':
         run_training_var_receiver_pos(config_dict)
     else:
         run_training_single_pos(config_dict)
+
+
+if __name__ == '__main__':
+    main()

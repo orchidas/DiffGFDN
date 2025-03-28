@@ -61,6 +61,7 @@ class SubbandProcessingConfig(BaseModel):
     centre_frequency: float
     frequency_range: Tuple
     num_fraction_octaves: int = 3
+    use_amp_preserving_filterbank: bool = True
 
 
 class OutputFilterConfig(BaseModel):
@@ -77,6 +78,15 @@ class OutputFilterConfig(BaseModel):
     num_neurons_per_layer: int = 2**7
     num_fourier_features: int = 10
     encoding_type: FeatureEncodingType = FeatureEncodingType.SINE
+
+
+class DecayFilterConfig(BaseModel):
+    # whether to use scalar or frequency-dependent gains in delay lines
+    use_absorption_filters: bool = True
+    # whether to learn the common decay times or not
+    learn_common_decay_times: bool = False
+    # whether to initialise decay filters with pre-found values
+    initialise_with_opt_values: bool = True
 
 
 class TrainerConfig(BaseModel):
@@ -105,6 +115,7 @@ class TrainerConfig(BaseModel):
     use_erb_edr_loss: bool = False
     # whether to use colorless loss in the DiffGFDN's loss itself
     use_colorless_loss: bool = False
+    use_asym_spectral_loss: bool = False
     # weights for edc and edr loss
     edc_loss_weight: float = 1.0
     edr_loss_weight: float = 1.0
@@ -185,10 +196,11 @@ class DiffGFDNConfig(BaseModel):
     num_delay_lines: int = 12
     # delay range in ms - first delay should be after the mixing time
     delay_range_ms: List[float] = [20.0, 50.0]
-    # whether to use scalar or frequency-dependent gains in delay lines
-    use_absorption_filters: bool = True
+
     # config for the feedback loop
     feedback_loop_config: FeedbackLoopConfig = FeedbackLoopConfig()
+    # config for decay filters
+    decay_filter_config: DecayFilterConfig = DecayFilterConfig()
     # number of biquads in SVF
     output_filter_config: OutputFilterConfig = OutputFilterConfig()
     input_filter_config: Optional[OutputFilterConfig] = OutputFilterConfig()

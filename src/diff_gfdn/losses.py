@@ -3,15 +3,13 @@ from typing import List, Optional, Tuple
 import librosa
 from loguru import logger
 import numpy as np
-import pyfar as pf
 from scipy.fft import rfftfreq
-from slope2noise.slope2noise.utils import get_bandpass_filters
+from slope2noise.utils import get_bandpass_filters
 import torch
 from torch import nn
 import torch.nn.functional as F
 from torchaudio.functional import lfilter
 
-from .config.config import SubbandProcessingConfig
 from .gain_filters import BiquadCascade, SOSFilter
 from .utils import db, ms_to_samps
 
@@ -173,6 +171,8 @@ class edc_loss(nn.Module):
                 sample_rate, band_centre_hz)
             self.filter_order = self.filter_coeffs_sos.shape[0]
         self.use_mask = use_mask
+        if self.use_mask:
+            logger.info("Using masked EDC loss")
 
     def schroeder_backward_integral(self,
                                     signal: torch.tensor,
@@ -236,8 +236,8 @@ class edc_loss(nn.Module):
                     self.filter_coeffs_sos[...,
                                            b_idx].copy()).to(torch.float32)
 
-                target_rir_band = target_rir.detach().clone()
-                achieved_rir_band = achieved_rir.detach().clone()
+                target_rir_band = target_rir.clone()
+                achieved_rir_band = achieved_rir.clone()
 
                 for j in range(self.filter_order):
                     target_rir_band = lfilter(target_rir_band.to(
@@ -284,7 +284,6 @@ class edr_loss(nn.Module):
         time_axis: int = -1,
         freq_axis: int = -2,
         use_weight_fn: bool = False,
-        subband_process_config: Optional[SubbandProcessingConfig] = None,
     ):
         """
         Args:
@@ -296,9 +295,6 @@ class edr_loss(nn.Module):
             use_erb_grouping (bool): whether to group EDR in ERB bands before calculating loss
             use_weight_fn (bool): whether to use frequency-dependent weighting function, 
                                   which weights the lower frequency loss more
-            subband_process_config(bool): when training different GFDNs in different subbands, we should mask the 
-                                   frequencies outside the band of interest to avoid spurious loss calculations. 
-                                   This specifies the config file for creating the mask
         """
         super().__init__()
         self.sample_rate = sample_rate
@@ -327,32 +323,6 @@ class edr_loss(nn.Module):
             self.frequency_weights = scaled_shifted_sigmoid_inverse(
                 torch.tensor(self.freqs_hz), scale_factor, cutoff_freq_hz,
                 bottom, top)
-
-        self.mask_freq_bins = subband_process_config is not None
-        if self.mask_freq_bins:
-            _, centre_freqs, cutoff_freqs = pf.dsp.filter.fractional_octave_frequencies(
-                num_fractions=subband_process_config.num_fraction_octaves,
-                frequency_range=subband_process_config.frequency_range,
-                return_cutoff=True)
-            closest_idx = np.argmin(
-                np.abs(centre_freqs - subband_process_config.centre_frequency))
-
-            closest_cutoff_freqs = (cutoff_freqs[0][closest_idx],
-                                    cutoff_freqs[1][closest_idx])
-            start_idx = np.argmin(
-                np.abs(self.freqs_hz - closest_cutoff_freqs[0]))
-            end_idx = np.argmin(np.abs(self.freqs_hz -
-                                       closest_cutoff_freqs[1]))
-            self.mask_freq_idx = torch.arange(start_idx,
-                                              end_idx,
-                                              dtype=torch.int32)
-            logger.info(
-                f"Frequencies to be considered in EDR loss {np.round(self.freqs_hz[self.mask_freq_idx], 2)} Hz"
-            )
-        else:
-            self.mask_freq_idx = torch.arange(0,
-                                              len(self.freqs_hz),
-                                              dtype=torch.int32)
 
     def forward(self, target_response: torch.tensor,
                 achieved_response: torch.tensor) -> torch.tensor:
@@ -402,11 +372,7 @@ class edr_loss(nn.Module):
 
         # frequency-based loss, of size (B, N (num_freq_samples))
         # sum over time axis
-        freq_loss = torch.abs(target_edr[:, self.mask_freq_idx, :] -
-                              ach_edr[:, self.mask_freq_idx, :]
-                              ) if target_edr.ndim == 3 else torch.abs(
-                                  target_edr[self.mask_freq_idx, :] -
-                                  ach_edr[self.mask_freq_idx, :])
+        freq_loss = torch.abs(target_edr - ach_edr)
 
         freq_loss = torch.sum(freq_loss, dim=self.time_axis)
         if self.use_weight_fn:
@@ -417,14 +383,13 @@ class edr_loss(nn.Module):
         if target_edr.ndim == 3:
             loss_per_item = torch.div(
                 torch.sum(freq_loss, dim=-1),
-                torch.sum(torch.abs(target_edr[:, self.mask_freq_idx, :]),
+                torch.sum(torch.abs(target_edr),
                           dim=[self.time_axis, self.freq_axis]))
             # additionally sum over all items in batch
             return torch.sum(loss_per_item)
         else:
-            return torch.div(
-                torch.sum(freq_loss),
-                torch.sum(torch.abs(target_edr[self.mask_freq_idx])))
+            return torch.div(torch.sum(freq_loss),
+                             torch.sum(torch.abs(target_edr)))
 
 
 def get_stft_torch(rir: torch.tensor,

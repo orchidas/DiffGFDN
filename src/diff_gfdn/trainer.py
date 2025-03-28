@@ -1,17 +1,21 @@
 import os
 from pathlib import Path
 import time
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 from loguru import logger
+import numpy as np
+import pyfar as pf
+from scipy.fft import rfftfreq
+from scipy.signal import sosfreqz
 import torch
 from torch.utils.data import DataLoader
 import torchaudio
 from tqdm import trange
 
-from .colorless_fdn.losses import amse_loss, sparsity_loss
+from .colorless_fdn.losses import amse_loss, mse_loss, sparsity_loss
 from .config.config import TrainerConfig
-from .losses import edc_loss, edr_loss, reg_loss, spatial_variance_loss
+from .losses import edc_loss, edr_loss, reg_loss
 from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
 from .utils import get_response, get_str_results, ms_to_samps
 
@@ -34,26 +38,32 @@ class Trainer:
         self.use_reg_loss = trainer_config.use_reg_loss
         self.use_colorless_loss = trainer_config.use_colorless_loss
         self.reduced_pole_radius = trainer_config.reduced_pole_radius
+        self.subband_process_config = trainer_config.subband_process_config
+
+        if self.subband_process_config is not None:
+            self.init_subband_filters(trainer_config)
+
         self.init_scheduler(trainer_config)
 
         if not os.path.exists(self.ir_dir):
             os.makedirs(self.ir_dir)
 
-        if trainer_config.use_edc_mask:
-            logger.info("Using masked EDC loss")
+        if self.net.common_decay_times is None:
+            max_ir_len_ms = 2000
+        else:
+            max_ir_len_ms = self.net.common_decay_times.max() * 1e3
 
+        # energy decay loss criteria
         self.criterion = [
             edr_loss(
                 self.net.sample_rate,
                 reduced_pole_radius=self.reduced_pole_radius,
                 use_erb_grouping=trainer_config.use_erb_edr_loss,
                 use_weight_fn=trainer_config.use_frequency_weighting,
-                subband_process_config=trainer_config.subband_process_config,
             ),
-            edc_loss(self.net.common_decay_times.max() * 1e3,
+            edc_loss(max_ir_len_ms,
                      self.net.sample_rate,
                      use_mask=trainer_config.use_edc_mask),
-            spatial_variance_loss(),
         ]
         self.loss_weights = torch.tensor(
             [trainer_config.edr_loss_weight, trainer_config.edc_loss_weight])
@@ -72,11 +82,54 @@ class Trainer:
 
         if self.use_colorless_loss:
             logger.info('Using colorless FDN loss for each sub-FDN')
-            self.colorless_criterion = [amse_loss(), sparsity_loss()]
+            if trainer_config.use_asym_spectral_loss:
+                self.colorless_criterion = [amse_loss(), sparsity_loss()]
+            else:
+                self.colorless_criterion = [mse_loss(), sparsity_loss()]
             self.colorless_loss_weights = torch.tensor([
                 trainer_config.spectral_loss_weight,
                 trainer_config.sparsity_loss_weight
             ])
+
+    def init_subband_filters(self, trainer_config: TrainerConfig):
+        """Initialise subband filters, if they are being used"""
+        if self.subband_process_config.use_amp_preserving_filterbank:
+            logger.info("Using amplitude preserving FIR filterbank")
+            subband_filters, subband_freqs = pf.dsp.filter.reconstructing_fractional_octave_bands(
+                None,
+                num_fractions=self.subband_process_config.num_fraction_octaves,
+                frequency_range=self.subband_process_config.frequency_range,
+                sampling_rate=self.net.sample_rate,
+            )
+            subband_filter_idx = np.argmin(
+                np.abs(subband_freqs -
+                       self.subband_process_config.centre_frequency))
+            subband_filter = torch.tensor(
+                subband_filters.coefficients[subband_filter_idx])
+            self.subband_filter_freq_resp = torch.fft.rfft(
+                subband_filter, n=trainer_config.num_freq_bins)
+        else:
+            logger.info("Using energy preserving Butterworth filterbank")
+            subband_filters = pf.dsp.filter.fractional_octave_bands(
+                None,
+                num_fractions=self.subband_process_config.num_fraction_octaves,
+                frequency_range=self.subband_process_config.frequency_range,
+                sampling_rate=self.net.sample_rate,
+            )
+            subband_freqs, _ = pf.dsp.filter.fractional_octave_frequencies(
+                num_fractions=self.subband_process_config.num_fraction_octaves,
+                frequency_range=self.subband_process_config.frequency_range,
+            )
+
+            subband_filter_idx = np.argmin(
+                np.abs(subband_freqs -
+                       self.subband_process_config.centre_frequency))
+            freqs_hz = rfftfreq(trainer_config.num_freq_bins,
+                                d=1.0 / self.net.sample_rate)
+            _, self.subband_filter_freq_resp = torch.tensor(
+                sosfreqz(subband_filters.coefficients[subband_filter_idx, ...],
+                         freqs_hz,
+                         fs=float(self.net.sample_rate)))
 
     def init_scheduler(self, trainer_config: TrainerConfig):
         """
@@ -174,10 +227,10 @@ class Trainer:
                             individual_losses=self.individual_train_loss if
                             hasattr(self, 'individual_train_loss') else None))
 
-        # for debugging
+        # # for debugging
         # for name, param in self.net.named_parameters():
-        #     if name in ('input_scalars',
-        #                 'output_scalars') and param.requires_grad:
+        #     if name in ('input_scalars', 'output_scalars',
+        #                 ) and param.requires_grad:
         #         print(f"Parameter {name}: {param.data}")
         #         print(f"Parameter {name} gradient: {param.grad.norm()}")
 
@@ -190,6 +243,56 @@ class Trainer:
         # save model
         torch.save(self.net.state_dict(),
                    os.path.join(dir_path, 'model_e' + str(e) + '.pt'))
+
+    def calculate_losses(self,
+                         data: Dict,
+                         H: torch.tensor,
+                         H_sub_fdn: Optional[Tuple] = None) -> Dict:
+        """
+        Avoid repetition of code by by using single function to calculate losses
+        Args:
+            data (Dict): data dictionary
+            H (torch.tensor): transfer function of DiffGFDN
+            H_sub_fdn (Tuple): transfer function of each FDN
+        Returns:
+            Dict: dictionary of all losses
+        """
+        edr_loss_val = self.loss_weights[0] * self.criterion[0](
+            data['target_rir_response'], H)
+        edc_loss_val = self.loss_weights[1] * self.criterion[1](
+            data['target_rir_response'], H)
+
+        all_losses = {
+            'edc_loss': edc_loss_val,
+            'edr_loss': edr_loss_val,
+        }
+
+        if self.use_reg_loss:
+            reg_loss_val = self.loss_weights[2] * self.criterion[2](
+                self.net.biquad_cascade)
+            all_losses.update({'reg_loss': reg_loss_val})
+
+        if self.use_colorless_loss:
+            spectral_loss_val = 0.0
+            sparsity_loss_val = 0.0
+            for k in range(self.net.num_groups):
+                # mean over all freq bins
+                spectral_loss_val += self.colorless_loss_weights[
+                    0] * self.colorless_criterion[0](H_sub_fdn[0][..., k],
+                                                     torch.ones_like(
+                                                         H_sub_fdn[0][..., k]))
+
+                sparsity_loss_val = self.colorless_loss_weights[
+                    1] * self.colorless_criterion[1](
+                        self.net.feedback_loop.ortho_param(
+                            self.net.feedback_loop.M[k]))
+            colorless_losses = {
+                'spectral_loss': spectral_loss_val,
+                'sparsity_loss': sparsity_loss_val
+            }
+            all_losses.update(colorless_losses)
+
+        return all_losses
 
 
 class VarReceiverPosTrainer(Trainer):
@@ -212,15 +315,22 @@ class VarReceiverPosTrainer(Trainer):
             logger.info(f'Epoch #{epoch}')
             st_epoch = time.time()
 
-            # normalise b, c at each epoch to ensure the sub-FDNs have
-            # unit energy
-            data = next(iter(train_dataset))
-            self.normalize(data)
-
             # training
             epoch_loss = 0.0
             all_loss = {}
+
+            if self.net.use_svf_in_output:
+                # normalise b, c at each epoch (but only once)
+                # if a full-band GFDN is trained
+                data = next(iter(train_dataset))
+                self.normalize(data)
+
             for data in train_dataset:
+                # normalise b, c at each training step to ensure the sub-FDNs have
+                # unit energy
+                if not self.net.use_svf_in_output:
+                    self.normalize(data)
+
                 cur_loss, cur_all_loss = self.train_step(data)
                 epoch_loss += cur_loss
 
@@ -228,7 +338,7 @@ class VarReceiverPosTrainer(Trainer):
                     all_loss = {key: 0.0 for key in cur_all_loss}
 
                 for key, value in cur_all_loss.items():
-                    all_loss[key] += value
+                    all_loss[key] += value.item()
 
             self.scheduler.step()
             self.train_loss.append(epoch_loss / len(train_dataset))
@@ -268,45 +378,26 @@ class VarReceiverPosTrainer(Trainer):
         self.optimizer.zero_grad()
         if self.use_colorless_loss:
             H, H_sub_fdn = self.net(data)
+            if self.subband_process_config is not None:
+                # filter H in subbands before calculating loss
+                H_subband = H * self.subband_filter_freq_resp
+                all_losses = super().calculate_losses(data, H_subband,
+                                                      H_sub_fdn)
+            else:
+                all_losses = super().calculate_losses(data, H, H_sub_fdn)
         else:
             H = self.net(data)
-
-        edr_loss_val = self.loss_weights[0] * self.criterion[0](
-            data['target_rir_response'], H)
-        edc_loss_val = self.loss_weights[1] * self.criterion[1](
-            data['target_rir_response'], H)
-        # spatial_var_loss_val = self.criterion[2](self.net.output_scalars.gains)
-        all_losses = {
-            'edc_loss': edc_loss_val,
-            'edr_loss': edr_loss_val,
-            # 'spatial_loss': spatial_var_loss_val
-        }
-
-        if self.use_reg_loss:
-            reg_loss_val = self.loss_weights[2] * self.criterion[2](
-                self.net.biquad_cascade)
-            all_losses.update({'reg_loss': reg_loss_val})
-
-        if self.use_colorless_loss:
-            spectral_loss_val = 0.0
-            sparsity_loss_val = 0.0
-            for k in range(self.net.num_groups):
-                spectral_loss_val += self.colorless_loss_weights[
-                    0] * self.colorless_criterion[0](
-                        H_sub_fdn[..., k], torch.ones_like(H_sub_fdn[..., k]))
-                sparsity_loss_val = self.colorless_loss_weights[
-                    1] * self.colorless_criterion[1](
-                        self.net.feedback_loop.ortho_param(
-                            self.net.feedback_loop.M[k]))
-            colorless_losses = {
-                'spectral_loss': spectral_loss_val,
-                'sparsity_loss': sparsity_loss_val
-            }
-            all_losses.update(colorless_losses)
+            if self.subband_process_config is not None:
+                # filter H in subbands before calculating loss
+                H_subband = H * self.subband_filter_freq_resp
+                all_losses = super().calculate_losses(data, H_subband)
+            else:
+                all_losses = super().calculate_losses(data, H)
 
         loss = sum(all_losses.values())
-        loss.backward()
+        loss.backward(retain_graph=self.net.learn_common_decay_times)
         self.optimizer.step()
+
         return loss.item(), all_losses
 
     @torch.no_grad()
@@ -327,48 +418,27 @@ class VarReceiverPosTrainer(Trainer):
                                             src_pos=src_position,
                                             rec_pos=rec_position,
                                             filename_prefix="valid_ir")
+                if self.subband_process_config is not None:
+                    # filter H in subbands before calculating loss
+                    H_subband = H * self.subband_filter_freq_resp
+                    cur_all_losses = super().calculate_losses(
+                        data, H_subband, H_sub_fdn)
+                else:
+                    cur_all_losses = super().calculate_losses(
+                        data, H, H_sub_fdn)
+
             else:
                 H = self.save_ir(data,
                                  directory=self.ir_dir,
                                  src_pos=src_position,
                                  rec_pos=rec_position,
                                  filename_prefix="valid_ir")
-
-            edr_loss_val = self.loss_weights[0] * self.criterion[0](
-                data['target_rir_response'], H)
-            edc_loss_val = self.loss_weights[1] * self.criterion[1](
-                data['target_rir_response'], H)
-            # spatial_var_loss_val = self.criterion[2](
-            #     self.net.output_scalars.gains)
-
-            cur_all_losses = {
-                'edc_loss': edc_loss_val,
-                'edr_loss': edr_loss_val,
-                # 'spatial_loss': spatial_var_loss_val
-            }
-
-            if self.use_reg_loss:
-                reg_loss_val = self.loss_weights[2] * self.criterion[2](
-                    self.net.biquad_cascade)
-                cur_all_losses.update({'reg_loss': reg_loss_val})
-
-            if self.use_colorless_loss:
-                spectral_loss_val = 0.0
-                sparsity_loss_val = 0.0
-                for k in range(self.net.num_groups):
-                    spectral_loss_val += self.colorless_loss_weights[
-                        0] * self.colorless_criterion[0](
-                            H_sub_fdn[..., k],
-                            torch.ones_like(H_sub_fdn[..., k]))
-                    sparsity_loss_val += self.colorless_loss_weights[
-                        1] * self.colorless_criterion[1](
-                            self.net.feedback_loop.ortho_param(
-                                self.net.feedback_loop.M[k]))
-                colorless_losses = {
-                    'spectral_loss': spectral_loss_val,
-                    'sparsity_loss': sparsity_loss_val,
-                }
-                cur_all_losses.update(colorless_losses)
+                if self.subband_process_config is not None:
+                    # filter H in subbands before calculating loss
+                    H_subband = H * self.subband_filter_freq_resp
+                    cur_all_losses = super().calculate_losses(data, H_subband)
+                else:
+                    cur_all_losses = super().calculate_losses(data, H)
 
             cur_loss = sum(cur_all_losses.values())
             total_loss += cur_loss
@@ -382,14 +452,14 @@ class VarReceiverPosTrainer(Trainer):
         net_valid_loss = total_loss / len(valid_dataset)
         logger.info(f"The net validation loss is {net_valid_loss:.4f}")
 
-    @torch.no_grad()
     def normalize(self, data: Dict):
         # average energy normalization - this normalises the energy
         # of each of the sub-FDNs to be unity
 
         if self.use_colorless_loss:
             _, H_sub_fdn, _ = get_response(data, self.net)
-            energyH_sub = torch.mean(torch.pow(torch.abs(H_sub_fdn), 2), dim=0)
+            energyH_sub = torch.mean(torch.pow(torch.abs(H_sub_fdn[0]), 2),
+                                     dim=0)
             for name, prm in self.net.named_parameters():
                 if name in ('input_gains', 'output_gains'):
                     for k in range(self.net.num_groups):
@@ -397,9 +467,7 @@ class VarReceiverPosTrainer(Trainer):
                             k * self.net.num_delay_lines_per_group,
                             (k + 1) * self.net.num_delay_lines_per_group,
                             dtype=torch.int32)
-                        prm.data[ind_slice].copy_(
-                            torch.div(prm.data[ind_slice],
-                                      torch.pow(energyH_sub[k], 1 / 4)))
+                        prm.data[ind_slice] /= torch.pow(energyH_sub[k], 1 / 4)
 
     @torch.no_grad()
     def save_ir(
@@ -526,50 +594,30 @@ class SinglePosTrainer(Trainer):
         self.optimizer.zero_grad()
         if self.use_colorless_loss:
             H, H_sub_fdn = self.net(data)
+            if self.subband_process_config is not None:
+                # filter H in subbands before calculating loss
+                H_subband = H * self.subband_filter_freq_resp
+            all_losses = super().calculate_losses(data, H_subband, H_sub_fdn)
         else:
             H = self.net(data)
-
-        edr_loss_val = self.loss_weights[0] * self.criterion[0](
-            data['target_rir_response'], H)
-        edc_loss_val = self.loss_weights[1] * self.criterion[1](
-            data['target_rir_response'], H)
-        all_losses = {'edc_loss': edc_loss_val, 'edr_loss': edr_loss_val}
-
-        if self.use_reg_loss:
-            reg_loss_val = self.loss_weights[2] * self.criterion[2](
-                self.net.biquad_cascade)
-            all_losses.update({'reg_loss': reg_loss_val})
-
-        if self.use_colorless_loss:
-            spectral_loss_val = 0.0
-            sparsity_loss_val = 0.0
-            for k in range(self.net.num_groups):
-                spectral_loss_val += self.colorless_loss_weights[
-                    0] * self.colorless_criterion[0](
-                        H_sub_fdn[..., k], torch.ones_like(H_sub_fdn[..., k]))
-                sparsity_loss_val += self.colorless_loss_weights[
-                    1] * self.colorless_criterion[1](
-                        self.net.feedback_loop.ortho_param(
-                            self.net.feedback_loop.M[k]))
-            colorless_losses = {
-                'spectral_loss': spectral_loss_val,
-                'sparsity_loss': sparsity_loss_val
-            }
-            all_losses.update(colorless_losses)
+            if self.subband_process_config is not None:
+                # filter H in subbands before calculating loss
+                H_subband = H * self.subband_filter_freq_resp
+            all_losses = super().calculate_losses(data, H_subband)
 
         loss = sum(all_losses.values())
-        loss.backward(retain_graph=True)
+        loss.backward(retain_graph=self.net.learn_common_decay_times)
         self.optimizer.step()
         return loss.item(), all_losses
 
-    @torch.no_grad()
     def normalize(self, data: Dict):
         # average energy normalization - this normalises the energy
         # of the initial FDN to the target impulse response
 
         if self.use_colorless_loss:
             H, H_sub_fdn, _ = get_response(data, self.net)
-            energyH_sub = torch.mean(torch.pow(torch.abs(H_sub_fdn), 2), dim=0)
+            energyH_sub = torch.mean(torch.pow(torch.abs(H_sub_fdn[0]), 2),
+                                     dim=0)
             for name, prm in self.net.named_parameters():
                 if name in ('input_gains', 'output_gains'):
                     for k in range(self.net.num_groups):
@@ -577,9 +625,7 @@ class SinglePosTrainer(Trainer):
                             k * self.net.num_delay_lines_per_group,
                             (k + 1) * self.net.num_delay_lines_per_group,
                             dtype=torch.int32)
-                        prm.data[ind_slice].copy_(
-                            torch.div(prm.data[ind_slice],
-                                      torch.pow(energyH_sub[k], 1 / 4)))
+                        prm.data[ind_slice] /= torch.pow(energyH_sub[k], 1 / 4)
         else:
             H, _ = get_response(data, self.net)
         energyH = torch.mean(torch.pow(torch.abs(H), 2))
@@ -589,8 +635,7 @@ class SinglePosTrainer(Trainer):
         # apply energy normalization on input and output gains only
         for name, prm in self.net.named_parameters():
             if name in ('input_scalars', 'output_scalars'):
-                prm.data.copy_(
-                    torch.div(prm.data, torch.pow(energy_diff, 1 / 4)))
+                prm.data /= torch.pow(energy_diff, 1 / 4)
 
     @torch.no_grad()
     def save_ir(self,

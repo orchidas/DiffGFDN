@@ -1,9 +1,11 @@
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
+from loguru import logger
 import numpy as np
 import torch
 from torch import nn
 
+from .absorption_filters import decay_times_to_gain_per_sample
 from .config.config import CouplingMatrixType
 from .gain_filters import BiquadCascade, IIRFilter, SOSFilter
 from .utils import matrix_convolution, to_complex
@@ -144,14 +146,16 @@ class FIRParaunitary(nn.Module):
 class FeedbackLoop(nn.Module):
 
     def __init__(self,
+                 sample_rate: float,
                  num_groups: int,
                  num_delay_lines_per_group: int,
                  delays: torch.tensor,
-                 gains: torch.tensor,
                  use_absorption_filters: bool,
                  coupling_matrix_type: CouplingMatrixType = None,
                  coupling_matrix_order: Optional[int] = None,
                  colorless_feedback_matrix: Optional[torch.tensor] = None,
+                 gains: Optional[torch.Tensor] = None,
+                 common_decay_times: Optional[List] = None,
                  device: torch.device = 'cpu'):
         """
         Class implementing the feedback loop of the FDN (D_m(z) - A(z)Gamma(z))^{-1}
@@ -159,7 +163,9 @@ class FeedbackLoop(nn.Module):
             num_groups (int): number of groups in the GFDN
             num_delay_lines_per_group (int): number of delay lines in each group
             delays (List): delay line lengths in samples
-            gains (List): delay line absorption gains / filters
+            gains (List): delay line absorption gains / filters, can be learnable
+            common_decay_times (list, optional): list of initial common decay times (one for each room). 
+                                                 If none, they are learned by network
             use_absorption_filters (bool): whether the delay line gains are gains or filters
             coupling_matrix_type (CouplingMatrixType): scalar or filter coupling
             coupling_matrix_order (optional, int): order of the PU filter coupling matrix
@@ -168,45 +174,94 @@ class FeedbackLoop(nn.Module):
             device (torch.device): the training device, CPU or CUDA
         """
         super().__init__()
+        self.sample_rate = sample_rate
         self.num_groups = num_groups
         self.num_delay_lines_per_group = num_delay_lines_per_group
         self.delays = delays
         self.num_delays = len(self.delays)
         self.use_absorption_filters = use_absorption_filters
         self.device = device
-
-        # whether to use absorption filters or scalar gains in delay lines
-        if self.use_absorption_filters:
-            filter_order = gains.shape[1]
-            # absorption gains as IIR filters with Prony's method
-            if gains.ndim == 3:
-                self.delay_line_gains = IIRFilter(filter_order,
-                                                  self.num_delays,
-                                                  gains[..., 0],
-                                                  gains[..., 1],
-                                                  device=self.device)
-            # absorption gains as SOS with GEQ fitting
-            else:
-                self.delay_line_gains = []
-                for k in range(self.num_delays):
-                    delay_line_biquads = BiquadCascade(filter_order,
-                                                       gains[k, :, :, 0],
-                                                       gains[k, :, :, 1])
-                    self.delay_line_gains.append(
-                        SOSFilter(filter_order,
-                                  delay_line_biquads,
-                                  device=self.device))
-        else:
-            self.delay_line_gains = gains
-
         self._eps = 1e-9
         self.coupling_matrix_type = coupling_matrix_type
         self.coupling_matrix_order = coupling_matrix_order
+        self._init_absorption(gains, common_decay_times)
         self._init_feedback_matrix(colorless_feedback_matrix)
+
+    def _init_absorption(self,
+                         gains: Optional[torch.Tensor] = None,
+                         common_decay_times: Optional[List] = None):
+        """
+        Initialise the absorption gains/filters
+        Args:
+            gains : Delay line gains/filters. If None, they are learnable
+        """
+        if gains is None:
+            if self.use_absorption_filters:
+                logger.error("Cannot learn absorption filters yet")
+            else:
+                logger.info("Learning common decay times...")
+                if common_decay_times is None:
+                    lower_decay_time = 100 * 1e-3
+                    upper_decay_time = 2000 * 1e-3
+                    random_init_decay_times = lower_decay_time + (
+                        upper_decay_time - lower_decay_time) * torch.rand(
+                            self.num_groups)
+                    self.common_decay_times = nn.Parameter(
+                        random_init_decay_times)
+                else:
+                    logger.info(
+                        "Initialising with known common decay times...")
+                    # initialise with pre-calculated decay times and then fine-tune it
+                    self.common_decay_times = nn.Parameter(
+                        torch.tensor(common_decay_times.squeeze()))
+
+                self.delays_by_group = [
+                    torch.tensor(
+                        self.delays[i:i + self.num_delay_lines_per_group],
+                        device=self.device) for i in range(
+                            0, self.num_delays, self.num_delay_lines_per_group)
+                ]
+                self.delay_line_gains = torch.cat([
+                    decay_times_to_gain_per_sample(
+                        self.common_decay_times[i], self.delays_by_group[i],
+                        torch.tensor(self.sample_rate))
+                    for i in range(self.num_groups)
+                ]).to(self.device)
+        else:
+            logger.info("Using provided common decay times...")
+            # whether to use absorption filters or scalar gains in delay lines
+            if self.use_absorption_filters:
+                logger.info("Using absorption filters")
+                filter_order = gains.shape[1]
+                # absorption gains as IIR filters with Prony's method
+                if gains.ndim == 3:
+                    self.delay_line_gains = IIRFilter(filter_order,
+                                                      self.num_delays,
+                                                      gains[..., 0],
+                                                      gains[..., 1],
+                                                      device=self.device)
+                # absorption gains as SOS with GEQ fitting
+                else:
+                    self.delay_line_gains = []
+                    for k in range(self.num_delays):
+                        delay_line_biquads = BiquadCascade(
+                            filter_order, gains[k, :, :, 0], gains[k, :, :, 1])
+                        self.delay_line_gains.append(
+                            SOSFilter(filter_order,
+                                      delay_line_biquads,
+                                      device=self.device))
+            else:
+                logger.info("Using absorption gains")
+                self.delay_line_gains = gains
 
     def _init_feedback_matrix(self,
                               colorless_feedback_matrix: Optional[
                                   torch.tensor] = None):
+        """
+        Initialise feedback matrix
+        Args:
+            colorless_feedback_matrix: If pre-optimised feedback matrix is provided, then use it
+        """
         # orthonormal parameterisation of the matrices in M
         self.ortho_param = nn.Sequential(Skew(), MatrixExponential())
 
@@ -409,12 +464,21 @@ class FeedbackLoop(nn.Module):
                 torch.norm(self.unit_vectors, dim=0, keepdim=True) + self._eps)
             coupled_feedback_matrix = self.get_coupled_feedback_matrix()
 
-            return (M, Phi, L0, unit_vectors, coupled_feedback_matrix)
+        delay_line_gains = self.delay_line_gains
+        if hasattr(self, 'common_decay_times'):
+            return (M, Phi, L0, unit_vectors, coupled_feedback_matrix,
+                    delay_line_gains, self.common_decay_times)
+        else:
+            return (M, Phi, L0, unit_vectors, coupled_feedback_matrix,
+                    delay_line_gains)
 
     @torch.no_grad()
     def get_param_dict(self) -> Dict:
         """Return the model parameters as a dict"""
         param_np = {}
+        param_np['delay_line_gains'] = self.delay_line_gains
+        if hasattr(self, 'common_decay_times'):
+            param_np['common_decay_times'] = self.common_decay_times
         if self.coupling_matrix_type == CouplingMatrixType.RANDOM:
             param_np[
                 'coupled_feedback_matrix'] = self.coupled_feedback_matrix.squeeze(

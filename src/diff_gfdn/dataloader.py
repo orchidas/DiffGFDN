@@ -134,7 +134,7 @@ class RIRData:
     @property
     def freq_bins_rad(self):
         """Frequency bins in radians"""
-        return rfftfreq(self.num_freq_bins)
+        return rfftfreq(self.num_freq_bins) * 2 * np.pi
 
     @property
     def freq_bins_hz(self):
@@ -189,7 +189,9 @@ class RoomDataset(ABC):
                  room_start_coord: List,
                  band_centre_hz: Optional[ArrayLike] = None,
                  amplitudes: Optional[NDArray] = None,
+                 amplitudes_norm: Optional[NDArray] = None,
                  noise_floor: Optional[NDArray] = None,
+                 noise_floor_norm: Optional[NDArray] = None,
                  absorption_coeffs: Optional[List] = None,
                  aperture_coords: Optional[List] = None,
                  mixing_time_ms: float = 20.0,
@@ -223,7 +225,9 @@ class RoomDataset(ABC):
         self.band_centre_hz = band_centre_hz
         self.common_decay_times = common_decay_times
         self.noise_floor = noise_floor
+        self.noise_floor_norm = noise_floor_norm
         self.amplitudes = amplitudes
+        self.amplitudes_norm = amplitudes_norm
         self.num_rec = self.receiver_position.shape[0]
         self.num_src = self.source_position.shape[
             0] if self.source_position.ndim > 1 else 1
@@ -235,6 +239,7 @@ class RoomDataset(ABC):
         self.mixing_time_ms = mixing_time_ms
         self.nfft = nfft
         self._eps = 1e-12
+        self.rir_mag_response = rfft(self.rirs, n=self.num_freq_bins, axis=-1)
         self.early_late_split()
         # create 3D mesh
         self.mesh_3D = self.get_3D_meshgrid(grid_spacing_m=0.3)
@@ -266,17 +271,12 @@ class RoomDataset(ABC):
     @property
     def freq_bins_rad(self):
         """Frequency bins in radians"""
-        return rfftfreq(self.num_freq_bins)
+        return rfftfreq(self.num_freq_bins) * 2 * np.pi
 
     @property
     def freq_bins_hz(self):
         """Frequency bins in Hz"""
         return rfftfreq(self.num_freq_bins, d=1.0 / self.sample_rate)
-
-    @property
-    def rir_mag_response(self):
-        """Frequency response of the RIRs, time along last axis"""
-        return rfft(self.rirs, n=self.num_freq_bins, axis=-1)
 
     def early_late_split(self, win_len_ms: float = 5.0):
         """Split the RIRs into early and late response based on mixing time"""
@@ -304,6 +304,18 @@ class RoomDataset(ABC):
         self.early_rir_mag_response = rfft(self.early_rirs,
                                            n=self.num_freq_bins,
                                            axis=-1)
+
+    def update_receiver_pos(self, new_receiver_pos: NDArray):
+        """Update receiver positions"""
+        self.receiver_position = new_receiver_pos
+        self.num_rec = self.receiver_position.shape[0]
+
+    def update_rirs(self, new_rirs: NDArray):
+        """Update room impulse responses"""
+        self.rirs = new_rirs
+        self.rir_length = new_rirs.shape[-1]
+        self.rir_mag_response = rfft(new_rirs, n=self.num_freq_bins, axis=-1)
+        self.early_late_split()
 
     def get_3D_meshgrid(self, grid_spacing_m: float) -> Meshgrid:
         """
@@ -427,7 +439,9 @@ class ThreeRoomDataset(RoomDataset):
                 band_centre_hz = srir_mat['band_centre_hz']
                 common_decay_times = srir_mat['common_decay_times']
                 amplitudes = srir_mat['amplitudes'].T
+                amplitudes_norm = srir_mat['amplitudes_norm'].T
                 noise_floor = srir_mat['noise_floor'].T
+                noise_floor_norm = srir_mat['noise_floor_norm'].T
                 nfft = config_dict.trainer_config.num_freq_bins
         except Exception as exc:
             raise FileNotFoundError("pickle file not read correctly") from exc
@@ -452,7 +466,9 @@ class ThreeRoomDataset(RoomDataset):
                          room_start_coord,
                          band_centre_hz,
                          amplitudes,
+                         amplitudes_norm,
                          noise_floor,
+                         noise_floor_norm,
                          absorption_coeffs,
                          aperture_coords,
                          nfft=nfft)
@@ -530,7 +546,7 @@ class MultiRIRDataset(data.Dataset):
         if new_sampling_radius in (1.0, None):
             # this ensures that we cover half the unit circle (other half is symmetric)
             self.z_values = torch.polar(torch.ones_like(freq_bins_rad),
-                                        freq_bins_rad * 2 * np.pi)
+                                        freq_bins_rad)
         else:
             assert new_sampling_radius > 1.0
             logger.info(
@@ -539,7 +555,7 @@ class MultiRIRDataset(data.Dataset):
             # sample outside the unit circle
             self.z_values = torch.polar(
                 new_sampling_radius * torch.ones_like(freq_bins_rad),
-                freq_bins_rad * 2 * np.pi)
+                freq_bins_rad)
 
         self.rir_mag_response = torch.tensor(room_data.rir_mag_response)
         self.late_rir_mag_response = torch.tensor(
@@ -605,7 +621,7 @@ class SingleRIRDataset(data.Dataset):
         if new_sampling_radius in (1.0, None):
             # this ensures that we cover half the unit circle (other half is symmetric)
             self.z_values = torch.polar(torch.ones_like(freq_bins_rad),
-                                        freq_bins_rad * 2 * np.pi)
+                                        freq_bins_rad)
         else:
             assert new_sampling_radius > 1.0
             logger.info(
@@ -614,7 +630,7 @@ class SingleRIRDataset(data.Dataset):
             # sample outside the unit circle
             self.z_values = torch.polar(
                 new_sampling_radius * torch.ones_like(freq_bins_rad),
-                freq_bins_rad * 2 * np.pi)
+                freq_bins_rad)
 
         self.rir_mag_response = torch.tensor(rir_data.rir_mag_response)
         self.late_rir_mag_response = torch.tensor(
@@ -748,7 +764,8 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
                  train_valid_split_ratio: float = 0.8,
                  batch_size: int = 32,
                  shuffle: bool = True,
-                 new_sampling_radius: Optional[float] = None):
+                 new_sampling_radius: Optional[float] = None,
+                 drop_last: bool = False):
     """
     Get training and validation dataset
     Args:
@@ -760,7 +777,8 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
         shuffle (bool): whether to randomly shuffle data during training
         new_sampling_radius (float): to reduce time aliasing artifacts due to insufficient sampling
                                      in the frequency domain, sample points on a circle whose radius
-                                     is larger than 1 
+                                     is larger than 1
+        drop_last (bool): whether to drop the last batch if it has less elements than batch_size
     """
     if isinstance(room_data, RoomDataset):
         dataset = MultiRIRDataset(device,
@@ -776,14 +794,14 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
                                       batch_size=batch_size,
                                       shuffle=shuffle,
                                       device=device,
-                                      drop_last=True,
+                                      drop_last=drop_last,
                                       collate_fn=custom_collate)
 
         valid_loader = get_dataloader(valid_set,
                                       batch_size=batch_size,
                                       shuffle=shuffle,
                                       device=device,
-                                      drop_last=True,
+                                      drop_last=drop_last,
                                       collate_fn=custom_collate)
         return train_loader, valid_loader
 
@@ -797,5 +815,5 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
                                       batch_size=batch_size,
                                       shuffle=shuffle,
                                       device=device,
-                                      drop_last=False)
+                                      drop_last=drop_last)
         return train_loader

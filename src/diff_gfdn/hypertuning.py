@@ -63,8 +63,12 @@ def mlp_hyperparameter_tuning(trial, hyp_config: MLPTuningConfig):
             trainer_config.device,
             hyp_config.config_dict.feedback_loop_config,
             output_filter_config,
-            hyp_config.config_dict.use_absorption_filters,
-            common_decay_times=hyp_config.room_data.common_decay_times,
+            hyp_config.config_dict.decay_filter_config.use_absorption_filters,
+            common_decay_times=hyp_config.room_data.common_decay_times
+            if hyp_config.config_dict.decay_filter_config.
+            initialise_with_opt_values else None,
+            learn_common_decay_times=hyp_config.config_dict.
+            decay_filter_config.learn_common_decay_times,
             band_centre_hz=hyp_config.room_data.band_centre_hz,
             colorless_fdn_params=hyp_config.colorless_fdn_params,
             use_colorless_loss=trainer_config.use_colorless_loss)
@@ -78,8 +82,12 @@ def mlp_hyperparameter_tuning(trial, hyp_config: MLPTuningConfig):
             hyp_config.config_dict.feedback_loop_config,
             hyp_config.config_dict.output_filter_config,
             hyp_config.config_dict.input_filter_config,
-            hyp_config.config_dict.use_absorption_filters,
-            common_decay_times=hyp_config.room_data.common_decay_times,
+            hyp_config.config_dict.decay_filter_config.use_absorption_filters,
+            common_decay_times=hyp_config.room_data.common_decay_times
+            if hyp_config.config_dict.decay_filter_config.
+            initialise_with_opt_values else None,
+            learn_common_decay_times=hyp_config.config_dict.
+            decay_filter_config.learn_common_decay_times,
             band_centre_hz=hyp_config.room_data.band_centre_hz,
             colorless_fdn_params=hyp_config.colorless_fdn_params,
             use_colorless_loss=trainer_config.use_colorless_loss,
@@ -102,4 +110,4 @@ def mlp_hyperparameter_tuning(trial, hyp_config: MLPTuningConfig):
               save_plot=True,
               filename='test_loss_vs_position',
               xaxis_label='Position #')
-    return trainer.valid_loss
+    return sum(trainer.valid_loss)
