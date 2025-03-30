@@ -89,13 +89,6 @@ def create_config(
                 'use_amp_preserving_filterbank': True,
             },
         },
-        # 'colorless_fdn_config': {
-        #     'use_colorless_prototype': True,
-        #     'batch_size': 4000,
-        #     'max_epochs': 15,
-        #     'lr': 0.01,
-        #     'alpha': 1,
-        # },
         'feedback_loop_config': {
             'coupling_matrix_type': 'scalar_matrix',
         },

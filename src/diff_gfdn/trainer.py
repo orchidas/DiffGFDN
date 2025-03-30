@@ -227,13 +227,6 @@ class Trainer:
                             individual_losses=self.individual_train_loss if
                             hasattr(self, 'individual_train_loss') else None))
 
-        # # for debugging
-        # for name, param in self.net.named_parameters():
-        #     if name in ('input_scalars', 'output_scalars',
-        #                 ) and param.requires_grad:
-        #         print(f"Parameter {name}: {param.data}")
-        #         print(f"Parameter {name} gradient: {param.grad.norm()}")
-
     def save_model(self, e: int):
         """Save the model at epoch number e"""
         dir_path = os.path.join(self.train_dir, 'checkpoints')

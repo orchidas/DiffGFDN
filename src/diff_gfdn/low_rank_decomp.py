@@ -33,7 +33,6 @@ def fit_filters_to_gains(target_gains: ArrayLike,
                       center_freq=torch.tensor(band_centre_hz),
                       shelving_crossover=torch.tensor(shelving_crossover_hz),
                       fs=fs)
-    print(b.shape, a.shape)
     filter_order = b.shape[0]
     biquads = BiquadCascade(filter_order, b, a)
     return SOSFilter(filter_order, biquads, device=device)

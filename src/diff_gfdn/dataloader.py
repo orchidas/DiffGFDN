@@ -60,10 +60,16 @@ class InputFeatures():
 
 @dataclass
 class Target():
-    # the frequency response of the target RIR, split into early and late parts
+    """
+    Contains the target labels of the dataset, i,e.,
+    the frequency response of the target RIR, split into early and late parts
+    """
     early_rir_mag_response: torch.tensor
     late_rir_mag_response: torch.tensor
     rir_mag_response: torch.tensor
+
+
+#############################CUSTOM DATA STRUCTURES########################
 
 
 class RIRData:
@@ -503,6 +509,9 @@ class ThreeRoomDataset(RoomDataset):
             sf.write(filepath, self.rirs[num_pos, :], int(self.sample_rate))
 
 
+##################TORCH DATASET AND DATALOADERS############################
+
+
 class MultiRIRDataset(data.Dataset):
 
     def __init__(self,
@@ -732,9 +741,9 @@ def get_dataloader(dataset: data.Dataset,
                    shuffle: bool = True,
                    device='cpu',
                    drop_last: bool = True,
-                   collate_fn: Optional = None) -> data.DataLoader:
+                   custom_collate_fn: Optional = None) -> data.DataLoader:
     """Create torch dataloader form given dataset"""
-    if collate_fn is None:
+    if custom_collate_fn is None:
         dataloader = data.DataLoader(
             dataset,
             batch_size=batch_size,
@@ -748,7 +757,7 @@ def get_dataloader(dataset: data.Dataset,
                                      shuffle=shuffle,
                                      generator=torch.Generator(device=device),
                                      drop_last=drop_last,
-                                     collate_fn=custom_collate)
+                                     collate_fn=custom_collate_fn)
 
     logger.info(f"Number of batches : {len(dataloader)}")
     return dataloader
@@ -795,14 +804,14 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
                                       shuffle=shuffle,
                                       device=device,
                                       drop_last=drop_last,
-                                      collate_fn=custom_collate)
+                                      custom_collate_fn=custom_collate)
 
         valid_loader = get_dataloader(valid_set,
                                       batch_size=batch_size,
                                       shuffle=shuffle,
                                       device=device,
                                       drop_last=drop_last,
-                                      collate_fn=custom_collate)
+                                      custom_collate_fn=custom_collate)
         return train_loader, valid_loader
 
     elif isinstance(room_data, RIRData):

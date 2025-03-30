@@ -1,5 +1,0 @@
-trainer_config:
-    device: 'mps'
-    train_dir: '/Users/dalsag1/Documents/aalto/projects/diff-gfdn/output'
-    ir_dir: '/Users/dalsag1/Documents/aalto/projects/diff-gfdn/audio'
-room_dataset_path: '/Users/dalsag1/Documents/datasets/Georg_3room_FDTD/srirs.pkl'

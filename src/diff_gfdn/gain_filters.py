@@ -336,26 +336,6 @@ class TanSigmoid(nn.Module):
         return torch.tan(np.pi * self.sigmoid(x) * 0.5)
 
 
-class InvertedReLU(nn.Module):
-    """ReLU activation between min_value (negative) and 0"""
-
-    def __init__(self, min_value: float):
-        super().__init__()
-        assert min_value < 0.0
-        self.min_value = min_value
-
-    def forward(self, x):
-        linear_part = torch.where((x > self.min_value) & (x < 0), x,
-                                  torch.tensor(0.0, device=x.device))
-
-        # Apply saturation
-        return torch.where(
-            x >= 0, torch.tensor(0.0, device=x.device),
-            torch.where(x <= self.min_value,
-                        torch.tensor(self.min_value, device=x.device),
-                        linear_part))
-
-
 #######################################MLP-RELATED###########################################
 
 
@@ -723,6 +703,7 @@ class Gains_from_MLP(nn.Module):
         encoding_type: FeatureEncodingType,
         position_type: str = "output_gains",
         device: Optional[torch.device] = 'cpu',
+        gain_limits: Optional[Tuple] = None,
     ):
         """
         Train the MLP to get scalar gains for each delay line
@@ -736,8 +717,7 @@ class Gains_from_MLP(nn.Module):
             encoding_type (str): whether to use one-hot encoding with the grid geometry information, 
                                  or directly use the sinusoidal encodings of the position 
                                  coordinates of the receiversas inputs to the MLP
-            compress_pole_factor (float): number between 0 and 1 that reduces the pole radii of the biquads and
-                                    prevents time domain aliasing
+            gain_limits (optional, tuple): range of the MLP output in the linear scale, specified as a tuple
         """
         super().__init__()
         self.num_groups = num_groups
@@ -768,7 +748,9 @@ class Gains_from_MLP(nn.Module):
                        num_params=1)
 
         # constraints on output gains
-        self.scaled_sigmoid = ScaledSigmoid(lower_limit=-1.0, upper_limit=1.0)
+        gain_limits = (-1.0, 1.0) if gain_limits is None else gain_limits
+        self.scaled_sigmoid = ScaledSigmoid(lower_limit=gain_limits[0],
+                                            upper_limit=gain_limits[1])
 
     def forward(self, x: Dict) -> torch.tensor:
         """
