@@ -8,7 +8,7 @@ from loguru import logger
 import numpy as np
 import pandas as pd
 import pyfar as pf
-from scipy.signal import fftconvolve, sosfilt, sosfreqz
+from scipy.signal import fftconvolve, sosfiltfilt
 import soundfile as sf
 import torch
 import yaml
@@ -19,41 +19,17 @@ from diff_gfdn.dataloader import load_dataset, ThreeRoomDataset
 from diff_gfdn.model import DiffGFDNVarReceiverPos
 from diff_gfdn.solver import run_training_var_receiver_pos
 from diff_gfdn.utils import get_response
-from run_model import dump_config_to_pickle
+from run_model import dump_config_to_pickle, load_and_validate_config
 
 # flake8: noqa: E231
 # pylint: disable=W0621, W0632, E0402
 
 
-def sum_and_normalize(group, subband_filters):
-    """
-    Ensure that the subband RIR has the same energy as the broadband RIR in each frequency band
-    """
+def sum_arrays(group):
+    """Sum subband RIRs to get a broadband RIR"""
     filtered = np.stack(group['filtered_time_samples'].values)
-    num_time_samp = filtered.shape[-1]
-    num_bands = filtered.shape[0]
-
-    # filters are in SOS format
-    if subband_filters.coefficients.ndim > 2:
-        h = np.array([
-            sosfreqz(subband_filters.coefficients[b_idx, ...],
-                     worN=num_time_samp // 2 + 1)[1]
-            for b_idx in range(num_bands)
-        ])
-        norm_factor = 1.0 / np.sqrt(
-            np.sum(np.fft.irfft(h, axis=-1)**2, axis=-1))
-
-    # filters are in FIR format
-    else:
-        norm_factor = 1.0 / np.sqrt(
-            np.sum(np.power(subband_filters.coefficients, 2), axis=-1))
-
-    normalized_filtered = filtered * np.repeat(
-        norm_factor[:, np.newaxis], num_time_samp, axis=-1)
-
-    # sum along frequencies
-    summed_normalized_filtered = np.sum(normalized_filtered, axis=0)
-    return summed_normalized_filtered
+    summed_filtered = np.sum(filtered, axis=0)
+    return summed_filtered
 
 
 def create_config(
@@ -62,7 +38,7 @@ def create_config(
     freq_range: List,
     config_path: str,
     write_config: bool = True,
-    # seed_base: int = 23463,
+    seed_base: int = 23463,
 ) -> DiffGFDNConfig:
     """Create config file for each subband"""
 
@@ -73,22 +49,25 @@ def create_config(
     elif cur_freq_hz == 125:
         num_hidden_layers = 1
         num_neurons_per_layer = 2**4
-    elif cur_freq_hz in (250, 500):
+    elif cur_freq_hz in (250, 500, 1000):
         num_hidden_layers = 5
         num_neurons_per_layer = 2**4
     else:
         num_hidden_layers = 3
         num_neurons_per_layer = 2**7
 
-    # seed = seed_base + cur_freq_hz
+    seed = seed_base + cur_freq_hz + np.random.randint(0, 100, 1).item()
     config_dict = {
+        'seed': seed,
         'room_dataset_path': data_path,
         'sample_rate': 32000.0,
         'num_delay_lines': 12,
-        'use_absorption_filters': False,
-        # 'seed': seed,
+        'decay_filter_config': {
+            'use_absorption_filters': False,
+            'learn_common_decay_times': False,
+            'initialise_with_opt_values': True,
+        },
         'trainer_config': {
-            'max_epochs': 10,
             'batch_size': 32,
             'device': 'cuda',
             'save_true_irs': True,
@@ -96,25 +75,28 @@ def create_config(
             'num_freq_bins': 131072,
             'use_edc_mask': True,
             'use_colorless_loss': False,
-            # 'edc_loss_weight': 10,
-            # 'use_colorless_loss': True,
+            'edc_loss_weight': 10,
+            'sparsity_loss_weight': 2,
+            'use_colorless_loss': True,
+            'use_asym_spectral_loss': True,
             'train_dir':
-            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_prototype/',
+            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_prototype/',
+            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
                 'frequency_range': freq_range,
+                'use_amp_preserving_filterbank': True,
             },
         },
-        'colorless_fdn_config': {
-            'use_colorless_prototype': True,
-            'batch_size': 4000,
-            'max_epochs': 15,
-            'lr': 0.01,
-            'alpha': 1,
-        },
+        # 'colorless_fdn_config': {
+        #     'use_colorless_prototype': True,
+        #     'batch_size': 4000,
+        #     'max_epochs': 15,
+        #     'lr': 0.01,
+        #     'alpha': 1,
+        # },
         'feedback_loop_config': {
             'coupling_matrix_type': 'scalar_matrix',
         },
@@ -129,7 +111,8 @@ def create_config(
     # writing the dictionary to a YAML file
     if write_config:
         logger.info("Writing to config file")
-        cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz_colorless_prototype.yml'
+        cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz'\
+        + '_colorless_loss_diff_delays.yml'
         with open(cur_config_path, "w", encoding="utf-8") as file:
             yaml.safe_dump(config_dict, file, default_flow_style=False)
 
@@ -153,7 +136,6 @@ def training(freqs_list: List, config_dicts: List[DiffGFDNConfig]):
             if config_dict.trainer_config.train_dir is not None:
                 # remove directory if it already exists, we want it to be overwritten
                 if os.path.isdir(config_dict.trainer_config.train_dir):
-                    print("I am here")
                     shutil.rmtree(config_dict.trainer_config.train_dir)
 
                 # create the output directory
@@ -170,15 +152,17 @@ def training(freqs_list: List, config_dicts: List[DiffGFDNConfig]):
         logger.info('Training complete')
 
 
-def inferencing(freqs_list: List,
-                config_dicts: List[DiffGFDNConfig],
-                save_filename: str,
-                output_path: Path,
-                use_amp_preserve_filterbank: bool = True):
+def inferencing(
+    freqs_list: List,
+    config_dicts: List[DiffGFDNConfig],
+    save_filename: str,
+    output_path: Path,
+):
     """Run inferencing and save the full band RIRs for each position"""
 
     # prepare the reconstructing filterbank
-    if use_amp_preserve_filterbank:
+    if config_dicts[
+            0].trainer_config.subband_process_config.use_amp_preserving_filterbank:
         subband_filters, _ = pf.dsp.filter.reconstructing_fractional_octave_bands(
             None,
             num_fractions=config_dicts[0].trainer_config.
@@ -246,8 +230,12 @@ def inferencing(freqs_list: List,
                 trainer_config.device,
                 config_dict.feedback_loop_config,
                 config_dict.output_filter_config,
-                use_absorption_filters=False,
-                common_decay_times=room_data.common_decay_times,
+                config_dict.decay_filter_config.use_absorption_filters,
+                common_decay_times=room_data.common_decay_times
+                if config_dict.decay_filter_config.initialise_with_opt_values
+                else None,
+                learn_common_decay_times=config_dict.decay_filter_config.
+                learn_common_decay_times,
                 use_colorless_loss=trainer_config.use_colorless_loss,
                 colorless_fdn_params=colorless_fdn_params)
 
@@ -279,13 +267,13 @@ def inferencing(freqs_list: List,
                 for num_pos in range(position.shape[0]):
                     cur_rir = h[num_pos, :].detach().cpu().numpy()
 
-                    if use_amp_preserve_filterbank:
+                    if trainer_config.subband_process_config.use_amp_preserving_filterbank:
                         cur_rir_filtered = fftconvolve(
                             cur_rir,
                             subband_filters.coefficients[k, :],
-                            mode='same')
+                            mode='full')
                     else:
-                        cur_rir_filtered = sosfilt(
+                        cur_rir_filtered = sosfiltfilt(
                             subband_filters.coefficients[k, ...], cur_rir)
 
                     # save filtered RIRs
@@ -317,9 +305,7 @@ def inferencing(freqs_list: List,
     logger.info('Saving synthesised RIRs')
 
     # Group by position and sum the filtered_time_samples over each frequency band,
-    # and normalise by the energy of 'time_samples'
-    synth_rirs = synth_subband_rirs.groupby('position').apply(
-        lambda group: sum_and_normalize(group, subband_filters))
+    synth_rirs = synth_subband_rirs.groupby('position').apply(sum_arrays)
 
     # Convert to DataFrame if needed
     synth_rirs_df = synth_rirs.reset_index()
@@ -353,39 +339,41 @@ def main(freqs_list_train: Optional[List] = None):
     config_dicts = []
     training_complete = freqs_list_train is None
 
-    for k in range(len(freqs_list)):
-        cur_data_path = f'{data_path}/srirs_band_centre={freqs_list[k]}Hz.pkl'
-
-        # generate config file
-        config_dict = create_config(freqs_list[k],
-                                    cur_data_path,
-                                    freq_range=[freqs_list[0], freqs_list[-1]],
-                                    config_path=config_path,
-                                    write_config=not training_complete)
-        config_dicts.append(config_dict)
-    logger.info("Done creating config files")
-
     if not training_complete:
-        freq_idx_to_train = [
-            freqs_list.index(elem) if elem in freqs_list else -1
-            for elem in freqs_list_train
-        ]
-        train_config_dicts = [config_dicts[idx] for idx in freq_idx_to_train]
+        for k in range(len(freqs_list_train)):
+            cur_data_path = f'{data_path}/srirs_band_centre={int(freqs_list_train[k])}Hz.pkl'
+
+            # generate config file
+            config_dict = create_config(
+                int(freqs_list_train[k]),
+                cur_data_path,
+                freq_range=[freqs_list[0], freqs_list[-1]],
+                config_path=config_path,
+                write_config=not training_complete)
+            config_dicts.append(config_dict)
+        logger.info("Done creating config files")
+
         # run training
-        training(freqs_list_train, train_config_dicts)
+        training(freqs_list_train, config_dicts)
 
     if training_complete:
+        config_dicts = []
+        for k in range(len(freqs_list)):
+            cur_config_path = f'{config_path}/treble_data_grid_training_{freqs_list[k]}Hz'\
+            + '_colorless_loss.yml'
+            cur_config_dict = load_and_validate_config(cur_config_path,
+                                                       DiffGFDNConfig)
+            config_dicts.append(cur_config_dict)
+
+        logger.info("Done reading config files")
         save_filename = Path(
-            'output/treble_data_grid_training_final_rirs_colorless_prototype.pkl'
+            'output/treble_data_grid_training_final_rirs_colorless_loss_diff_delays.pkl'
         ).resolve()
         output_path = Path(
-            "audio/grid_rir_treble_subband_processing_colorless_prototype")
+            "audio/grid_rir_treble_subband_processing_colorless_loss_diff_delays"
+        )
 
-        inferencing(freqs_list,
-                    config_dicts,
-                    save_filename,
-                    output_path,
-                    use_amp_preserve_filterbank=True)
+        inferencing(freqs_list, config_dicts, save_filename, output_path)
 
 
 if __name__ == '__main__':

@@ -23,16 +23,21 @@ class mse_loss(nn.Module):
     def forward(self, y_pred: torch.tensor, y_true: torch.tensor):
         """
         Args:
-            y_pred (torch.tensor): output of the model
-            y_true (torch.tensor): expected output
+            y_pred (torch.tensor): output of the model, array of num_freq_bins, or num_del_lines x num_freq_bins
+            y_true (torch.tensor): expected output, array of num_freq_bins, or num_del_lines x num_freq_bins
         """
-        # loss on system's output
-        y_pred_sum = torch.sum(y_pred, dim=-1)
-        loss = torch.mean(
-            torch.pow(
-                torch.abs(y_pred_sum) - torch.abs(y_true),
-                2 * torch.ones(y_pred.size(0))))
-
+        if y_pred.ndim > 1:
+            # loss along delay lines
+            loss = torch.mean(torch.pow(
+                (torch.abs(y_pred) - torch.abs(y_true)), 2),
+                              dim=0)
+            # loss along frequencies
+            loss = torch.mean(loss)
+        else:
+            # loss along frequencies
+            loss = torch.mean(torch.pow(
+                (torch.abs(y_pred) - torch.abs(y_true)), 2),
+                              dim=-1)
         return loss
 
 
@@ -46,19 +51,23 @@ class amse_loss(nn.Module):
     def forward(self, y_pred: torch.tensor, y_true: torch.tensor):
         """
         Args:
-            y_pred (torch.tensor): output of the model
-            y_true (torch.tensor): expected output
+            y_pred (torch.tensor): output of the model, array of num_freq_bins, or num_del_lines x num_freq_bins
+            y_true (torch.tensor): expected output, array of num_freq_bins, or num_del_lines x num_freq_bins
         """
         # loss on system's output
         loss = self.p_loss(y_pred, y_true)
-        return loss
+        if y_pred.ndim > 1:
+            # loss along frequencies
+            return torch.mean(loss)
+        else:
+            return loss
 
     def p_loss(self, y_pred: torch.tensor, y_true: torch.tensor):
         """Higher loss if the magnitude exceeds the desired magnitude"""
-        gT = 2 * torch.ones(len(y_pred))
+        gT = 2 * torch.ones(y_pred.shape, dtype=torch.float32)
         gT = gT + 2 * torch.gt(
             (torch.abs(y_pred) - torch.abs(y_true)), 1).type(torch.uint8)
-        loss = torch.mean(
-            torch.pow((torch.abs(y_pred) - torch.abs(y_true)), gT))
-
+        loss = torch.mean(torch.pow((torch.abs(y_pred) - torch.abs(y_true)),
+                                    gT),
+                          dim=0)
         return loss

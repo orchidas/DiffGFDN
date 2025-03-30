@@ -8,18 +8,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.fft import rfftfreq
-from scipy.signal import freqz, sos2zpk, sosfreqz
+from scipy.signal import freqz, sos2zpk, sosfilt, sosfreqz
 from scipy.spatial.distance import cdist
 from slope2noise.rooms import RoomGeometry
 from slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering, schroeder_backward_int
 import torch
+from torch import nn
 from tqdm import tqdm
 
 from .analysis import get_amps_for_rir
+from .config.config import DiffGFDNConfig
 from .dataloader import RoomDataset
 from .filters.geq import eq_freqs
 from .losses import get_edr_from_stft, get_stft_torch
-from .utils import db, db2lin, ms_to_samps
+from .utils import db, db2lin, ms_to_samps, spectral_flatness
 
 # flake8: noqa:E231
 
@@ -75,6 +77,75 @@ def plot_t60_filter_response(
     if save_path is not None:
         fig.savefig(
             Path(f'{save_path}_absorption_filter_response.png').resolve())
+
+
+def plot_magnitude_response(
+    room_data: RoomDataset,
+    config_dict: DiffGFDNConfig,
+    model: nn.Module,
+    save_path: Optional[str] = None,
+):
+    """Plot the magnitude response of each FDN"""
+
+    trainer_config = config_dict.trainer_config
+    freq_bins_rad = torch.tensor(room_data.freq_bins_rad)
+    freq_bins_hz = room_data.freq_bins_hz
+    z_values = torch.polar(torch.ones_like(freq_bins_rad),
+                           freq_bins_rad * 2 * np.pi)
+
+    max_epochs = trainer_config.max_epochs
+    checkpoint_dir = Path(trainer_config.train_dir + 'checkpoints/').resolve()
+    init_checkpoint = torch.load(f'{checkpoint_dir}/model_e-1.pt',
+                                 weights_only=True,
+                                 map_location=torch.device('cpu'))
+    model.load_state_dict(init_checkpoint, strict=False)
+    model.eval()
+    H_sub_fdn_init, _ = model.sub_fdn_output(z_values)
+
+    final_checkpoint = torch.load(f'{checkpoint_dir}/model_e{max_epochs-1}.pt',
+                                  weights_only=True,
+                                  map_location=torch.device('cpu'))
+    # Load the trained model state
+    model.load_state_dict(final_checkpoint, strict=False)
+    model.eval()
+    H_sub_fdn_final, _ = model.sub_fdn_output(z_values)
+
+    # Create subplots
+    fig, axes = plt.subplots(room_data.num_rooms,
+                             1,
+                             figsize=(8, 10),
+                             sharex=True)
+
+    for i in range(room_data.num_rooms):
+        axes[i].semilogx(freq_bins_hz,
+                         db(H_sub_fdn_init[:, i].detach().numpy()),
+                         label="Initial",
+                         linestyle="--")
+        axes[i].semilogx(
+            freq_bins_hz,
+            db(H_sub_fdn_final[:, i].detach().numpy()),
+            label="Final",
+            linestyle="-",
+            alpha=0.8,
+        )
+
+        axes[i].set_ylabel("Magnitude (dB)")
+        axes[i].set_xlabel('Frequencies (Hz)')
+        axes[i].set_title(f"FDN {i+1}")
+        axes[i].grid(True)
+        axes[i].legend()
+        logger.info(
+            f'Init FDN spectral flatness is {spectral_flatness(db(H_sub_fdn_init[:, i].detach().numpy())):.3f}'
+        )
+        logger.info(
+            f'Final FDN spectral flatness is {spectral_flatness(db(H_sub_fdn_final[:, i].detach().numpy())):.3f}'
+        )
+
+    if save_path is not None:
+        fig.savefig(save_path)
+
+    plt.show()
+    return axes
 
 
 def plot_polynomial_matrix_impulse_response(
@@ -331,7 +402,8 @@ def plot_subband_edc(h_true: ArrayLike,
                      pos_to_investigate: List,
                      mixing_time_ms: float = 20.0,
                      crop_end_ms: float = 5.0,
-                     save_path: Optional[str] = None):
+                     save_path: Optional[str] = None,
+                     use_amp_preserving_filterbank: bool = True):
     """
     Plot true and synthesised EDC curves for each frequency band, as a function of epoch number
     Args:
@@ -348,11 +420,13 @@ def plot_subband_edc(h_true: ArrayLike,
     crop_end_samp = ms_to_samps(crop_end_ms, fs)
 
     trunc_true_ir = h_true[mixing_time_samp:-crop_end_samp]
-    filtered_true_ir = octave_filtering(trunc_true_ir,
-                                        fs,
-                                        band_centre_hz,
-                                        compensate_filter_energy=True,
-                                        use_pyfar_filterbank=True)
+    filtered_true_ir = octave_filtering(
+        trunc_true_ir,
+        fs,
+        band_centre_hz,
+        compensate_filter_energy=True,
+        use_amp_preserving_filterbank=use_amp_preserving_filterbank,
+    )
     time = np.linspace(0, (len(trunc_true_ir) - 1) / fs, len(trunc_true_ir))
 
     num_bands = len(band_centre_hz)
@@ -366,11 +440,12 @@ def plot_subband_edc(h_true: ArrayLike,
         approx_ir = h_approx[epoch]
         trunc_approx_ir = approx_ir[mixing_time_samp:mixing_time_samp +
                                     len(trunc_true_ir)]
-        filtered_approx_ir = octave_filtering(trunc_approx_ir,
-                                              fs,
-                                              band_centre_hz,
-                                              compensate_filter_energy=True,
-                                              use_pyfar_filterbank=True)
+        filtered_approx_ir = octave_filtering(
+            trunc_approx_ir,
+            fs,
+            band_centre_hz,
+            compensate_filter_energy=True,
+            use_amp_preserving_filterbank=use_amp_preserving_filterbank)
         leg.append(f'Epoch = {epoch}')
 
         for k in range(num_bands):
@@ -393,12 +468,14 @@ def plot_subband_edc(h_true: ArrayLike,
         display.display(fig)  # Display the updated figure
         display.clear_output(
             wait=True)  # Clear the previous output to keep updates in place
+        plt.pause(0.1)
 
     # Collect handles and labels from all axes
     handles, labels = [], []
     for handle, label in zip(*ax[-1].get_legend_handles_labels()):
         handles.append(handle)
         labels.append(label)
+
     fig.legend(handles,
                labels,
                loc="upper right",
@@ -513,6 +590,7 @@ def plot_edc_error_in_space(
     save_path: Optional[str] = None,
     pos_sorted: bool = False,
     norm_edc: bool = False,
+    use_amp_preserving_filterbank: bool = True,
 ):
     """
     Plot the EDC matching error in dB as a function of spatial location
@@ -595,19 +673,20 @@ def plot_edc_error_in_space(
                 room_data.sample_rate,
                 room_data.band_centre_hz,
                 compensate_filter_energy=True,
-                use_pyfar_filterbank=True)
+                use_amp_preserving_filterbank=use_amp_preserving_filterbank)
             cur_est_rirs_filtered = octave_filtering(
                 cur_est_rirs,
                 room_data.sample_rate,
                 room_data.band_centre_hz,
                 compensate_filter_energy=True,
-                use_pyfar_filterbank=True)
+                use_amp_preserving_filterbank=use_amp_preserving_filterbank)
             save_name = f'{save_path}_{freq_to_plot / 1000: .0f}kHz\
             _src=({cur_src_pos[0]:.2f}, {cur_src_pos[1]:.2f}, {cur_src_pos[2]:.2f})'
 
         else:
             cur_original_rirs_filtered = cur_original_rirs[..., np.newaxis]
             cur_est_rirs_filtered = cur_est_rirs[..., np.newaxis]
+
             save_name = f'{save_path}_src=({cur_src_pos[0]:.2f}, {cur_src_pos[1]:.2f}, {cur_src_pos[2]:.2f})'
 
         est_rec_pos = np.asarray(all_pos)
@@ -638,6 +717,120 @@ def plot_edc_error_in_space(
             if save_path is not None else None)
 
 
+def plot_edr_error_in_space(
+    room_data: RoomDataset,
+    all_rirs: Union[NDArray, List],
+    all_pos: Union[NDArray, List],
+    scatter: bool = False,
+    save_path: Optional[str] = None,
+    pos_sorted: bool = False,
+):
+    """
+    Plot the EDR matching error in dB as a function of spatial location
+    Args:
+        room_data (RoomDataset): object containing information of room geometry, decay times and amplitudes
+        all_rirs (List): list of RIRs at all positions synthesized by the GFDN
+        all_pos (List): list of positions at which the RIRs are synthesized
+        freq_to_plot (optional, float): which frequency to plot the amplitudes at
+        scatter (bool): whether to make a scatter plot (discrete), or a surface plot (continuous)
+        save_path (optional, str): path to save the file
+        mixing_time_ms (float): truncate RIR before this time
+        pos_sorted (bool): whether the positions are sorted in all_{src,rec}_pos
+    """
+
+    def get_edr_error(
+        original_rirs: NDArray,
+        original_points: NDArray,
+        estimated_rirs: NDArray,
+        est_points: NDArray,
+        sample_rate: float,
+        win_size: int = 2**12,
+        hop_size: int = 2**11,
+    ):
+        """Get MSE error between the EDC mismatch"""
+
+        if not pos_sorted:
+            ordered_pos_idx = order_position_matrices(original_points,
+                                                      est_points)
+        else:
+            ordered_pos_idx = np.arange(0, len(est_points), dtype=np.int32)
+        est_rirs_ordered = estimated_rirs[ordered_pos_idx, ...]
+
+        S_orig, _, _ = get_stft_torch(
+            torch.tensor(original_rirs),
+            sample_rate,
+            win_size=win_size,
+            hop_size=hop_size,
+            nfft=win_size,
+        )
+        original_edr = get_edr_from_stft(S_orig).cpu().detach().numpy()
+
+        S_est, _, _ = get_stft_torch(
+            torch.tensor(est_rirs_ordered),
+            sample_rate,
+            win_size=win_size,
+            hop_size=hop_size,
+            nfft=win_size,
+        )
+        est_edr = get_edr_from_stft(S_est).cpu().detach().numpy()
+
+        # take mean error along time and frequency axies - first axis contains location
+        error_db = np.abs(original_edr - est_edr).mean(axis=(1, 2))
+        error_mse = np.linalg.norm(error_db) / original_points.shape[0]
+        return error_db, error_mse
+
+    num_rooms = room_data.num_rooms
+    room_dims = room_data.room_dims
+    start_coordinates = room_data.room_start_coord
+    aperture_coordinates = room_data.aperture_coords
+    room = RoomGeometry(room_data.sample_rate,
+                        num_rooms,
+                        np.array(room_dims),
+                        np.array(start_coordinates),
+                        aperture_coords=aperture_coordinates)
+    rec_points = np.array(room_data.receiver_position)
+    src_pos = np.array(room_data.source_position)
+    if src_pos.ndim == 1:
+        src_pos = src_pos[np.newaxis, :]
+    original_rirs = room_data.rirs
+
+    for src_idx in tqdm(range(len(src_pos))):
+        cur_src_pos = np.squeeze(src_pos[src_idx])
+        cur_est_rirs = np.squeeze(
+            all_rirs[[src_idx],
+                     ...]) if len(src_pos) > 1 else np.asarray(all_rirs)
+
+        cur_original_rirs = np.squeeze(
+            original_rirs[src_idx, ...]) if len(src_pos) > 1 else original_rirs
+
+        rir_len_samps = min(cur_original_rirs.shape[-1],
+                            cur_est_rirs.shape[-1])
+
+        cur_est_rirs = cur_est_rirs[..., :rir_len_samps]
+        cur_original_rirs = cur_original_rirs[..., :rir_len_samps]
+
+        est_rec_pos = np.asarray(all_pos)
+        # get error metrics
+        error_func, error_mse = get_edr_error(cur_original_rirs.copy(),
+                                              rec_points, cur_est_rirs.copy(),
+                                              est_rec_pos,
+                                              room_data.sample_rate)
+
+        logger.info(f'The RMSE in matching EDR is {error_mse} dB')
+        var_to_plot = db2lin(error_func)
+        save_name = f'{save_path}_src=({cur_src_pos[0]:.2f}, {cur_src_pos[1]:.2f}, {cur_src_pos[2]:.2f})'
+
+        # plot the error in amplitude matching
+        room.plot_edc_error_at_receiver_points(
+            rec_points,
+            cur_src_pos,
+            var_to_plot[..., np.newaxis],
+            scatter_plot=scatter,
+            cur_freq_hz=None,
+            save_path=Path(f'{save_name}_edr_error_in_space.png').resolve()
+            if save_path is not None else None)
+
+
 def plot_amps_in_space(room_data: RoomDataset,
                        all_rirs: Union[NDArray, List],
                        all_rec_pos: Union[NDArray, List],
@@ -646,7 +839,8 @@ def plot_amps_in_space(room_data: RoomDataset,
                        save_path: Optional[str] = None,
                        pos_sorted: bool = False,
                        plot_original_amps: bool = True,
-                       plot_amp_error: bool = True):
+                       plot_amp_error: bool = True,
+                       use_amp_preserving_filterbank: bool = True):
     """
     Plot the amplitudes as a function of spatial location at frequency 'freq_to_plot' Hz
     Args:
@@ -710,11 +904,12 @@ def plot_amps_in_space(room_data: RoomDataset,
 
         # do subband filtering
         if is_in_subbands:
-            est_rirs_filtered = octave_filtering(est_rirs,
-                                                 room_data.sample_rate,
-                                                 room_data.band_centre_hz,
-                                                 compensate_filter_energy=True,
-                                                 use_pyfar_filterbank=True)
+            est_rirs_filtered = octave_filtering(
+                est_rirs,
+                room_data.sample_rate,
+                room_data.band_centre_hz,
+                compensate_filter_energy=True,
+                use_amp_preserving_filterbank=use_amp_preserving_filterbank)
             t_vals_expanded = np.tile(
                 np.squeeze(t_vals)[np.newaxis, ...], (num_est_rirs, 1, 1))
             band_centre_hz = room_data.band_centre_hz
@@ -848,7 +1043,7 @@ def plot_learned_svf_response(
              torch.tensor([shelving_crossover[-1]]))) / fs
         svf_freqs = svf_freqs.numpy()
 
-    fig, ax = plt.subplots(num_groups, 1)
+    fig, ax = plt.subplots(num_groups, 1, figsize=(6, 8))
     fig2, ax2 = plt.subplots(num_groups,
                              1,
                              subplot_kw={'projection': 'polar'},
@@ -874,6 +1069,11 @@ def plot_learned_svf_response(
             opt_svf_params = svf_params
 
         # loop over groups
+        ir_len = 2 * fs
+        ir = np.zeros((ir_len, num_groups))
+        impulse = np.zeros(ir_len)
+
+        impulse[0] = 1.0
         for n in range(num_groups):
             cur_biquad_coeffs = opt_output_biquad_coeffs[n]
             num_biquads = cur_biquad_coeffs.shape[0]
@@ -885,6 +1085,8 @@ def plot_learned_svf_response(
             freqs, filt_response = sosfreqz(cur_biquad_coeffs,
                                             worN=2**9,
                                             fs=fs)
+
+            # plot magnitude response
             ax[n].semilogx(freqs,
                            db(filt_response),
                            label=f'Group {n}, epoch {i}')
@@ -901,27 +1103,36 @@ def plot_learned_svf_response(
                         label=f'Group {n}, epoch {i}')
 
             if verbose:
-
-                # print the theoretical poles and zeros
-                cur_svf_params = opt_svf_params[n, ...]
-                svf_res = cur_svf_params[:, 0]
-                svf_gain = cur_svf_params[:, 1]
-                pole_radius = np.sqrt(
-                    (1 - svf_freqs**2)**2 + 4 * (svf_freqs**2) *
-                    (1 - svf_res**2)) / (svf_freqs**2 + 1 +
-                                         2 * svf_freqs * svf_res)
-                pole_freqs = np.atan2(2 * svf_freqs * np.sqrt(1 - svf_res**2),
-                                      (1 - svf_freqs**2))
-
-                print(f'Pole frequencies (exp): {pole_freqs / np.pi * fs / 2}')
-                print(
-                    f'Pole frequencies (est): {np.angle(poles[np.angle(poles) > 0]) / np.pi * fs / 2}'
+                # energy of the filters
+                ir[:, n] = sosfilt(cur_biquad_coeffs, impulse)
+                logger.info(
+                    f'Energy of the filters for {n+1} group is {np.sqrt(np.sum(np.power(ir[:, n], 2))):.3f}'
                 )
-                print(f'Pole radius (exp): {pole_radius}')
-                print(f'Pole radius (est): {np.abs(poles)}')
 
-                print(f'SVF gain: {db2lin(svf_gain)}')
-                print(f'SVF Q factor: {svf_res}')
+                if opt_svf_params is not None:
+                    # print the theoretical poles and zeros
+                    cur_svf_params = opt_svf_params[n, ...]
+                    svf_res = cur_svf_params[:, 0]
+                    svf_gain = cur_svf_params[:, 1]
+                    pole_radius = np.sqrt(
+                        (1 - svf_freqs**2)**2 + 4 * (svf_freqs**2) *
+                        (1 - svf_res**2)) / (svf_freqs**2 + 1 +
+                                             2 * svf_freqs * svf_res)
+                    pole_freqs = np.atan2(
+                        2 * svf_freqs * np.sqrt(1 - svf_res**2),
+                        (1 - svf_freqs**2))
+
+                    print(
+                        f'Pole frequencies (exp): {pole_freqs / np.pi * fs / 2}'
+                    )
+                    print(
+                        f'Pole frequencies (est): {np.angle(poles[np.angle(poles) > 0]) / np.pi * fs / 2}'
+                    )
+                    print(f'Pole radius (exp): {pole_radius}')
+                    print(f'Pole radius (est): {np.abs(poles)}')
+
+                    print(f'SVF gain: {db2lin(svf_gain)}')
+                    print(f'SVF Q factor: {svf_res}')
 
     # set axis labels
     ax[0].legend(loc='upper right', bbox_to_anchor=(1.5, 1.0))
@@ -938,7 +1149,7 @@ def plot_learned_svf_response(
             -22.5)  # Move radial labels away from plotted line
         ax2[n].grid(True)
 
-    fig.subplots_adjust(hspace=0.3 * num_groups)
+    fig.subplots_adjust(hspace=0.2 * num_groups)
     fig2.subplots_adjust(hspace=0.5)
 
     if save_path is not None:

@@ -327,8 +327,12 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
                 trainer_config.device,
                 config_dict.feedback_loop_config,
                 config_dict.output_filter_config,
-                config_dict.use_absorption_filters,
-                common_decay_times=room_data.common_decay_times,
+                config_dict.decay_filter_config.use_absorption_filters,
+                common_decay_times=room_data.common_decay_times
+                if config_dict.decay_filter_config.initialise_with_opt_values
+                else None,
+                learn_common_decay_times=config_dict.decay_filter_config.
+                learn_common_decay_times,
                 band_centre_hz=room_data.band_centre_hz,
                 colorless_fdn_params=colorless_fdn_params,
                 use_colorless_loss=trainer_config.use_colorless_loss,
@@ -342,8 +346,12 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
                 config_dict.feedback_loop_config,
                 config_dict.output_filter_config,
                 config_dict.input_filter_config,
-                config_dict.use_absorption_filters,
-                common_decay_times=room_data.common_decay_times,
+                config_dict.decay_filter_config.use_absorption_filters,
+                common_decay_times=room_data.common_decay_times
+                if config_dict.decay_filter_config.initialise_with_opt_values
+                else None,
+                learn_common_decay_times=config_dict.decay_filter_config.
+                learn_common_decay_times,
                 band_centre_hz=room_data.band_centre_hz,
                 colorless_fdn_params=colorless_fdn_params,
                 use_colorless_loss=trainer_config.use_colorless_loss,
@@ -445,8 +453,11 @@ def run_training_single_pos(config_dict: DiffGFDNConfig):
         trainer_config.device,
         config_dict.feedback_loop_config,
         config_dict.output_filter_config,
-        config_dict.use_absorption_filters,
-        common_decay_times=room_data.common_decay_times,
+        config_dict.decay_filter_config.use_absorption_filters,
+        common_decay_times=room_data.common_decay_times if
+        config_dict.decay_filter_config.initialise_with_opt_values else None,
+        learn_common_decay_times=config_dict.decay_filter_config.
+        learn_common_decay_times,
         band_centre_hz=room_data.band_centre_hz,
         colorless_fdn_params=colorless_fdn_params,
         use_colorless_loss=trainer_config.use_colorless_loss,

@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import torch
 from torch import nn
@@ -52,6 +52,7 @@ class ColorlessFDN(nn.Module):
                                             device=self.device)
 
         self.feedback_loop = FeedbackLoop(
+            self.sample_rate,
             num_groups=1,
             num_delay_lines_per_group=self.num_delay_lines,
             delays=self.delays,
@@ -59,8 +60,14 @@ class ColorlessFDN(nn.Module):
             use_absorption_filters=False,
             coupling_matrix_type=CouplingMatrixType.RANDOM)
 
-    def forward(self, z: torch.tensor):
-        """Calculate the FDN's frequency response for points on the unit circle"""
+    def forward(self, z: torch.tensor) -> Tuple:
+        """
+        Calculate the FDN's frequency response for points on the unit circle
+        Returns:
+            H: array of size num_freq_bins , outputcol FDN
+            H_per_del: num_delay_lines x num_freq_bins, 
+                          output of each delay line, weighted by c_i
+        """
         num_freq_pts = len(z)
 
         C = to_complex(
@@ -77,7 +84,12 @@ class ColorlessFDN(nn.Module):
         # C.T @ P @ B
         H = torch.einsum('ik, kj -> ij', Htemp, B).squeeze()
 
-        return H
+        # output of each delay line scaled by c_i
+        H_tmp = torch.einsum('kn, knm -> knm', C.permute(1, 0),
+                             P).permute(1, -1, 0)
+        H_per_del = torch.einsum('nmk, mk -> nk', H_tmp, B)
+
+        return (H, H_per_del)
 
     @torch.no_grad()
     def get_param_dict(self) -> Dict:

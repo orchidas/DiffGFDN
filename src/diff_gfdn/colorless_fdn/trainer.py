@@ -94,7 +94,7 @@ class ColorlessFDNTrainer:
         # batch processing
         inputs, labels = data
         self.optimizer.zero_grad()
-        H = self.net(inputs)
+        H, _ = self.net(inputs)
         loss = self.criterion[0](H, labels) + self.alpha * self.criterion[1](
             self.net.feedback_loop.ortho_param(
                 self.net.feedback_loop.random_feedback_matrix))
@@ -108,10 +108,12 @@ class ColorlessFDNTrainer:
         # batch processing
         inputs, labels = data
         self.optimizer.zero_grad()
-        H = self.net(inputs)
-        loss = self.criterion[0](H, labels) + self.alpha * self.criterion[1](
-            self.net.feedback_loop.ortho_param(
-                self.net.feedback_loop.random_feedback_matrix))
+        H, H_per_del_line = self.net(inputs)
+        loss = (
+            self.criterion[0](H, labels) +
+            self.criterion[0](H_per_del_line, torch.ones_like(H_per_del_line))
+        ) + self.alpha * self.criterion[1](self.net.feedback_loop.ortho_param(
+            self.net.feedback_loop.random_feedback_matrix))
         return loss.item()
 
     @torch.no_grad()
