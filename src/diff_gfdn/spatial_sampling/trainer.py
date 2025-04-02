@@ -1,13 +1,17 @@
 import os
 import time
+from typing import List, Optional
 
+from loguru import logger
+import numpy as np
+from slope2noise.utils import decay_kernel
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import trange
 
 from ..gain_filters import Gains_from_MLP
-from ..utils import db, get_str_results
+from ..utils import db, get_str_results, ms_to_samps
 from .config import SpatialSamplingConfig
 
 # pylint: disable=W0632
@@ -22,9 +26,48 @@ class spatial_mse_loss(nn.Module):
             y_pred (torch.tensor): output of the model, array of batch_size x num_slopes
             y_true (torch.tensor): expected output, array of size batch_size x num_slopes
         """
-        loss = torch.mean(torch.abs(db(y_pred) - db(y_true)),
-                          dim=0) / torch.mean(torch.abs(db(y_true)), dim=0)
+        loss = torch.mean(torch.abs(db(y_pred) - db(y_true)), dim=0)
         return torch.sum(loss)
+
+
+class spatial_edc_loss(nn.Module):
+    """Mean EDC loss between true and learned spatial mappings"""
+
+    def __init__(self, common_decay_times: List, edc_len_ms: float, fs: float):
+        """
+        Initialise EDC loss
+        Args:
+            common_decay_times (List): of size num_slopes x 1 to form the decay kernel
+            edc_len_ms (float): length of the EDC in ms
+            fs (float): sampling rate in Hz
+        """
+        super().__init__()
+        edc_len_samps = ms_to_samps(edc_len_ms, fs)
+        num_slopes = common_decay_times.shape[-1]
+        self.envelopes = torch.zeros((num_slopes, edc_len_samps))
+
+        time_axis = np.linspace(0, (edc_len_samps - 1) / fs, edc_len_samps)
+
+        for k in range(num_slopes):
+            self.envelopes[k, :] = torch.tensor(
+                decay_kernel(np.expand_dims(common_decay_times[:, k], axis=-1),
+                             time_axis,
+                             fs,
+                             normalize_envelope=True,
+                             add_noise=False)).squeeze()
+
+    def forward(self, amps_pred: torch.Tensor, amps_true: torch.Tensor):
+        """
+        Calcualtes the mean EDC loss over space and time.
+        The inputs are of shape batch size x num_slopes, 
+        the decay kernel is of shape num_slopes x time
+        """
+        edc_true = db(torch.einsum('bk, kt -> bkt', amps_true, self.envelopes),
+                      is_squared=True)
+        edc_pred = db(torch.einsum('bk, kt -> bkt', amps_pred, self.envelopes),
+                      is_squared=True)
+        edc_loss = torch.mean(torch.abs(edc_true - edc_pred), dim=(0, -1))
+        return torch.sum(edc_loss)
 
 
 class SpatialSamplingTrainer:
@@ -34,6 +77,9 @@ class SpatialSamplingTrainer:
         self,
         net: Gains_from_MLP,
         trainer_config: SpatialSamplingConfig,
+        common_decay_times: Optional[List] = None,
+        sampling_rate: float = 44100,
+        ir_len_ms: float = 2000,
     ):
         """
         Args:
@@ -49,7 +95,14 @@ class SpatialSamplingTrainer:
 
         self.optimizer = torch.optim.Adam(self.net.parameters(),
                                           lr=trainer_config.lr)
-        self.criterion = [spatial_mse_loss()]
+        if common_decay_times is None:
+            logger.info("Using spatial MSE loss")
+            self.criterion = [spatial_mse_loss()]
+        else:
+            logger.info("Using spatial EDC loss")
+            self.criterion = [
+                spatial_edc_loss(common_decay_times, ir_len_ms, sampling_rate)
+            ]
 
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=10,
@@ -76,10 +129,13 @@ class SpatialSamplingTrainer:
             self.train_loss.append(epoch_loss / len(train_dataset))
 
             # validation
-            epoch_loss = 0
-            for data in valid_dataset:
-                epoch_loss += self.valid_step(data)
-            self.valid_loss.append(epoch_loss / len(valid_dataset))
+            if valid_dataset is not None:
+                epoch_loss = 0
+                for data in valid_dataset:
+                    epoch_loss += self.valid_step(data)
+                self.valid_loss.append(epoch_loss / len(valid_dataset))
+            else:
+                self.valid_loss.append(0.0)
             et_epoch = time.time()
 
             self.print_results(epoch, et_epoch - st_epoch)
@@ -102,7 +158,9 @@ class SpatialSamplingTrainer:
         # batch processing
         self.optimizer.zero_grad()
         gains = self.net(data)
-        loss = self.criterion[0](gains[..., 0].squeeze(),
+        # if batch has a single data point
+        gains = gains.unsqueeze(0) if gains.ndim == 2 else gains
+        loss = self.criterion[0](gains[..., 0].squeeze(dim=1),
                                  data['target_common_slope_amps'])
 
         loss.backward()
@@ -114,7 +172,9 @@ class SpatialSamplingTrainer:
         # batch processing
         self.optimizer.zero_grad()
         gains = self.net(data)
-        loss = self.criterion[0](gains[..., 0].squeeze(),
+        # if batch has a single data point
+        gains = gains.unsqueeze(0) if gains.ndim == 2 else gains
+        loss = self.criterion[0](gains[..., 0].squeeze(dim=1),
                                  data['target_common_slope_amps'])
         return loss.item()
 

@@ -184,24 +184,27 @@ class RIRData:
 class RoomDataset(ABC):
     """Parent class for any room's RIR dataset measured over multiple source and receiver positions"""
 
-    def __init__(self,
-                 num_rooms: int,
-                 sample_rate: float,
-                 source_position: NDArray,
-                 receiver_position: NDArray,
-                 rirs: NDArray,
-                 common_decay_times: List,
-                 room_dims: List,
-                 room_start_coord: List,
-                 band_centre_hz: Optional[ArrayLike] = None,
-                 amplitudes: Optional[NDArray] = None,
-                 amplitudes_norm: Optional[NDArray] = None,
-                 noise_floor: Optional[NDArray] = None,
-                 noise_floor_norm: Optional[NDArray] = None,
-                 absorption_coeffs: Optional[List] = None,
-                 aperture_coords: Optional[List] = None,
-                 mixing_time_ms: float = 20.0,
-                 nfft: Optional[int] = None):
+    def __init__(
+        self,
+        num_rooms: int,
+        sample_rate: float,
+        source_position: NDArray,
+        receiver_position: NDArray,
+        rirs: NDArray,
+        common_decay_times: List,
+        room_dims: List,
+        room_start_coord: List,
+        band_centre_hz: Optional[ArrayLike] = None,
+        amplitudes: Optional[NDArray] = None,
+        amplitudes_norm: Optional[NDArray] = None,
+        noise_floor: Optional[NDArray] = None,
+        noise_floor_norm: Optional[NDArray] = None,
+        absorption_coeffs: Optional[List] = None,
+        aperture_coords: Optional[List] = None,
+        mixing_time_ms: float = 20.0,
+        nfft: Optional[int] = None,
+        grid_spacing_m: float = 0.3,
+    ):
         """
         Args:
             num_rooms (int): number of rooms in coupled space
@@ -222,6 +225,7 @@ class RoomDataset(ABC):
             aperture_coords (List, optional): coordinates of the apertures in the geometry
             mixing_time_ms (float): mixing time of the RIR for early-late split
             nfft (optional, int): number of frequency bins
+            grid_spacing_m (optional, float): distance between each mic measurement in uniform grid, in m
         """
         self.sample_rate = sample_rate
         self.num_rooms = num_rooms
@@ -248,7 +252,8 @@ class RoomDataset(ABC):
         self.rir_mag_response = rfft(self.rirs, n=self.num_freq_bins, axis=-1)
         self.early_late_split()
         # create 3D mesh
-        self.mesh_3D = self.get_3D_meshgrid(grid_spacing_m=0.3)
+        self.grid_spacing_m = grid_spacing_m
+        self.mesh_3D = self.get_3D_meshgrid()
 
     @property
     def norm_receiver_position(self):
@@ -323,7 +328,7 @@ class RoomDataset(ABC):
         self.rir_mag_response = rfft(new_rirs, n=self.num_freq_bins, axis=-1)
         self.early_late_split()
 
-    def get_3D_meshgrid(self, grid_spacing_m: float) -> Meshgrid:
+    def get_3D_meshgrid(self) -> Meshgrid:
         """
         Return the 3D meshgrid of the room's geometry
         Args:
@@ -335,9 +340,9 @@ class RoomDataset(ABC):
         Ycombined = []
         Zcombined = []
         for nroom in range(self.num_rooms):
-            num_x_points = int(self.room_dims[nroom][0] / grid_spacing_m)
-            num_y_points = int(self.room_dims[nroom][1] / grid_spacing_m)
-            num_z_points = int(self.room_dims[nroom][2] / grid_spacing_m)
+            num_x_points = int(self.room_dims[nroom][0] / self.grid_spacing_m)
+            num_y_points = int(self.room_dims[nroom][1] / self.grid_spacing_m)
+            num_z_points = int(self.room_dims[nroom][2] / self.grid_spacing_m)
             x = np.linspace(
                 self.room_start_coord[nroom][0],
                 self.room_start_coord[nroom][0] + self.room_dims[nroom][0],
@@ -462,22 +467,25 @@ class ThreeRoomDataset(RoomDataset):
         # coordinates of the aperture
         aperture_coords = [[(4, 3), (4, 4.5)], [(8.5, 5), (10, 5)]]
 
-        super().__init__(num_rooms,
-                         sample_rate,
-                         source_position,
-                         receiver_position,
-                         rirs,
-                         common_decay_times,
-                         room_dims,
-                         room_start_coord,
-                         band_centre_hz,
-                         amplitudes,
-                         amplitudes_norm,
-                         noise_floor,
-                         noise_floor_norm,
-                         absorption_coeffs,
-                         aperture_coords,
-                         nfft=nfft)
+        super().__init__(
+            num_rooms,
+            sample_rate,
+            source_position,
+            receiver_position,
+            rirs,
+            common_decay_times,
+            room_dims,
+            room_start_coord,
+            band_centre_hz,
+            amplitudes,
+            amplitudes_norm,
+            noise_floor,
+            noise_floor_norm,
+            absorption_coeffs,
+            aperture_coords,
+            nfft=nfft,
+            grid_spacing_m=0.3,
+        )
 
         if config_dict.trainer_config.save_true_irs:
             logger.info("Saving RIRs")

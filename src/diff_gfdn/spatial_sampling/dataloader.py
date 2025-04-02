@@ -1,7 +1,11 @@
+import math
+
+from loguru import logger
+import numpy as np
 import torch
 from torch.utils import data
 
-from ..dataloader import get_dataloader, InputFeatures, RoomDataset, split_dataset, to_device
+from ..dataloader import get_dataloader, InputFeatures, RoomDataset, to_device
 
 
 class SpatialSamplingDataset(data.Dataset):
@@ -32,6 +36,9 @@ class SpatialSamplingDataset(data.Dataset):
         self.mesh_3D = room_data.mesh_3D
         self.common_slope_amps = torch.tensor(room_data.amplitudes)
         self.device = device
+        self.grid_resolution_m = room_data.grid_spacing_m
+        self.room_start_coords = room_data.room_start_coord
+        self.room_dims = room_data.room_dims
 
         # if we have multiple sources in the dataset
         if self.source_position.dim() > 1:
@@ -106,9 +113,90 @@ def custom_collate_spatial_sampling(batch: data.Dataset):
     }
 
 
+def is_multiple(value, d, tol=1e-6):
+    """Check if value is an approximate multiple of d."""
+    return math.isclose(value / d, round(value / d), abs_tol=tol)
+
+
+def find_start_coords(num_rooms: int, dataset: data.Dataset):
+    """Find the first receiver location in each room"""
+    start_xcoord = -np.ones(num_rooms)
+    start_ycoord = -np.ones(num_rooms)
+    for k in range(num_rooms):
+        for idx in range(len(dataset)):
+            listener_position = dataset.listener_positions[idx]  # (x, y, z)
+            x_pos, y_pos = listener_position[:2].tolist()  # Extract x, y
+
+            # Identify which room the point belongs to
+            room_start_x, room_start_y = dataset.room_start_coords[k][:2]
+            room_width, room_height = dataset.room_dims[k][:2]
+
+            if (room_start_x <= x_pos < room_start_x + room_width
+                    and room_start_y <= y_pos < room_start_y + room_height):
+
+                start_xcoord[k], start_ycoord[k] = dataset.listener_positions[
+                    idx, :2]
+                break
+
+    return (start_xcoord, start_ycoord)
+
+
+def split_dataset_by_resolution(
+    dataset: data.Dataset,
+    x_d: float,
+):
+    """
+    Split dataset into training and validation based on x_d resolution.
+    If measurements are avaialable in a uniform 2D gri, the measurements at every 
+    x_d m is used for training and the rest is used for validation 
+
+    dataset: an instance of SpatialDataset.
+    x_d: Spacing between selected training points.
+    shuffle (bool): whether to shuffle the indices
+    """
+    assert x_d >= dataset.grid_resolution_m, "The desired grid spacing must be greater '\
+    'than what has been measured in the dataset"
+
+    train_indices = []
+    val_indices = []
+    num_rooms = len(dataset.room_dims)  # Number of rooms
+    (start_xcoord, start_ycoord) = find_start_coords(num_rooms, dataset)
+
+    # find which points to put in the training dataset
+    for idx in range(len(dataset)):
+        listener_position = dataset.listener_positions[idx]  # (x, y, z)
+        x_pos, y_pos = listener_position[:2].tolist()  # Extract x, y
+
+        # Identify which room the point belongs to
+        room = -1
+        for k in range(num_rooms):
+            room_start_x, room_start_y = dataset.room_start_coords[k][:2]
+            room_width, room_height = dataset.room_dims[k][:2]
+
+            if (room_start_x <= x_pos < room_start_x + room_width
+                    and room_start_y <= y_pos < room_start_y + room_height):
+                room = k
+                break
+
+        # Compute local coordinates relative to the first listener position in the room
+        x_coord = x_pos - start_xcoord[room]
+        y_coord = y_pos - start_ycoord[room]
+
+        # Check if x_coord and y_coord is a multiple of x_d
+        if is_multiple(x_coord, x_d) and is_multiple(y_coord, x_d):
+            train_indices.append(idx)
+        else:
+            val_indices.append(idx)
+
+    train_set = data.Subset(dataset, train_indices)
+    val_set = data.Subset(dataset, val_indices)
+
+    return train_set, val_set
+
+
 def load_dataset(room_data: RoomDataset,
                  device: torch.device,
-                 train_valid_split_ratio: float = 0.8,
+                 grid_resolution_m: float,
                  batch_size: int = 32,
                  shuffle: bool = True,
                  drop_last: bool = False):
@@ -129,7 +217,13 @@ def load_dataset(room_data: RoomDataset,
     dataset = to_device(dataset, device)
 
     # split data into training and validation set
-    train_set, valid_set = split_dataset(dataset, train_valid_split_ratio)
+    train_set, valid_set = split_dataset_by_resolution(dataset,
+                                                       grid_resolution_m)
+
+    logger.info(
+        f'The length of training dataset is {len(train_set)} and valid ' +
+        f'dataset is {len(valid_set)} for grid spacing of {grid_resolution_m}m'
+    )
 
     # dataloaders
     train_loader = get_dataloader(
@@ -140,11 +234,14 @@ def load_dataset(room_data: RoomDataset,
         drop_last=drop_last,
         custom_collate_fn=custom_collate_spatial_sampling)
 
-    valid_loader = get_dataloader(
-        valid_set,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        device=device,
-        drop_last=drop_last,
-        custom_collate_fn=custom_collate_spatial_sampling)
-    return train_loader, valid_loader
+    if len(valid_set) > 0:
+        valid_loader = get_dataloader(
+            valid_set,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            device=device,
+            drop_last=drop_last,
+            custom_collate_fn=custom_collate_spatial_sampling)
+        return train_loader, valid_loader
+    else:
+        return train_loader, None

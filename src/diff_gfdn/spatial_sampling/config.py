@@ -20,7 +20,7 @@ class SpatialSamplingConfig(BaseModel):
     # split between traning and validation, specified as a range from min to max
     train_valid_split: Tuple = (0.1, 0.9)
     # how many splits to test?
-    num_splits: int = 10
+    num_grid_spacing: int = 10
     # maximum epochs for training
     max_epochs: int = 50
     # learning rate for Adam optimiser
