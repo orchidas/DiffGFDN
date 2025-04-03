@@ -11,7 +11,7 @@ import torch
 from ..dataloader import RoomDataset
 from ..gain_filters import Gains_from_MLP
 from ..save_results import save_loss
-from ..utils import db2lin
+from ..utils import db2lin, samps_to_ms
 from .config import SpatialSamplingConfig
 from .dataloader import load_dataset
 from .trainer import SpatialSamplingTrainer
@@ -194,7 +194,13 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
         )
 
         # create the trainer object
-        trainer = SpatialSamplingTrainer(model, config_dict)
+        trainer = SpatialSamplingTrainer(
+            model,
+            config_dict,
+            common_decay_times=room_data.common_decay_times,
+            sampling_rate=room_data.sample_rate,
+            ir_len_ms=samps_to_ms(room_data.rir_length, room_data.sample_rate),
+        )
 
         # train the network
         trainer.train(train_dataset, valid_dataset)
