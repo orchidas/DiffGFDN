@@ -1,6 +1,6 @@
 # pylint: disable=relative-beyond-top-level
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 from pydantic import BaseModel
 
@@ -19,8 +19,10 @@ class SpatialSamplingConfig(BaseModel):
     seed: int = 241924
     # split between traning and validation, specified as a range from min to max
     train_valid_split: Tuple = (0.1, 0.9)
-    # how many splits to test?
-    num_grid_spacing: int = 10
+    # how many splits for train-valid ratio?
+    num_splits: 10
+    # how many grid spacings to test?
+    num_grid_spacing: Optional[int] = None
     # maximum epochs for training
     max_epochs: int = 50
     # learning rate for Adam optimiser

@@ -137,7 +137,7 @@ def plot_amplitudes_in_space(room_data: RoomDataset,
         save_path=Path(
             f'{config_dict.train_dir}/learnt_amplitudes_in_space_grid_resolution_m={np.round(grid_resolution_m, 3)}.png'
         ).resolve(),
-        title=f'MLP train-valid ratio = {np.round(grid_resolution_m, 3)}')
+        title=f'Training grid resolution = {np.round(grid_resolution_m, 3)}m')
 
 
 def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
