@@ -1,17 +1,22 @@
+from copy import deepcopy
 import os
 from pathlib import Path
 import pickle
+from typing import Tuple
 
 from loguru import logger
 import matplotlib.pyplot as plt
 import numpy as np
+from numpy.typing import NDArray
 from slope2noise.rooms import RoomGeometry
+from slope2noise.utils import decay_kernel
 import torch
 
 from ..dataloader import RoomDataset
 from ..gain_filters import Gains_from_MLP
+from ..plot import order_position_matrices
 from ..save_results import save_loss
-from ..utils import db2lin, samps_to_ms
+from ..utils import db, db2lin, ms_to_samps, samps_to_ms
 from .config import SpatialSamplingConfig
 from .dataloader import load_dataset
 from .trainer import SpatialSamplingTrainer
@@ -71,71 +76,147 @@ def parse_room_data(filepath: str):
     )
 
 
-def plot_amplitudes_in_space(room_data: RoomDataset,
-                             config_dict: SpatialSamplingConfig,
-                             model: SpatialSamplingConfig, num_epochs: int,
-                             split_ratio: float):
-    """Plot the true and learned amplitudes as a function of space"""
-    logger.info("Making amplitude plots")
+class make_plots:
+    """Class for making plots"""
 
-    room = RoomGeometry(room_data.sample_rate,
-                        room_data.num_rooms,
-                        np.array(room_data.room_dims),
-                        np.array(room_data.room_start_coord),
-                        aperture_coords=room_data.aperture_coords)
-    src_pos = np.array(room_data.source_position).squeeze()
-    rec_points = room_data.receiver_position
-    true_amps = room_data.amplitudes
+    def __init__(
+        self,
+        room_data: RoomDataset,
+        config_dict: SpatialSamplingConfig,
+        model: Gains_from_MLP,
+    ):
+        """
+        Initialise parameters for the class
+        Args:
+        room_data (RoomDataset): object of RoomDataset dataclass
+        config_dict (SpatialSamplingConfig): config file, read as dictionary
+        model (Gains_from_MLP): the NN model to be tested
+        """
+        self.room_data = deepcopy(room_data)
+        self.model = deepcopy(model)
+        self.config_dict = deepcopy(config_dict)
+        self.room = RoomGeometry(room_data.sample_rate,
+                                 room_data.num_rooms,
+                                 np.array(room_data.room_dims),
+                                 np.array(room_data.room_start_coord),
+                                 aperture_coords=room_data.aperture_coords)
 
-    room.plot_amps_at_receiver_points(
-        rec_points,
-        src_pos,
-        true_amps.T,
-        scatter_plot=False,
-        save_path=Path(
-            f'{config_dict.train_dir}/actual_amplitudes_in_space.png').resolve(
-            ),
-        title='Common slopes')
+        # prepare the training and validation data
+        self.train_dataset, _ = load_dataset(
+            room_data,
+            config_dict.device,
+            1.0,
+            batch_size=config_dict.batch_size,
+            shuffle=False,
+        )
 
-    # prepare the training and validation data
-    train_dataset, _ = load_dataset(
-        room_data,
-        config_dict.device,
-        train_valid_split_ratio=1.0,
-        batch_size=config_dict.batch_size,
-        shuffle=False,
-    )
+        # get the reference output
+        self.src_pos = np.array(self.room_data.source_position).squeeze()
+        self.true_points = self.room_data.receiver_position
+        self.true_amps = self.room_data.amplitudes
+        self._init_decay_kernel()
 
-    # load the trained weights for the particular epoch
-    checkpoint = torch.load(
-        Path(f'{config_dict.train_dir}/checkpoints/model_e{num_epochs - 1}.pt'
-             ).resolve(),
-        weights_only=True,
-        map_location=torch.device('cpu'))
-    # Load the trained model state
-    model.load_state_dict(checkpoint, strict=False)
+    def _init_decay_kernel(self):
+        """Initialise the decay kernels for calculating EDC errors"""
+        num_slopes = self.room_data.num_rooms
+        edc_len_samps = ms_to_samps(2000, self.room_data.sample_rate)
+        self.envelopes = np.zeros((num_slopes, edc_len_samps))
+        time_axis = np.linspace(0, (edc_len_samps - 1) /
+                                self.room_data.sample_rate, edc_len_samps)
 
-    # run the model in eval mode
-    model.eval()
+        for k in range(num_slopes):
+            self.envelopes[k, :] = decay_kernel(np.expand_dims(
+                self.room_data.common_decay_times[:, k], axis=-1),
+                                                time_axis,
+                                                self.room_data.sample_rate,
+                                                normalize_envelope=True,
+                                                add_noise=False).squeeze()
 
-    all_pos = np.empty((0, 3))
-    all_amps = np.empty((0, room_data.num_rooms))
-    with torch.no_grad():
-        for data in train_dataset:
-            position = data['listener_position']
-            est_amps = model(data)[..., 0]
-            all_pos = np.vstack((all_pos, position))
-            all_amps = np.vstack((all_amps, est_amps))
-
-    room.plot_amps_at_receiver_points(
-        all_pos,
-        src_pos,
-        all_amps.T,
-        scatter_plot=False,
-        save_path=Path(
-            f'{config_dict.train_dir}/learnt_amplitudes_in_space_split_ratio={np.round(split_ratio, 3)}.png'
+    def get_model_output(self, num_epochs: int) -> Tuple[NDArray, NDArray]:
+        """
+        Get the estimated common slope amplitudes.
+        Returns the positions and the amplitudes at those positions
+        """
+        # load the trained weights for the particular epoch
+        checkpoint = torch.load(Path(
+            f'{self.config_dict.train_dir}/checkpoints/model_e{num_epochs - 1}.pt'
         ).resolve(),
-        title=f'MLP train-valid ratio = {np.round(split_ratio, 3)}')
+                                weights_only=True,
+                                map_location=torch.device('cpu'))
+        # Load the trained model state
+        self.model.load_state_dict(checkpoint, strict=False)
+
+        # run the model in eval mode
+        self.model.eval()
+
+        est_pos = np.empty((0, 3))
+        est_amps = np.empty((0, self.room_data.num_rooms))
+        with torch.no_grad():
+            for data in self.train_dataset:
+                position = data['listener_position']
+                cur_est_amps = self.model(data)[..., 0]
+                est_pos = np.vstack((est_pos, position))
+                est_amps = np.vstack((est_amps, cur_est_amps))
+
+        return est_pos, est_amps
+
+    def plot_amplitudes_in_space(self, split_ratio: float, est_amps: NDArray,
+                                 est_points: NDArray):
+        """Plot the true and learned amplitudes as a function of space"""
+        logger.info("Making amplitude plots")
+
+        self.room.plot_amps_at_receiver_points(
+            self.true_points,
+            self.src_pos,
+            self.true_amps.T,
+            scatter_plot=False,
+            save_path=Path(
+                f'{self.config_dict.train_dir}/actual_amplitudes_in_space.png'
+            ).resolve(),
+            title='Common slopes')
+
+        self.room.plot_amps_at_receiver_points(
+            est_points,
+            self.src_pos,
+            est_amps.T,
+            scatter_plot=False,
+            save_path=Path(
+                f'{self.config_dict.train_dir}/learnt_amplitudes_in_space_' +
+                f'split_ratio={np.round(split_ratio, 3)}.png').resolve(),
+            title=f'Training split ratio={np.round(split_ratio, 3)}m')
+
+    def plot_edc_error_in_space(self, split_ratio: float, est_amps: NDArray,
+                                est_points: NDArray):
+        """Plot the error between the CS EDC and MLP EDC in space"""
+        logger.info("Making EDC error plots")
+        # order the position indices in the estimated data according to the
+        # reference dataset
+        ordered_pos_idx = order_position_matrices(self.true_points, est_points)
+        original_edc = db(np.sum(np.einsum('bk, kt -> bkt', self.true_amps,
+                                           self.envelopes),
+                                 axis=1),
+                          is_squared=True)
+        est_edc = db(np.sum(np.einsum('bk, kt -> bkt', est_amps,
+                                      self.envelopes),
+                            axis=1),
+                     is_squared=True)
+
+        error_db = np.mean(np.abs(original_edc -
+                                  est_edc[ordered_pos_idx, ...]),
+                           axis=-1)
+        self.room.plot_edc_error_at_receiver_points(
+            self.true_points,
+            self.src_pos,
+            db2lin(error_db),
+            scatter_plot=False,
+            cur_freq_hz=None,
+            save_path=Path(
+                f'{self.config_dict.train_dir}/edc_error_in_space_' +
+                f'split_ratio={np.round(split_ratio, 3)}.png').resolve(),
+            title=f'Training split_ratio={np.round(split_ratio, 3)}m')
+
+
+############################################################################
 
 
 def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
@@ -168,6 +249,7 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
     torch.set_default_device(config_dict.device)
     # move model to device (cuda or cpu)
     model = model.to(config_dict.device)
+    plot_obj = make_plots(room_data, config_dict, model)
 
     # loop over different training and validation ratios
     train_valid_split_ratios = np.linspace(config_dict.train_valid_split[0],
@@ -236,10 +318,22 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
             label=f'Split={np.round(train_valid_split_ratios[k], 3)}')
 
         del trainer
-        plot_amplitudes_in_space(
-            room_data, config_dict, model,
-            len(trainer_loss[train_valid_split_ratios[k]]),
-            train_valid_split_ratios[k])
+        # get the model output
+        est_points, est_amps = plot_obj.get_model_output(
+            len(trainer_loss[train_valid_split_ratios[k]]))
+
+        # make plots
+        plot_obj.plot_edc_error_in_space(
+            train_valid_split_ratios[k],
+            est_amps,
+            est_points,
+        )
+
+        plot_obj.plot_amplitudes_in_space(
+            train_valid_split_ratios[k],
+            est_amps,
+            est_points,
+        )
 
     ax[0].set_xlabel('Epoch #')
     ax[0].set_ylabel('Training loss (log)')
