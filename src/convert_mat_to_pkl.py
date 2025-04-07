@@ -52,7 +52,7 @@ def save_subband_rirs(rirs: NDArray, sample_rate: float, common_t60: NDArray,
         }
         # Specify the output pickle file path
         pickle_file_path = Path(
-            f"resources/Georg_3room_FDTD/srirs_band_centre={centre_freqs[band]:.0f}Hz_energy_preserve.pkl"
+            f"resources/Georg_3room_FDTD/srirs_band_centre={centre_freqs[band]:.0f}Hz.pkl"
         ).resolve()
 
         # Write the data to a pickle file
@@ -147,7 +147,7 @@ def main():
         "resources/Georg_3room_FDTD/Common_Slope_Analysis_Results/")
     filename = 'cs_analysis_results_omni'
     freqs = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
-    use_amp_preserving_filterbank = False
+    use_amp_preserving_filterbank = True
 
     common_t60 = []
     amplitudes_norm = []
@@ -178,7 +178,7 @@ def main():
         'fs': sample_rate,
         'srcPos': source_position,
         'rcvPos': receiver_position,
-        'srirs': srirs.T,
+        'srirs': srirs,
         'band_centre_hz': freqs,
         'common_decay_times': np.asarray(common_t60),
         'amplitudes_norm': np.asarray(amplitudes_norm),
@@ -188,8 +188,7 @@ def main():
     }
 
     # Specify output pickle path
-    pickle_file_path = Path(
-        "resources/Georg_3room_FDTD/srirs_energy_preserve.pkl").resolve()
+    pickle_file_path = Path("resources/Georg_3room_FDTD/srirs.pkl").resolve()
 
     # Write the data to a pickle file
     with open(pickle_file_path, 'wb') as pickle_file:
@@ -197,7 +196,7 @@ def main():
 
     logger.info("Saved pickle file")
 
-    save_subband_rirs(srirs.copy().T, sample_rate, np.asarray(common_t60),
+    save_subband_rirs(srirs.copy(), sample_rate, np.asarray(common_t60),
                       np.asarray(amplitudes_norm),
                       np.asarray(noise_floor_norm), amps_ls, noise_ls, freqs,
                       source_position, receiver_position,

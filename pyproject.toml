@@ -46,6 +46,7 @@ dependencies = [
     "kaleido",
     "pyfar",
     "pandas",
+    "spaudiopy @ git+https://github.com/chris-hld/spaudiopy.git@master",
 ]
 
 [project.scripts]
