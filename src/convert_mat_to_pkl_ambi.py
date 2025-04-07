@@ -23,13 +23,19 @@ def save_subband_srirs(srirs: NDArray,
                        centre_freqs: List,
                        source_position: Union[NDArray, ArrayLike],
                        receiver_position: NDArray,
+                       sph_directions: NDArray,
                        use_amp_preserving_filterbank: bool = True):
     """
     Filter SRIRs into subbands and save the parameters
-    Args: srirs (NDArray): shape num_directions x num_time_samples x num_rirs
+    Args: s
+        srirs (NDArray): shape num_directions x num_time_samples x num_pos
+        common_t60 (NDArray): shape num_freq_bands x 1 x num_slopes
+        amplitudes_norm (NDArray): shape num_freq_bands x num_directions x num_slopes x num_pos
+        noise_floor_norm (NDArray): shape num_freq_bands x num_directions x 1 x num_pos
     """
     num_bands = len(centre_freqs)
     num_directions, num_time_samp, num_pos = srirs.shape
+    num_slopes = common_t60.shape[-1]
     filtered_srirs = np.zeros(
         (num_directions, num_time_samp, num_pos, num_bands))
 
@@ -40,11 +46,11 @@ def save_subband_srirs(srirs: NDArray,
         logger.info(f"Processing frequency band: {band_freq} Hz")
 
         # Preallocate only for this band
-        cur_rirs = np.zeros((num_directions, num_time_samp, num_pos))
-        cur_amps = np.zeros((num_directions, *amplitudes_norm.shape[1:]))
-        cur_amps_norm = amplitudes_norm[1:]
-        cur_noise = np.zeros((num_directions, *noise_floor_norm.shape[1:]))
-        cur_noise_norm = noise_floor_norm[1:]
+        cur_rirs = np.zeros((num_time_samp, num_directions, num_pos))
+        cur_amps = np.zeros((num_slopes, num_directions, num_pos))
+        cur_amps_norm = amplitudes_norm[band_idx, ...].transpose(1, 0, -1)
+        cur_noise = np.zeros((1, num_directions, num_pos))
+        cur_noise_norm = noise_floor_norm[band_idx, ...].transpose(1, 0, -1)
 
         for j in range(num_directions):
             cs_params_pkl_path = cs_save_path / f"custom_cs_params_dir={j}.pkl"
@@ -77,19 +83,19 @@ def save_subband_srirs(srirs: NDArray,
                             'cs_noise_floor': cur_noise_ls,
                             'directional_filtered_rirs': filtered_srirs[j, ...]
                         }, pickle_file)
-                cur_rirs[j, ...] = filtered_srirs[..., band_idx]
-                cur_amps[j, ...] = cur_amps_ls[band_idx, ...]
-                cur_noise[j, ...] = cur_noise_ls[band_idx, ...]
+                cur_rirs[:, j, :] = filtered_srirs[..., band_idx]
+                cur_amps[:, j, :, :] = cur_amps_ls[band_idx, ...]
+                cur_noise[:, j, :, :] = cur_noise_ls[band_idx, ...]
             else:
                 logger.info(f"Reading saved CS params for direction {j+1}")
 
                 with open(cs_params_pkl_path, 'rb') as handle:
                     data = joblib.load(handle)  # or pickle.load()
 
-                cur_rirs[j, ...] = data['directional_filtered_rirs'][...,
-                                                                     band_idx]
-                cur_amps[j, ...] = data['cs_amps'][band_idx, ...]
-                cur_noise[j, ...] = data['cs_noise_floor'][band_idx, ...]
+                cur_rirs[:, j, :] = data['directional_filtered_rirs'][...,
+                                                                      band_idx]
+                cur_amps[:, j, :] = data['cs_amps'][band_idx, ...]
+                cur_noise[:, j, :] = data['cs_noise_floor'][band_idx, ...]
 
                 del data
                 gc.collect()
@@ -105,7 +111,8 @@ def save_subband_srirs(srirs: NDArray,
             'amplitudes': cur_amps,
             'amplitudes_norm': cur_amps_norm,
             'noise_floor': cur_noise,
-            'noise_floor_norm': cur_noise_norm
+            'noise_floor_norm': cur_noise_norm,
+            'directions': sph_directions,
         }
 
         pickle_file_path = Path(
@@ -288,7 +295,7 @@ def main():
 
     save_subband_srirs(directional_srirs.copy(), sample_rate, common_t60,
                        amplitudes_norm, noise_floor_norm, freqs,
-                       source_position, receiver_position,
+                       source_position, receiver_position, directions,
                        use_amp_preserving_filterbank)
 
 

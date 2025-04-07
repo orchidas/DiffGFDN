@@ -39,13 +39,15 @@ class InputFeatures():
         source_position: postion of the source in cartesian coordinates
         listener_position: position of a receiver in cartesian coordinates
         mesh_3D: mesh grid of the space geometry
+        sph_directions (optional): 2D array of azimuth and polar angles if the RIRs are directional
     """
 
-    z_values: torch.tensor
     source_position: torch.tensor
     listener_position: torch.tensor
     norm_listener_position: torch.tensor
     mesh_3D: Meshgrid
+    sph_directions: Optional[torch.tensor] = None
+    z_values: Optional[torch.tensor] = None
 
     def __repr__(self):
         # pylint: disable=E0306
@@ -55,7 +57,7 @@ class InputFeatures():
             f"  source_position={self.source_position.tolist()}, \n"
             f"  listener_position={self.listener_position.tolist()}, \n",
             f"  mesh_3D={self.mesh_3D.xmesh, self.mesh_3D.ymesh, self.mesh_3D.zmesh}, \n",
-            ")")
+            f"  directions={self.sph_directions.tolist()}, \n", ")")
 
 
 @dataclass
@@ -196,9 +198,7 @@ class RoomDataset(ABC):
         room_start_coord: List,
         band_centre_hz: Optional[ArrayLike] = None,
         amplitudes: Optional[NDArray] = None,
-        amplitudes_norm: Optional[NDArray] = None,
         noise_floor: Optional[NDArray] = None,
-        noise_floor_norm: Optional[NDArray] = None,
         absorption_coeffs: Optional[List] = None,
         aperture_coords: Optional[List] = None,
         mixing_time_ms: float = 20.0,
@@ -211,14 +211,15 @@ class RoomDataset(ABC):
             sample_rate (float): sample rate of dataset
             source_position (NDArray): position of sources in cartesian coordinate
             receiver_position (NDArray): position of receivers in cartesian coordinate
-            rirs (NDArray): omni-rirs at all source and receiver positions
+            rirs (NDArray): omni rirs at all source and receiver positions of size
+                            (num_positions, num_time_samples)
             band_centre_hz (optinal, ArrayLike): octave band centres where common T60s are calculated
             common_decay_times (List[Union[ArrayLike, float]]): common decay times for the different rooms of 
                                                                 num_freq_bands x num_rooms
             amplitudes (NDArray): the amplitudes of the common slopes model of size 
                                   (num_rec_pos x num_rooms x num_freq_bands)
             noise_floor (NDArray): the noise floor of the common slopes model of size
-                                    (num_rec_pos x num_freq_bands)
+                                    (num_rec_pos  x 1 x num_freq_bands)
             room_dims (List): l,w,h for each room in coupled space
             room_start_coord (List): coordinates of the room's starting vertex (first room starts at origin)
             absorption_coeffs (List, optional): uniform absorption coefficients for each room
@@ -235,9 +236,7 @@ class RoomDataset(ABC):
         self.band_centre_hz = band_centre_hz
         self.common_decay_times = common_decay_times
         self.noise_floor = noise_floor
-        self.noise_floor_norm = noise_floor_norm
         self.amplitudes = amplitudes
-        self.amplitudes_norm = amplitudes_norm
         self.num_rec = self.receiver_position.shape[0]
         self.num_src = self.source_position.shape[
             0] if self.source_position.ndim > 1 else 1
@@ -450,9 +449,7 @@ class ThreeRoomDataset(RoomDataset):
                 band_centre_hz = srir_mat['band_centre_hz']
                 common_decay_times = srir_mat['common_decay_times']
                 amplitudes = srir_mat['amplitudes'].T
-                amplitudes_norm = srir_mat['amplitudes_norm'].T
                 noise_floor = srir_mat['noise_floor'].T
-                noise_floor_norm = srir_mat['noise_floor_norm'].T
                 nfft = config_dict.trainer_config.num_freq_bins
         except Exception as exc:
             raise FileNotFoundError("pickle file not read correctly") from exc
@@ -478,9 +475,7 @@ class ThreeRoomDataset(RoomDataset):
             room_start_coord,
             band_centre_hz,
             amplitudes,
-            amplitudes_norm,
             noise_floor,
-            noise_floor_norm,
             absorption_coeffs,
             aperture_coords,
             nfft=nfft,
@@ -589,21 +584,21 @@ class MultiRIRDataset(data.Dataset):
         # Return an instance of InputFeatures
 
         if self.source_position.shape[0] == 1:
-            input_features = InputFeatures(self.z_values,
-                                           torch.squeeze(self.source_position),
+            input_features = InputFeatures(torch.squeeze(self.source_position),
                                            self.listener_positions[idx],
                                            self.norm_listener_position[idx],
-                                           self.mesh_3D)
+                                           self.mesh_3D,
+                                           z_values=self.z_values)
             target_labels = Target(self.early_rir_mag_response[idx, :],
                                    self.late_rir_mag_response[idx, :],
                                    self.rir_mag_response[idx, :])
         else:
             idx1, idx2 = self.index_pairs[idx]
-            input_features = InputFeatures(self.z_values,
-                                           self.source_position[idx1],
+            input_features = InputFeatures(self.source_position[idx1],
                                            self.listener_positions[idx2],
                                            self.norm_listener_position[idx2],
-                                           self.mesh_3D)
+                                           self.mesh_3D,
+                                           z_values=self.z_values)
             target_labels = Target(self.early_rir_mag_response[idx1, idx2, :],
                                    self.late_rir_mag_response[idx1, idx2, :],
                                    self.rir_mag_response[idx1, idx2, :])

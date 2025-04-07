@@ -139,7 +139,7 @@ def main():
         source_position = srir_mat['srcPos'][:]
         receiver_position = srir_mat['rcvPos'][:]
         # these are second order ambisonic signals
-        # I am guessing the first channel contains the W component
+        # the first channel contains the W component
         srirs = srir_mat['srirs'][0, ...][:]
 
     # load the common slopes from the other mat files

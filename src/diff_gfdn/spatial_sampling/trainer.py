@@ -10,9 +10,9 @@ from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import trange
 
-from ..gain_filters import Gains_from_MLP
 from ..utils import db, get_str_results, ms_to_samps
 from .config import SpatialSamplingConfig
+from .model import Omni_Amplitudes_from_MLP
 
 # pylint: disable=W0632
 
@@ -75,7 +75,7 @@ class SpatialSamplingTrainer:
 
     def __init__(
         self,
-        net: Gains_from_MLP,
+        net: Omni_Amplitudes_from_MLP,
         trainer_config: SpatialSamplingConfig,
         common_decay_times: Optional[List] = None,
         sampling_rate: float = 44100,
@@ -159,9 +159,8 @@ class SpatialSamplingTrainer:
         self.optimizer.zero_grad()
         gains = self.net(data)
         # if batch has a single data point
-        gains = gains.unsqueeze(0) if gains.ndim == 2 else gains
-        loss = self.criterion[0](gains[..., 0].squeeze(dim=1),
-                                 data['target_common_slope_amps'])
+        gains = gains.unsqueeze(0) if gains.ndim == 1 else gains
+        loss = self.criterion[0](gains, data['target_common_slope_amps'])
 
         loss.backward()
         self.optimizer.step()
@@ -173,9 +172,8 @@ class SpatialSamplingTrainer:
         self.optimizer.zero_grad()
         gains = self.net(data)
         # if batch has a single data point
-        gains = gains.unsqueeze(0) if gains.ndim == 2 else gains
-        loss = self.criterion[0](gains[..., 0].squeeze(dim=1),
-                                 data['target_common_slope_amps'])
+        gains = gains.unsqueeze(0) if gains.ndim == 1 else gains
+        loss = self.criterion[0](gains, data['target_common_slope_amps'])
         return loss.item()
 
     def print_results(self, e: int, e_time):

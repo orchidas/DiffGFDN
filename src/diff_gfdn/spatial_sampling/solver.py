@@ -1,7 +1,6 @@
 from copy import deepcopy
 import os
 from pathlib import Path
-import pickle
 from typing import Tuple
 
 from loguru import logger
@@ -12,70 +11,15 @@ from slope2noise.rooms import RoomGeometry
 from slope2noise.utils import decay_kernel
 import torch
 
-from ..dataloader import RoomDataset
-from ..gain_filters import Gains_from_MLP
 from ..plot import order_position_matrices
 from ..save_results import save_loss
 from ..utils import db, db2lin, ms_to_samps, samps_to_ms
 from .config import SpatialSamplingConfig
-from .dataloader import load_dataset
+from .dataloader import load_dataset, parse_room_data, SpatialRoomDataset
+from .model import Omni_Amplitudes_from_MLP
 from .trainer import SpatialSamplingTrainer
 
 # pylint: disable=E0606
-
-
-def parse_room_data(filepath: str):
-    """Read the dataset at filepath and return a RoomDataset object"""
-    assert str(filepath).endswith('.pkl'), "provide the path to the .pkl file"
-    # read contents from pkl file
-    try:
-        logger.info('Reading pkl file ...')
-        with open(filepath, 'rb') as f:
-            srir_mat = pickle.load(f)
-            sample_rate = srir_mat['fs']
-            source_position = srir_mat['srcPos'].T
-            receiver_position = srir_mat['rcvPos'].T
-            rirs = np.squeeze(srir_mat['srirs'])
-            band_centre_hz = srir_mat['band_centre_hz']
-            common_decay_times = srir_mat['common_decay_times']
-            amplitudes = srir_mat['amplitudes'].T
-            amplitudes_norm = srir_mat['amplitudes_norm'].T
-            noise_floor = srir_mat['noise_floor'].T
-            noise_floor_norm = srir_mat['noise_floor_norm'].T
-    except Exception as exc:
-        raise FileNotFoundError("pickle file not read correctly") from exc
-
-    logger.info("Done reading pkl file")
-    # number of rooms in dataset
-    num_rooms = 3
-    # uniform absorption coefficients of the three rooms
-    absorption_coeffs = np.array([0.2, 0.01, 0.1])
-    # (x,y) dimensions of the 3 rooms
-    room_dims = [(4.0, 8.0, 3.0), (6.0, 3.0, 3.0), (4.0, 8.0, 3.0)]
-    # this denotes the 3D position of the first vertex of the floor
-    room_start_coord = [(0, 0, 0), (4.0, 2.0, 0), (6.0, 5.0, 0)]
-    # coordinates of the aperture
-    aperture_coords = [[(4, 3), (4, 4.5)], [(8.5, 5), (10, 5)]]
-    grid_spacing_m = 0.3
-
-    return RoomDataset(
-        num_rooms,
-        sample_rate,
-        source_position,
-        receiver_position,
-        rirs,
-        common_decay_times,
-        room_dims,
-        room_start_coord,
-        band_centre_hz,
-        amplitudes,
-        amplitudes_norm,
-        noise_floor,
-        noise_floor_norm,
-        absorption_coeffs,
-        aperture_coords,
-        grid_spacing_m=grid_spacing_m,
-    )
 
 
 class make_plots:
@@ -83,16 +27,16 @@ class make_plots:
 
     def __init__(
         self,
-        room_data: RoomDataset,
+        room_data: SpatialRoomDataset,
         config_dict: SpatialSamplingConfig,
-        model: Gains_from_MLP,
+        model: Omni_Amplitudes_from_MLP,
     ):
         """
         Initialise parameters for the class
         Args:
-        room_data (RoomDataset): object of RoomDataset dataclass
+        room_data (SpatialRoomDataset): object of SpatialRoomDataset dataclass
         config_dict (SpatialSamplingConfig): config file, read as dictionary
-        model (Gains_from_MLP): the NN model to be tested
+        model (Omni_Amplitudes_from_MLP): the NN model to be tested
         """
         self.room_data = deepcopy(room_data)
         self.model = deepcopy(model)
@@ -156,7 +100,7 @@ class make_plots:
         with torch.no_grad():
             for data in self.train_dataset:
                 position = data['listener_position']
-                cur_est_amps = self.model(data)[..., 0]
+                cur_est_amps = self.model(data)
                 est_pos = np.vstack((est_pos, position))
                 est_amps = np.vstack((est_amps, cur_est_amps))
 
@@ -239,14 +183,12 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
     else:
         logger.error("Currently only the three room dataset is supported")
 
-    model = Gains_from_MLP(
+    model = Omni_Amplitudes_from_MLP(
         room_data.num_rooms,
-        1,
         config_dict.num_fourier_features,
         config_dict.num_hidden_layers,
         config_dict.num_neurons_per_layer,
         config_dict.encoding_type,
-        position_type="output_gains",
         device=config_dict.device,
         gain_limits=(db2lin(-100), db2lin(0)),
     )
