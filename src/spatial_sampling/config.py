@@ -4,7 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from ..config.config import FeatureEncodingType
+from diff_gfdn.config.config import FeatureEncodingType
 
 
 class SpatialSamplingConfig(BaseModel):

@@ -5,7 +5,7 @@ import spaudiopy as sp
 import torch
 from torch import nn
 
-from ..gain_filters import FeatureEncodingType, MLP, OneHotEncoding, ScaledSigmoid, SinusoidalEncoding
+from diff_gfdn.gain_filters import FeatureEncodingType, MLP, OneHotEncoding, ScaledSigmoid, SinusoidalEncoding
 
 # pylint: disable=E0606
 
@@ -21,7 +21,6 @@ class Directional_Beamforming_Weights_from_MLP(nn.Module):
         num_neurons: int,
         encoding_type: FeatureEncodingType,
         device: Optional[torch.device] = 'cpu',
-        weight_limits: Optional[Tuple] = None,
     ):
         """
         Train the MLP to get directional beamformer weights for the amplitudes of each slope, as a function
@@ -36,7 +35,6 @@ class Directional_Beamforming_Weights_from_MLP(nn.Module):
                 encoding_type (str): whether to use one-hot encoding with the grid geometry information, 
                                      or directly use the sinusoidal encodings of the position 
                                      coordinates of the receiversas inputs to the MLP
-                weight_limits (optional, tuple): range of the MLP output in the linear scale, specified as a tuple
 
         """
         super().__init__()
@@ -67,10 +65,9 @@ class Directional_Beamforming_Weights_from_MLP(nn.Module):
                        num_biquads_in_cascade=1,
                        num_params=self.num_out_features)
 
-        # constraints on output gains
-        weight_limits = (-1.0, 1.0) if weight_limits is None else weight_limits
-        self.scaled_sigmoid = ScaledSigmoid(lower_limit=weight_limits[0],
-                                            upper_limit=weight_limits[1])
+        # constraints on output gains - ensures they are positive, and they sum to one.
+        # useful for directional beamforming
+        self.scaling = nn.Softmax(dim=-1)
 
     def forward(self, x: Dict) -> torch.tensor:
         """Run the input features through the MLP. Output is of size batch_size x num_slopes x (N_sp+1)**2"""
@@ -97,8 +94,8 @@ class Directional_Beamforming_Weights_from_MLP(nn.Module):
         # always ensure that the filter parameters are constrained
         reshape_size = (self.batch_size, self.num_groups,
                         self.num_out_features)
-        self.weights = self.scaled_sigmoid(
-            self.weights.view(-1)).view(reshape_size)
+        # ensure weights are between 0-1 and they add to 1
+        self.weights = self.scaling(self.weights).reshape(reshape_size)
 
         return self.weights
 
@@ -121,8 +118,10 @@ class Directional_Beamforming_Weights_from_MLP(nn.Module):
                                                    desired_directions[0, :],
                                                    desired_directions[1, :],
                                                    sh_type='real'),
+                                  dtype=torch.float32,
                                   device=self.device)
-        return torch.einsum('bkn, nj -> bkj', self.weights, sph_matrix.T)
+        # we want the output shape to be num_batches, num_slopes, num_directions
+        return torch.einsum('bkn, nj -> bjk', self.weights, sph_matrix.T)
 
     def print(self):
         """Print the value of the parameters"""

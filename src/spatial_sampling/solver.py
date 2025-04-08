@@ -1,7 +1,7 @@
 from copy import deepcopy
 import os
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Union
 
 from loguru import logger
 import matplotlib.pyplot as plt
@@ -11,26 +11,26 @@ from slope2noise.rooms import RoomGeometry
 from slope2noise.utils import decay_kernel
 import torch
 
-from ..plot import order_position_matrices
-from ..save_results import save_loss
-from ..utils import db, db2lin, ms_to_samps, samps_to_ms
+from diff_gfdn.plot import order_position_matrices
+from diff_gfdn.save_results import save_loss
+from diff_gfdn.utils import db, db2lin, ms_to_samps, samps_to_ms
+
 from .config import SpatialSamplingConfig
 from .dataloader import load_dataset, parse_room_data, SpatialRoomDataset
-from .model import Omni_Amplitudes_from_MLP
+from .model import Directional_Beamforming_Weights_from_MLP, Omni_Amplitudes_from_MLP
 from .trainer import SpatialSamplingTrainer
 
 # pylint: disable=E0606
+# flake8: noqa:E231
 
 
 class make_plots:
     """Class for making plots"""
 
-    def __init__(
-        self,
-        room_data: SpatialRoomDataset,
-        config_dict: SpatialSamplingConfig,
-        model: Omni_Amplitudes_from_MLP,
-    ):
+    def __init__(self, room_data: SpatialRoomDataset,
+                 config_dict: SpatialSamplingConfig,
+                 model: Union[Omni_Amplitudes_from_MLP,
+                              Directional_Beamforming_Weights_from_MLP]):
         """
         Initialise parameters for the class
         Args:
@@ -96,11 +96,19 @@ class make_plots:
         self.model.eval()
 
         est_pos = np.empty((0, 3))
-        est_amps = np.empty((0, self.room_data.num_rooms))
+        est_amps = np.empty((0, self.room_data.num_rooms)) if isinstance(
+            self.model, Omni_Amplitudes_from_MLP) else np.empty(
+                (0, self.room_data.num_directions, self.room_data.num_rooms))
         with torch.no_grad():
             for data in self.train_dataset:
                 position = data['listener_position']
-                cur_est_amps = self.model(data)
+                model_output = self.model(data)
+                if isinstance(self.model,
+                              Directional_Beamforming_Weights_from_MLP):
+                    cur_est_amps = self.model.get_directional_amplitudes(
+                        data['sph_directions'])
+                else:
+                    cur_est_amps = model_output.copy()
                 est_pos = np.vstack((est_pos, position))
                 est_amps = np.vstack((est_amps, cur_est_amps))
 
@@ -111,59 +119,125 @@ class make_plots:
         """Plot the true and learned amplitudes as a function of space"""
         logger.info("Making amplitude plots")
 
-        self.room.plot_amps_at_receiver_points(
-            self.true_points,
-            self.src_pos,
-            self.true_amps.T,
-            scatter_plot=False,
-            save_path=Path(
-                f'{self.config_dict.train_dir}/actual_amplitudes_in_space.png'
-            ).resolve(),
-            title='Common slopes')
+        if self.true_amps.ndim == 2:
+            # the amplitudes are omni directional
+            self.room.plot_amps_at_receiver_points(
+                self.true_points,
+                self.src_pos,
+                self.true_amps.T,
+                scatter_plot=False,
+                save_path=Path(
+                    f'{self.config_dict.train_dir}/actual_amplitudes_in_space.png'
+                ).resolve(),
+                title='Common slopes')
 
-        self.room.plot_amps_at_receiver_points(
-            est_points,
-            self.src_pos,
-            est_amps.T,
-            scatter_plot=False,
-            save_path=Path(
-                f'{self.config_dict.train_dir}/learnt_amplitudes_in_space_' +
-                f'grid_resolution_m={np.round(grid_resolution_m, 3)}.png').
-            resolve(),
-            title=f'Training grid resolution={np.round(grid_resolution_m, 3)}m'
-        )
+            self.room.plot_amps_at_receiver_points(
+                est_points,
+                self.src_pos,
+                est_amps.T,
+                scatter_plot=False,
+                save_path=Path(
+                    f'{self.config_dict.train_dir}/learnt_amplitudes_in_space_'
+                    + f'grid_resolution_m={np.round(grid_resolution_m, 3)}.png'
+                ).resolve(),
+                title=
+                f'Training grid resolution={np.round(grid_resolution_m, 3)}m')
+
+        else:
+            # the amplitudes are direction dependent
+            for j in range(self.room_data.num_directions):
+                dir_string = (
+                    f'az = {self.room_data.sph_directions[0, j]:.2f} deg, ' +
+                    f' el = {self.room_data.sph_directions[1, j]:.2f} deg')
+
+                directory = Path(
+                    f'{self.config_dict.train_dir}/direction={j+1}').resolve()
+                if not os.path.exists(directory):
+                    os.makedirs(directory)
+
+                self.room.plot_amps_at_receiver_points(
+                    self.true_points,
+                    self.src_pos,
+                    self.true_amps[:, j, :].T,
+                    scatter_plot=False,
+                    save_path=f'{directory}/actual_amplitudes_in_space.png',
+                    title='Common slopes, ' + dir_string)
+
+                self.room.plot_amps_at_receiver_points(
+                    est_points,
+                    self.src_pos,
+                    est_amps[:, j, :].T,
+                    scatter_plot=False,
+                    save_path=f'{directory}/learnt_amplitudes_in_space_' +
+                    f'grid_resolution_m={np.round(grid_resolution_m, 3)}.png',
+                    title=
+                    f'Training grid resolution={np.round(grid_resolution_m, 3)}m, '
+                    + dir_string)
 
     def plot_edc_error_in_space(self, grid_resolution_m: float,
                                 est_amps: NDArray, est_points: NDArray):
         """Plot the error between the CS EDC and MLP EDC in space"""
         logger.info("Making EDC error plots")
+
         # order the position indices in the estimated data according to the
         # reference dataset
         ordered_pos_idx = order_position_matrices(self.true_points, est_points)
-        original_edc = db(np.sum(np.einsum('bk, kt -> bkt', self.true_amps,
-                                           self.envelopes),
-                                 axis=1),
-                          is_squared=True)
-        est_edc = db(np.sum(np.einsum('bk, kt -> bkt', est_amps,
-                                      self.envelopes),
-                            axis=1),
-                     is_squared=True)
 
-        error_db = np.mean(np.abs(original_edc -
-                                  est_edc[ordered_pos_idx, ...]),
-                           axis=-1)
-        self.room.plot_edc_error_at_receiver_points(
-            self.true_points,
-            self.src_pos,
-            db2lin(error_db),
-            scatter_plot=False,
-            cur_freq_hz=None,
-            save_path=Path(
-                f'{self.config_dict.train_dir}/edc_error_in_space_' +
-                f'grid_resolution_m={np.round(grid_resolution_m, 3)}.png').
-            resolve(),
-            title=f'Training grid resolution={np.round(grid_resolution_m, 3)}m'
-        )
+        if self.true_amps.ndim == 2:
+            original_edc = db(np.sum(np.einsum('bk, kt -> bkt', self.true_amps,
+                                               self.envelopes),
+                                     axis=1),
+                              is_squared=True)
+            est_edc = db(np.sum(np.einsum('bk, kt -> bkt', est_amps,
+                                          self.envelopes),
+                                axis=1),
+                         is_squared=True)
+
+            error_db = np.mean(np.abs(original_edc -
+                                      est_edc[ordered_pos_idx, ...]),
+                               axis=-1)
+            self.room.plot_edc_error_at_receiver_points(
+                self.true_points,
+                self.src_pos,
+                db2lin(error_db),
+                scatter_plot=False,
+                cur_freq_hz=None,
+                save_path=Path(
+                    f'{self.config_dict.train_dir}/edc_error_in_space_' +
+                    f'grid_resolution_m={np.round(grid_resolution_m, 3)}.png').
+                resolve(),
+                title=
+                f'Training grid resolution={np.round(grid_resolution_m, 3)}m')
+        else:
+            original_edc = db(np.sum(np.einsum('bjk, kt -> bjkt',
+                                               self.true_amps, self.envelopes),
+                                     axis=-2),
+                              is_squared=True)
+            est_edc = db(np.sum(np.einsum('bjk, kt -> bjkt', est_amps,
+                                          self.envelopes),
+                                axis=-2),
+                         is_squared=True)
+
+            error_db = np.mean(np.abs(original_edc -
+                                      est_edc[ordered_pos_idx, ...]),
+                               axis=-1)
+
+            for j in range(self.room_data.num_directions):
+                self.room.plot_edc_error_at_receiver_points(
+                    self.true_points,
+                    self.src_pos,
+                    db2lin(error_db[:, j]),
+                    scatter_plot=False,
+                    cur_freq_hz=None,
+                    save_path=Path(
+                        f'{self.config_dict.train_dir}/direction={j+1}/edc_error_in_space_'
+                        +
+                        f'grid_resolution_m={np.round(grid_resolution_m, 3)}.png'
+                    ).resolve(),
+                    title=
+                    f'Training grid resolution={np.round(grid_resolution_m, 3)}m, '
+                    + f'az = {self.room_data.sph_directions[0, j]:.2f} deg,' +
+                    f' el = {self.room_data.sph_directions[1, j]:.2f} deg')
 
 
 ############################################################################
@@ -183,15 +257,28 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
     else:
         logger.error("Currently only the three room dataset is supported")
 
-    model = Omni_Amplitudes_from_MLP(
-        room_data.num_rooms,
-        config_dict.num_fourier_features,
-        config_dict.num_hidden_layers,
-        config_dict.num_neurons_per_layer,
-        config_dict.encoding_type,
-        device=config_dict.device,
-        gain_limits=(db2lin(-100), db2lin(0)),
-    )
+    # are we learning OMNI amplitudes or directional amplitudes?
+    if room_data.sph_directions is None:
+        model = Omni_Amplitudes_from_MLP(
+            room_data.num_rooms,
+            config_dict.num_fourier_features,
+            config_dict.num_hidden_layers,
+            config_dict.num_neurons_per_layer,
+            config_dict.encoding_type,
+            device=config_dict.device,
+            gain_limits=(db2lin(-100), db2lin(0)),
+        )
+
+    else:
+        model = Directional_Beamforming_Weights_from_MLP(
+            room_data.num_rooms,
+            room_data.ambi_order,
+            config_dict.num_fourier_features,
+            config_dict.num_hidden_layers,
+            config_dict.num_neurons_per_layer,
+            config_dict.encoding_type,
+            device=config_dict.device,
+        )
 
     # set default device
     torch.set_default_device(config_dict.device)
@@ -277,13 +364,13 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
             len(trainer_loss[grid_resolution_m[k]]))
 
         # make plots
-        plot_obj.plot_edc_error_in_space(
+        plot_obj.plot_amplitudes_in_space(
             grid_resolution_m[k],
             est_amps,
             est_points,
         )
 
-        plot_obj.plot_amplitudes_in_space(
+        plot_obj.plot_edc_error_in_space(
             grid_resolution_m[k],
             est_amps,
             est_points,

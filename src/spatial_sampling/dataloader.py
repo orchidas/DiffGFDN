@@ -9,7 +9,7 @@ from numpy.typing import ArrayLike, NDArray
 import torch
 from torch.utils import data
 
-from ..dataloader import get_dataloader, InputFeatures, Meshgrid, to_device
+from diff_gfdn.dataloader import get_dataloader, InputFeatures, Meshgrid, to_device
 
 
 class SpatialRoomDataset(ABC):
@@ -76,6 +76,8 @@ class SpatialRoomDataset(ABC):
         # create 3D mesh
         self.grid_spacing_m = grid_spacing_m
         self.sph_directions = sph_directions
+        self.num_directions = None if self.sph_directions is None else self.sph_directions.shape[
+            -1]
         self.ambi_order = ambi_order
         self.mesh_3D = self.get_3D_meshgrid()
 
@@ -150,8 +152,8 @@ class SpatialSamplingDataset(data.Dataset):
     ):
         """
         Spatial sampling dataset containing the common slope amplitudes
-        for different receiver positions. During batch processing, each batch will contain all the frequency bins
-        but different sets of receiver positions
+        for different receiver positions. During batch processing, each batch will contain 
+        different sets of receiver positions
         Args:
             device (str): cuda or cpu
             room_data (SpatialRoomDataset): object of the room dataset class
@@ -397,7 +399,7 @@ def parse_room_data(filepath: str):
             amplitudes = srir_mat['amplitudes'].T
             noise_floor = srir_mat['noise_floor'].T
             sph_directions = srir_mat[
-                'sph_directions'] if 'sph_directions' in srir_mat else None
+                'directions'] if 'directions' in srir_mat else None
     except Exception as exc:
         raise FileNotFoundError("pickle file not read correctly") from exc
 

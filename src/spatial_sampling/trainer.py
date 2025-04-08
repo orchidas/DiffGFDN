@@ -1,6 +1,6 @@
 import os
 import time
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from loguru import logger
 import numpy as np
@@ -10,9 +10,10 @@ from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import trange
 
-from ..utils import db, get_str_results, ms_to_samps
+from diff_gfdn.utils import db, get_str_results, ms_to_samps
+
 from .config import SpatialSamplingConfig
-from .model import Omni_Amplitudes_from_MLP
+from .model import Directional_Beamforming_Weights_from_MLP, Omni_Amplitudes_from_MLP
 
 # pylint: disable=W0632
 
@@ -58,16 +59,38 @@ class spatial_edc_loss(nn.Module):
 
     def forward(self, amps_pred: torch.Tensor, amps_true: torch.Tensor):
         """
-        Calcualtes the mean EDC loss over space and time.
+        Calculate the mean EDC loss over space and time.
         The inputs are of shape batch size x num_slopes, 
         the decay kernel is of shape num_slopes x time
         """
-        edc_true = db(torch.einsum('bk, kt -> bkt', amps_true, self.envelopes),
-                      is_squared=True)
-        edc_pred = db(torch.einsum('bk, kt -> bkt', amps_pred, self.envelopes),
-                      is_squared=True)
-        edc_loss = torch.mean(torch.abs(edc_true - edc_pred), dim=(0, -1))
-        return torch.sum(edc_loss)
+        # Omni RIRs only
+        if amps_true.ndim == 2:
+            # desired shape is batch_size x num_slopes x num_time_samples
+            # sum along time samples
+            edc_true = db(torch.einsum('bk, kt -> bkt', amps_true,
+                                       self.envelopes),
+                          is_squared=True)
+            edc_pred = db(torch.einsum('bk, kt -> bkt', amps_pred,
+                                       self.envelopes),
+                          is_squared=True)
+            edc_loss = torch.sum(
+                torch.mean(torch.abs(edc_true - edc_pred), dim=(0, -1)))
+        # Directional RIRs
+        else:
+            # desired shape is batch_size x num_directions x num_slopes x num_time_samples
+            # sum along num slopes
+            edc_true = db(torch.sum(torch.einsum('bjk, kt -> bjkt', amps_true,
+                                                 self.envelopes),
+                                    axis=-2),
+                          is_squared=True)
+            edc_pred = db(torch.sum(torch.einsum('bjk, kt -> bjkt', amps_pred,
+                                                 self.envelopes),
+                                    axis=-2),
+                          is_squared=True)
+            edc_loss = torch.mean(torch.abs(edc_true - edc_pred),
+                                  dim=(0, 1, -1))
+
+        return edc_loss
 
 
 class SpatialSamplingTrainer:
@@ -75,7 +98,8 @@ class SpatialSamplingTrainer:
 
     def __init__(
         self,
-        net: Omni_Amplitudes_from_MLP,
+        net: Union[Omni_Amplitudes_from_MLP,
+                   Directional_Beamforming_Weights_from_MLP],
         trainer_config: SpatialSamplingConfig,
         common_decay_times: Optional[List] = None,
         sampling_rate: float = 44100,
@@ -160,7 +184,12 @@ class SpatialSamplingTrainer:
         gains = self.net(data)
         # if batch has a single data point
         gains = gains.unsqueeze(0) if gains.ndim == 1 else gains
-        loss = self.criterion[0](gains, data['target_common_slope_amps'])
+
+        if isinstance(self.net, Omni_Amplitudes_from_MLP):
+            loss = self.criterion[0](gains, data['target_common_slope_amps'])
+        else:
+            loss = self.criterion[0](self.net.get_directional_amplitudes(
+                data['sph_directions']), data['target_common_slope_amps'])
 
         loss.backward()
         self.optimizer.step()
@@ -173,7 +202,11 @@ class SpatialSamplingTrainer:
         gains = self.net(data)
         # if batch has a single data point
         gains = gains.unsqueeze(0) if gains.ndim == 1 else gains
-        loss = self.criterion[0](gains, data['target_common_slope_amps'])
+        if isinstance(self.net, Omni_Amplitudes_from_MLP):
+            loss = self.criterion[0](gains, data['target_common_slope_amps'])
+        else:
+            loss = self.criterion[0](self.net.get_directional_amplitudes(
+                data['sph_directions']), data['target_common_slope_amps'])
         return loss.item()
 
     def print_results(self, e: int, e_time):

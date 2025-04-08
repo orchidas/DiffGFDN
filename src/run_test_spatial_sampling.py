@@ -4,9 +4,9 @@ import time
 
 import torch
 
-from diff_gfdn.spatial_sampling.config import SpatialSamplingConfig
-from diff_gfdn.spatial_sampling.solver import run_training_spatial_sampling
 from run_model import dump_config_to_pickle, load_and_validate_config, parse_args
+from spatial_sampling.config import SpatialSamplingConfig
+from spatial_sampling.solver import run_training_spatial_sampling
 
 
 def main():
