@@ -9,6 +9,7 @@ import numpy as np
 from numpy.typing import NDArray
 from slope2noise.rooms import RoomGeometry
 from slope2noise.utils import decay_kernel
+import spaudiopy as spa
 import torch
 
 from diff_gfdn.plot import order_position_matrices
@@ -103,6 +104,11 @@ class make_plots:
             for data in self.train_dataset:
                 position = data['listener_position']
                 model_output = self.model(data)
+                print(
+                    'Standard deviation across spatial position of beamformer weights:'
+                    +
+                    f' {np.round(np.std(model_output.detach().numpy(), axis=0), 3)}'
+                )
                 if isinstance(self.model,
                               Directional_Beamforming_Weights_from_MLP):
                     cur_est_amps = self.model.get_directional_amplitudes(
@@ -111,15 +117,86 @@ class make_plots:
                     cur_est_amps = model_output.copy()
                 est_pos = np.vstack((est_pos, position))
                 est_amps = np.vstack((est_amps, cur_est_amps))
-
         return est_pos, est_amps
+
+    def plot_beamformer_output(self, est_amps: NDArray, filename: str):
+        """
+        Plot beamformer output as function of elevation and azimuth angles
+        filename (str): filename for saving
+        """
+        # Create grid of elevation and azimuth angles
+        num_azi = 20
+        num_el = 20
+        azimuths = np.degrees(np.linspace(0, 2 * np.pi, num_azi))
+        elevations = np.degrees(np.linspace(-np.pi / 2, np.pi / 2, num_el))
+        polars = 90 - elevations
+
+        azimuth_grid, polar_grid = np.meshgrid(np.deg2rad(azimuths),
+                                               np.deg2rad(polars))
+        elevation_grid = np.pi / 2 - polar_grid
+        x = np.cos(elevation_grid) * np.sin(azimuth_grid)
+        y = np.cos(elevation_grid) * np.cos(azimuth_grid)
+        z = np.sin(elevation_grid)
+
+        # Plotting beamforming weights as a spherical surface
+        fig, ax = plt.subplots(self.room_data.num_rooms,
+                               1,
+                               subplot_kw={'projection': '3d'},
+                               figsize=(6, 3 * self.room_data.num_rooms))
+
+        # spherical harmonic interpolation
+        sph_matrix = spa.sph.sh_matrix(self.room_data.ambi_order,
+                                       self.room_data.sph_directions[0, :],
+                                       self.room_data.sph_directions[1, :],
+                                       sh_type='real')
+
+        sph_matrix_dense = spa.sph.sh_matrix(self.room_data.ambi_order,
+                                             np.degrees(azimuth_grid).ravel(),
+                                             np.degrees(polar_grid).ravel(),
+                                             sh_type='real')
+
+        weights = np.einsum('bjk, jn -> bkn', est_amps, sph_matrix)
+        amps_interp = np.einsum('bkn, nd -> bdk', weights, sph_matrix_dense.T)
+        num_row, num_col = azimuth_grid.shape
+
+        for k in range(self.room_data.num_rooms):
+            amps_mean_interp = amps_interp[0, :, k].reshape(num_row, num_col)
+
+            # Plot the ellipsoid surface with beamforming weights as color values
+            surf = ax[k].plot_surface(
+                x,
+                y,
+                z,
+                facecolors=plt.cm.viridis(amps_mean_interp /
+                                          amps_mean_interp.max()),
+                rstride=1,
+                cstride=1,
+                linewidth=0,
+                antialiased=False,
+                alpha=0.5,
+            )
+
+            # Add a colorbar
+            fig.colorbar(surf, ax=ax[k], shrink=0.5, aspect=5)
+            ax[k].set_xlabel('X')
+            ax[k].set_ylabel('Y')
+            ax[k].set_zlabel('Z)')
+            ax[k].set_title(f'Group = {k+1}')
+
+        fig.subplots_adjust(hspace=0.3)
+        fig.savefig(Path(f'{self.config_dict.train_dir}/{filename}').resolve())
 
     def plot_amplitudes_in_space(self, grid_resolution_m: float,
                                  est_amps: NDArray, est_points: NDArray):
         """Plot the true and learned amplitudes as a function of space"""
         logger.info("Making amplitude plots")
+        db_limits = np.zeros((2, self.room_data.num_rooms))
 
         if self.true_amps.ndim == 2:
+            db_limits[0, :] = np.min(db(self.true_amps, is_squared=True),
+                                     axis=-1)
+            db_limits[1, :] = np.max(db(self.true_amps, is_squared=True),
+                                     axis=-1)
             # the amplitudes are omni directional
             self.room.plot_amps_at_receiver_points(
                 self.true_points,
@@ -129,7 +206,8 @@ class make_plots:
                 save_path=Path(
                     f'{self.config_dict.train_dir}/actual_amplitudes_in_space.png'
                 ).resolve(),
-                title='Common slopes')
+                title='Common slopes',
+                db_limits=db_limits)
 
             self.room.plot_amps_at_receiver_points(
                 est_points,
@@ -141,14 +219,32 @@ class make_plots:
                     + f'grid_resolution_m={np.round(grid_resolution_m, 3)}.png'
                 ).resolve(),
                 title=
-                f'Training grid resolution={np.round(grid_resolution_m, 3)}m')
+                f'Training grid resolution={np.round(grid_resolution_m, 3)}m',
+                db_limits=db_limits)
 
         else:
             # the amplitudes are direction dependent
             for j in range(self.room_data.num_directions):
+                print(
+                    f'Actual amplitudes mean : {np.round(self.true_amps[:, j, :].mean(axis=0), 3)},'
+                    +
+                    f'Est amplitudes mean: {np.round(est_amps[:, j, :].mean(axis=0), 3)} for direction {j}'
+                )
+                print(
+                    f'Actual amplitudes STD: {np.round(self.true_amps[:, j, :].std(axis=0),3)},'
+                    +
+                    f'est amplitudes STD: {np.round(est_amps[:, j, :].std(axis=0), 3)} for direction {j}'
+                )
+
+                db_limits[0, :] = np.min(db(self.true_amps[:, j, :],
+                                            is_squared=True),
+                                         axis=0)
+                db_limits[1, :] = np.max(db(self.true_amps[:, j, :],
+                                            is_squared=True),
+                                         axis=0)
                 dir_string = (
                     f'az = {self.room_data.sph_directions[0, j]:.2f} deg, ' +
-                    f' el = {self.room_data.sph_directions[1, j]:.2f} deg')
+                    f' pol = {self.room_data.sph_directions[1, j]:.2f} deg')
 
                 directory = Path(
                     f'{self.config_dict.train_dir}/direction={j+1}').resolve()
@@ -161,7 +257,8 @@ class make_plots:
                     self.true_amps[:, j, :].T,
                     scatter_plot=False,
                     save_path=f'{directory}/actual_amplitudes_in_space.png',
-                    title='Common slopes, ' + dir_string)
+                    title='Common slopes, ' + dir_string,
+                    db_limits=db_limits)
 
                 self.room.plot_amps_at_receiver_points(
                     est_points,
@@ -172,7 +269,8 @@ class make_plots:
                     f'grid_resolution_m={np.round(grid_resolution_m, 3)}.png',
                     title=
                     f'Training grid resolution={np.round(grid_resolution_m, 3)}m, '
-                    + dir_string)
+                    + dir_string,
+                    db_limits=db_limits)
 
     def plot_edc_error_in_space(self, grid_resolution_m: float,
                                 est_amps: NDArray, est_points: NDArray):
@@ -209,13 +307,10 @@ class make_plots:
                 title=
                 f'Training grid resolution={np.round(grid_resolution_m, 3)}m')
         else:
-            original_edc = db(np.sum(np.einsum('bjk, kt -> bjkt',
-                                               self.true_amps, self.envelopes),
-                                     axis=-2),
+            original_edc = db(np.einsum('bjk, kt -> bjt', self.true_amps,
+                                        self.envelopes),
                               is_squared=True)
-            est_edc = db(np.sum(np.einsum('bjk, kt -> bjkt', est_amps,
-                                          self.envelopes),
-                                axis=-2),
+            est_edc = db(np.einsum('bjk, kt -> bjt', est_amps, self.envelopes),
                          is_squared=True)
 
             error_db = np.mean(np.abs(original_edc -
@@ -237,7 +332,7 @@ class make_plots:
                     title=
                     f'Training grid resolution={np.round(grid_resolution_m, 3)}m, '
                     + f'az = {self.room_data.sph_directions[0, j]:.2f} deg,' +
-                    f' el = {self.room_data.sph_directions[1, j]:.2f} deg')
+                    f' pol = {self.room_data.sph_directions[1, j]:.2f} deg')
 
 
 ############################################################################
@@ -284,13 +379,16 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
     torch.set_default_device(config_dict.device)
     # move model to device (cuda or cpu)
     model = model.to(config_dict.device)
+    # plot object
+    plot_obj = make_plots(room_data, config_dict, model)
+
+    plot_obj.plot_beamformer_output(room_data.amplitudes,
+                                    filename='true_directional_amplitudes.png')
 
     # at least one mic in each room
     assert config_dict.num_grid_spacing * room_data.grid_spacing_m <= np.min(
         np.asarray(room_data.room_dims)[:, :2]
     ), "Reduce number of grid spacing points to have at least one mic in each room"
-    # plot object
-    plot_obj = make_plots(room_data, config_dict, model)
 
     grid_resolution_m = np.arange(config_dict.num_grid_spacing, 0,
                                   -1) * room_data.grid_spacing_m
@@ -321,6 +419,7 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
             model,
             config_dict,
             common_decay_times=room_data.common_decay_times,
+            receiver_positions=room_data.receiver_position,
             sampling_rate=room_data.sample_rate,
             ir_len_ms=samps_to_ms(room_data.rir_length, room_data.sample_rate),
         )
@@ -364,6 +463,12 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
             len(trainer_loss[grid_resolution_m[k]]))
 
         # make plots
+        if isinstance(model, Directional_Beamforming_Weights_from_MLP):
+            plot_obj.plot_beamformer_output(
+                est_amps,
+                filename='learned_directional_amplitudes ' +
+                f'grid_resolution_m={np.round(grid_resolution_m[k], 3)}.png')
+
         plot_obj.plot_amplitudes_in_space(
             grid_resolution_m[k],
             est_amps,

@@ -22,7 +22,7 @@ class SpatialSamplingConfig(BaseModel):
     # maximum epochs for training
     max_epochs: int = 50
     # learning rate for Adam optimiser
-    lr: float = 0.01
+    lr: float = 0.001
     # directory to save results
     train_dir: str = "output/spatial-sampling/"
     # MLP parameters

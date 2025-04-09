@@ -5,7 +5,7 @@ import spaudiopy as sp
 import torch
 from torch import nn
 
-from diff_gfdn.gain_filters import FeatureEncodingType, MLP, OneHotEncoding, ScaledSigmoid, SinusoidalEncoding
+from diff_gfdn.gain_filters import FeatureEncodingType, MLP, OneHotEncoding, ScaledSigmoid, Sigmoid, SinusoidalEncoding
 
 # pylint: disable=E0606
 
@@ -67,7 +67,7 @@ class Directional_Beamforming_Weights_from_MLP(nn.Module):
 
         # constraints on output gains - ensures they are positive, and they sum to one.
         # useful for directional beamforming
-        self.scaling = nn.Softmax(dim=-1)
+        self.scaling = Sigmoid()
 
     def forward(self, x: Dict) -> torch.tensor:
         """Run the input features through the MLP. Output is of size batch_size x num_slopes x (N_sp+1)**2"""
@@ -94,13 +94,20 @@ class Directional_Beamforming_Weights_from_MLP(nn.Module):
         # always ensure that the filter parameters are constrained
         reshape_size = (self.batch_size, self.num_groups,
                         self.num_out_features)
-        # ensure weights are between 0-1 and they add to 1
-        self.weights = self.scaling(self.weights).reshape(reshape_size)
+        self.weights = self.weights.reshape(reshape_size)
 
+        # in the following we can choose between amp preserving or energy preserving
+        # beamforming weights
+
+        # ensure weights are between 0-1 and they add to 1
+        # self.weights = self.scaling(self.weights)
         return self.weights
 
+        # normalise weights to have unit energy
+        # return self.normalise_beamformer_weights()
+
     def normalise_beamformer_weights(self):
-        """Normalise the beamforming weight matrix for amplitude preservation"""
+        """Normalise the beamforming weight matrix for energy preservation"""
         return self.weights / (torch.norm(self.weights, dim=-1, keepdim=True) +
                                1e-6)
 
@@ -120,8 +127,14 @@ class Directional_Beamforming_Weights_from_MLP(nn.Module):
                                                    sh_type='real'),
                                   dtype=torch.float32,
                                   device=self.device)
+
+        # normalise weights to have unit energy
+        self.normalise_beamformer_weights()
+
         # we want the output shape to be num_batches, num_slopes, num_directions
-        return torch.einsum('bkn, nj -> bjk', self.weights, sph_matrix.T)
+        output = torch.einsum('bkn, nj -> bjk', self.weights, sph_matrix.T)
+        # ensure the amplitudes are between 0 and 1
+        return self.scaling(output)
 
     def print(self):
         """Print the value of the parameters"""

@@ -396,8 +396,8 @@ def parse_room_data(filepath: str):
             srirs = np.squeeze(srir_mat['srirs']).T
             band_centre_hz = srir_mat['band_centre_hz']
             common_decay_times = srir_mat['common_decay_times']
-            amplitudes = srir_mat['amplitudes'].T
-            noise_floor = srir_mat['noise_floor'].T
+            amplitudes = srir_mat['amplitudes_norm'].T
+            noise_floor = srir_mat['noise_floor_norm'].T
             sph_directions = srir_mat[
                 'directions'] if 'directions' in srir_mat else None
     except Exception as exc:
