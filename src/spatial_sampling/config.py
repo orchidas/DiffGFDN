@@ -1,7 +1,7 @@
 # pylint: disable=relative-beyond-top-level
 
 from enum import Enum
-from typing import Optional
+from typing import Optional, Tuple
 
 from pydantic import BaseModel, computed_field
 
@@ -20,7 +20,9 @@ class CNNConfig(BaseModel):
     # tune hyperparameters of the CNN
     num_hidden_channels: int = 2**6
     num_layers: int = 3
-    kernel_size: int = 3
+    # if specified as a tuple, first one is used for height,
+    # the second is used for width
+    kernel_size: Tuple = (3, 3)
 
 
 class MLPConfig(BaseModel):
@@ -40,6 +42,8 @@ class SpatialSamplingConfig(BaseModel):
     # where to get the labeled dataset
     room_dataset_path: str = 'resources/Georg_3room_FDTD/srirs.pkl'
     # number of receivers in each training batch
+    # a larger batch size leads to more equidistributed sampling
+    # of x and y values in the meshgrid when training the CNN
     batch_size: int = 32
     # torch device - cuda or cpu or mps (for apple silicon)
     device: str = 'cpu'

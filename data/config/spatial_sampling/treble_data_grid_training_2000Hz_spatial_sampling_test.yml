@@ -1,0 +1,11 @@
+room_dataset_path: 'resources/Georg_3room_FDTD/srirs_band_centre=2000Hz.pkl'
+seed: 25500
+batch_size: 50
+max_epochs: 15
+train_dir: 'output/spatial_sampling/grid_rir_treble_band_centre=2000Hz_spatial_sampling_ratio/'
+num_grid_spacing: 10
+dnn_config:
+  num_fourier_features: 20
+  mlp_config:
+    num_hidden_layers: 3
+    num_neurons_per_layer: 128

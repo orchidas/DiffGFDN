@@ -208,7 +208,7 @@ class SpatialSamplingDataset(Dataset):
 def create_2D_grid_data(
     batch: List[Dict],
     dataset_ref: Dataset = None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Create 2D grid data from 1D position and target labels to feed into CNN.
     The positions must be on a uniform grid
@@ -217,35 +217,50 @@ def create_2D_grid_data(
             the batch contains receiver indices that are uniformly distributed in space
         dataset_ref (Dataset): reference to the Dataset object
     Returns:
-        Tuple: the 2D meshgrid of shape H,W,2, and the labels interpolated at that 
-               grid of shape H,W,num_directions,num_groups
+        Tuple: the 2D meshgrid of shape H,W,2 - unnormalised and normalised,
+                and the labels interpolated at the grid of shape H,W,num_directions,num_groups
     """
+
+    def create_2D_mesh(x_lin: ArrayLike, y_lin: ArrayLike) -> Tuple[NDArray]:
+        """Create 2D mesh from x, y coordinates"""
+        x_mesh, y_mesh = np.meshgrid(np.unique(x_lin), np.unique(y_lin))
+
+        # this is of size H x W x 2
+        mesh_2D_data = np.stack((x_mesh, y_mesh), axis=-1)
+        return mesh_2D_data
+
+    # create mesh for listener positions
     x_lin = np.array([item['input'].listener_position[0] for item in batch])
     y_lin = np.array([item['input'].listener_position[1] for item in batch])
+    mesh_2D_data = create_2D_mesh(x_lin, y_lin)
 
-    # size is B x J x 3
+    # create mesh for normalised listener positions
+    x_lin_norm = np.array(
+        [item['input'].norm_listener_position[0] for item in batch])
+    y_lin_norm = np.array(
+        [item['input'].norm_listener_position[1] for item in batch])
+    mesh_2D_norm_data = create_2D_mesh(x_lin_norm, y_lin_norm)
+
+    # target amplitudes, size is B x num_directions x num_groups
     target_labels = np.stack([item['target'] for item in batch])
-
-    x_mesh, y_mesh = np.meshgrid(np.unique(x_lin), np.unique(y_lin))
-    H, W = x_mesh.shape
-
-    # this is of size H x W x 2
-    mesh_2D_data = np.stack((x_mesh, y_mesh), axis=-1)
     num_groups = target_labels.shape[-1]
     num_directions = target_labels.shape[1]
+    H, W = mesh_2D_data.shape[:-1]
 
     # size is H, W, num_directions, num_groups - using scipy's interpolate because
     # torch's does not take into account the original x, y coordinates
     target_labels_2D = griddata((x_lin, y_lin),
-                                target_labels, (x_mesh, y_mesh),
+                                target_labels,
+                                (mesh_2D_data[..., 0], mesh_2D_data[..., 1]),
                                 method='nearest')
 
     # create a mask for values within the limits (so that outside the boundaries the labels are zero)
     combined_mask = dataset_ref.get_binary_mask(mesh_2D_data)
     target_labels_2D[~combined_mask, ...] = 0.0
 
-    return torch.tensor(mesh_2D_data), torch.tensor(target_labels_2D).view(
-        H * W, num_directions, num_groups)
+    return torch.tensor(mesh_2D_data), torch.tensor(
+        mesh_2D_norm_data), torch.tensor(target_labels_2D).view(
+            H * W, num_directions, num_groups)
 
 
 def custom_collate_spatial_sampling(
@@ -273,12 +288,14 @@ def custom_collate_spatial_sampling(
     target_amplitudes = torch.stack([item['target'] for item in batch])
 
     if network_type == DNNType.CNN:
-        mesh_2D_data, target_amplitudes_2D = create_2D_grid_data(
+        mesh_2D_data, mesh_2D_norm_data, target_amplitudes_2D = create_2D_grid_data(
             batch, dataset_ref)
 
         return {
             'listener_position': listener_positions,
+            'norm_listener_position': norm_listener_positions,
             'mesh_2D': mesh_2D_data,
+            'mesh_2D_norm': mesh_2D_norm_data,
             'sph_directions': directions,
             'target_common_slope_amps': target_amplitudes_2D,
         }
@@ -402,7 +419,6 @@ def load_dataset(
         room_data,
     )
     dataset = to_device(dataset, device)
-    # batch_size = room_data.num_rec if network_type == DNNType.CNN else batch_size
     shuffle = False if network_type == DNNType.CNN else shuffle
 
     # split data into training and validation set

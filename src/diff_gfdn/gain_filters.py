@@ -462,37 +462,53 @@ class ConvNet(nn.Module):
             num_groups (int): Number of output groups per spatial location.
             hidden_channels (int): Number of channels in intermediate layers.
             num_layers (int): Total number of convolution layers.
-            kernel_size (int): Size of the convolution kernel.
+            kernel_size (Tuple[int, int]): Size of the convolution kernel.
         """
         super().__init__()
 
         layers = []
         # keeps the same matrix size, HxW
-        padding = (kernel_size - 1) // 2
-
+        padding_up = (kernel_size[0] - 1) // 2
+        padding_left = (kernel_size[1] - 1) // 2
         # First conv layer
         layers.append(
             nn.Conv2d(in_channels,
                       hidden_channels,
                       kernel_size=kernel_size,
-                      padding=padding))
+                      padding=(padding_up, padding_left)))
         layers.append(nn.ReLU())
 
         # Hidden layers
         for _ in range(num_layers - 2):
+            # horizontal convolution
             layers.append(
                 nn.Conv2d(hidden_channels,
                           hidden_channels,
-                          kernel_size=kernel_size,
-                          padding=padding))
+                          kernel_size=(1, kernel_size[-1]),
+                          padding=(0, padding_left)))
+            # vertical convolution
+            layers.append(
+                nn.Conv2d(hidden_channels,
+                          hidden_channels,
+                          kernel_size=(kernel_size[0], 1),
+                          padding=(padding_up, 0)))
+
+            # layers.append(
+            #     nn.Conv2d(hidden_channels,
+            #               hidden_channels,
+            #               kernel_size=kernel_size,
+            #               padding=(padding_up, padding_left)))
+
             layers.append(nn.ReLU())
 
         # Final conv layer to output `num_groups * out_channels`
         layers.append(
-            nn.Conv2d(hidden_channels,
-                      num_groups * out_channels,
-                      kernel_size=kernel_size,
-                      padding=padding))
+            nn.Conv2d(
+                hidden_channels,
+                num_groups * out_channels,
+                kernel_size=kernel_size,
+                padding=(padding_up, padding_left),
+            ))
 
         self.conv_net = nn.Sequential(*layers)
         self.in_channels = in_channels

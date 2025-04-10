@@ -60,6 +60,7 @@ class make_plots:
             config_dict.device,
             grid_resolution_m=room_data.grid_spacing_m,
             network_type=config_dict.network_type,
+            batch_size=config_dict.batch_size,
             shuffle=False,
         )
 
@@ -473,6 +474,7 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
 
         # train the network
         trainer.train(train_dataset, valid_dataset)
+
         # save train loss evolution
         save_loss(trainer.train_loss,
                   config_dict.train_dir +
