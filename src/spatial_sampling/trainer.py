@@ -10,13 +10,13 @@ from numpy.typing import NDArray
 from slope2noise.utils import decay_kernel
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from tqdm import trange
 
 from diff_gfdn.utils import db, get_str_results, ms_to_samps
 
-from .config import SpatialSamplingConfig
-from .model import Directional_Beamforming_Weights_from_MLP, Omni_Amplitudes_from_MLP
+from .config import DNNType, SpatialSamplingConfig
+from .model import Directional_Beamforming_Weights, Omni_Amplitudes_from_MLP
 
 # pylint: disable=W0632
 # flake8: noqa:E231
@@ -148,8 +148,11 @@ class spatial_edc_loss(nn.Module):
     def forward(self, amps_pred: torch.Tensor, amps_true: torch.Tensor):
         """
         Calculate the mean EDC loss over space and time.
-        The inputs are of shape batch size x num_slopes, 
-        the decay kernel is of shape num_slopes x time
+        The decay kernel is of shape num_slopes x time
+        Args:
+            amps_pred (torch.Tensor): predicted amplitudes of shape 
+                                      batch_size x num_slopes / batch_size x num_directions x num_slopes
+            amps_true (torch.Tensor): true amplitudes of same shape
         """
         # Omni RIRs only
         if amps_true.ndim == 2:
@@ -173,8 +176,7 @@ class spatial_edc_loss(nn.Module):
             edc_pred = db(torch.einsum('bjk, kt -> bjt', amps_pred,
                                        self.envelopes),
                           is_squared=True)
-            edc_loss = torch.mean(torch.abs(edc_true - edc_pred),
-                                  dim=(0, 1, -1))
+            edc_loss = torch.abs(edc_true - edc_pred).mean()
 
         return edc_loss
 
@@ -184,11 +186,11 @@ class SpatialSamplingTrainer:
 
     def __init__(
         self,
-        net: Union[Omni_Amplitudes_from_MLP,
-                   Directional_Beamforming_Weights_from_MLP],
+        net: Union[Omni_Amplitudes_from_MLP, Directional_Beamforming_Weights],
         trainer_config: SpatialSamplingConfig,
         sampling_rate: float = 44100,
         ir_len_ms: float = 2000,
+        dataset_ref: Dataset = None,
         common_decay_times: Optional[List] = None,
         receiver_positions: Optional[NDArray] = None,
     ):
@@ -198,16 +200,19 @@ class SpatialSamplingTrainer:
             trainer_config (SpatialSamplingConfig): config containing training params
             sampling_rate (float): sampling rate in Hz
             ir_len_ms (float): length of the RIR in ms
+            dataset_ref (Dataset): reference to the dataset object
             common_decay_tomes (Optional, list): if using EDC loss, then the common decay times
             receiver_positions (Optiona, list): if using spatial smoothness loss, 
                                                 then the list of receiver positions of shape num_receiversx3
         """
         self.net = net
+        self.network_type = trainer_config.network_type
         self.device = trainer_config.device
         self.max_epochs = trainer_config.max_epochs
         self.patience = 5
         self.early_stop = 0
         self.train_dir = trainer_config.train_dir
+        self.dataset_ref = dataset_ref
 
         self.optimizer = torch.optim.Adam(self.net.parameters(),
                                           lr=trainer_config.lr)
@@ -221,9 +226,10 @@ class SpatialSamplingTrainer:
                 spatial_edc_loss(common_decay_times, ir_len_ms, sampling_rate)
             ]
             self.edc_loss_weight = 1.0
+            self.num_slopes = common_decay_times.shape[-1]
 
         if receiver_positions is not None and isinstance(
-                self.net, Directional_Beamforming_Weights_from_MLP):
+                self.net, Directional_Beamforming_Weights):
             logger.info("Adding spatial smoothness loss")
             self.criterion.append(
                 spatial_smoothness_loss(
@@ -256,10 +262,13 @@ class SpatialSamplingTrainer:
             epoch_loss = 0
             spatial_loss = 0
             for data in train_dataset:
-                # epoch_loss += self.train_step(data)
-                cur_epoch_loss, cur_spatial_loss = self.train_step(data)
+                if len(self.criterion) == 1:
+                    cur_epoch_loss = self.train_step(data)
+                else:
+                    cur_epoch_loss, cur_spatial_loss = self.train_step(data)
+                    spatial_loss += cur_spatial_loss
+
                 epoch_loss += cur_epoch_loss
-                spatial_loss += cur_spatial_loss
 
             print(
                 f"Spatial smoothness loss at epoch {epoch} is {spatial_loss / len(train_dataset):.3f}"
@@ -309,21 +318,35 @@ class SpatialSamplingTrainer:
             loss = 0.0
             # convert MLP output to directional output by multipying
             # with SH matrix
-            directional_output = self.net.get_directional_amplitudes(
+            est_dir_output = self.net.get_directional_amplitudes(
                 data['sph_directions'])
+            target_dir_output = data['target_common_slope_amps'].float()
 
             if len(self.criterion) > 1:
                 spatial_loss = self.spatial_smoothness_weight * self.criterion[
-                    1](data['listener_position'], directional_output)
+                    1](data['listener_position'], est_dir_output)
                 loss += spatial_loss
 
-            loss += self.edc_loss_weight * self.criterion[0](
-                directional_output, data['target_common_slope_amps'].float())
+            if self.network_type == DNNType.CNN:
+                # make sure no region outside the boundary is chosen for EDC loss calculation
+                binary_floor_mask = self.dataset_ref.get_binary_mask(
+                    data['mesh_2D'])
+
+                # this chooses a subset of the output that lies within the boundaries
+                masked_est_output = est_dir_output[binary_floor_mask.view(-1)]
+                masked_target_output = target_dir_output[
+                    binary_floor_mask.view(-1)]
+
+                loss += self.edc_loss_weight * self.criterion[0](
+                    masked_est_output, masked_target_output)
+            else:
+                loss += self.edc_loss_weight * self.criterion[0](
+                    est_dir_output, target_dir_output)
 
         loss.backward()
         self.optimizer.step()
-        # return loss.item()
-        return loss.item(), spatial_loss.item()
+        return loss.item() if len(
+            self.criterion) == 1 else (loss.item(), spatial_loss.item())
 
     def valid_step(self, data):
         """Validate each batch"""
@@ -340,13 +363,30 @@ class SpatialSamplingTrainer:
             loss = 0.0
             # convert MLP output to directional output by multipying
             # with SH matrix
-            directional_output = self.net.get_directional_amplitudes(
+            est_dir_output = self.net.get_directional_amplitudes(
                 data['sph_directions'])
+            target_dir_output = data['target_common_slope_amps'].float()
+
             if len(self.criterion) > 1:
                 loss += self.spatial_smoothness_weight * self.criterion[1](
-                    data['listener_position'], directional_output)
-            loss += self.edc_loss_weight * self.criterion[0](
-                directional_output, data['target_common_slope_amps'].float())
+                    data['listener_position'], est_dir_output)
+
+            if self.network_type == DNNType.CNN:
+                # make sure no region outside the boundary is chosen for loss calculation
+                # size H, W
+                binary_floor_mask = self.dataset_ref.get_binary_mask(
+                    data['mesh_2D'])
+
+                # this chooses a subset of the output that lies within the boundaries
+                masked_est_output = est_dir_output[binary_floor_mask.view(-1)]
+                masked_target_output = target_dir_output[
+                    binary_floor_mask.view(-1)]
+
+                loss += self.edc_loss_weight * self.criterion[0](
+                    masked_est_output, masked_target_output)
+            else:
+                loss += self.edc_loss_weight * self.criterion[0](
+                    est_dir_output, target_dir_output)
 
         return loss.item()
 

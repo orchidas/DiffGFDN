@@ -1,15 +1,18 @@
 from abc import ABC
 import math
 import pickle
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple, Union
 
 from loguru import logger
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+from scipy.interpolate import griddata
 import torch
-from torch.utils import data
+from torch.utils.data import DataLoader, Dataset, Subset
 
-from diff_gfdn.dataloader import get_dataloader, InputFeatures, Meshgrid, to_device
+from diff_gfdn.dataloader import get_dataloader, InputFeatures, to_device
+
+from .config import DNNType
 
 
 class SpatialRoomDataset(ABC):
@@ -73,13 +76,11 @@ class SpatialRoomDataset(ABC):
         self.room_start_coord = room_start_coord
         self.aperture_coords = aperture_coords
         self._eps = 1e-12
-        # create 3D mesh
         self.grid_spacing_m = grid_spacing_m
         self.sph_directions = sph_directions
         self.num_directions = None if self.sph_directions is None else self.sph_directions.shape[
             -1]
         self.ambi_order = ambi_order
-        self.mesh_3D = self.get_3D_meshgrid()
 
     @property
     def norm_receiver_position(self):
@@ -106,44 +107,8 @@ class SpatialRoomDataset(ABC):
         self.rirs = new_rirs
         self.rir_length = new_rirs.shape[-1]
 
-    def get_3D_meshgrid(self) -> Meshgrid:
-        """
-        Return the 3D meshgrid of the room's geometry
-        Args:
-            grid_spacing_m: spacing for creating the meshgrid
-        Returns:
-            Tuple : tuple of x, y and z meshes in 3D
-        """
-        Xcombined = []
-        Ycombined = []
-        Zcombined = []
-        for nroom in range(self.num_rooms):
-            num_x_points = int(self.room_dims[nroom][0] / self.grid_spacing_m)
-            num_y_points = int(self.room_dims[nroom][1] / self.grid_spacing_m)
-            num_z_points = int(self.room_dims[nroom][2] / self.grid_spacing_m)
-            x = np.linspace(
-                self.room_start_coord[nroom][0],
-                self.room_start_coord[nroom][0] + self.room_dims[nroom][0],
-                num_x_points)
-            y = np.linspace(
-                self.room_start_coord[nroom][1],
-                self.room_start_coord[nroom][1] + self.room_dims[nroom][1],
-                num_y_points)
-            z = np.linspace(
-                self.room_start_coord[nroom][2],
-                self.room_start_coord[nroom][2] + self.room_dims[nroom][2],
-                num_z_points)
-            (xm, ym, zm) = np.meshgrid(x, y, z)
-            Xcombined = np.concatenate((Xcombined, xm.flatten()))
-            Ycombined = np.concatenate((Ycombined, ym.flatten()))
-            Zcombined = np.concatenate((Zcombined, zm.flatten()))
 
-        return Meshgrid(torch.from_numpy(Xcombined),
-                        torch.from_numpy(Ycombined),
-                        torch.from_numpy(Zcombined))
-
-
-class SpatialSamplingDataset(data.Dataset):
+class SpatialSamplingDataset(Dataset):
 
     def __init__(
         self,
@@ -168,11 +133,11 @@ class SpatialSamplingDataset(data.Dataset):
         self.listener_positions = torch.tensor(room_data.receiver_position)
         self.norm_listener_position = torch.tensor(
             room_data.norm_receiver_position)
-        self.mesh_3D = room_data.mesh_3D
         self.sph_directions = room_data.sph_directions
 
         # shape num_receivers, num_slopes or num_receivers, num_directions, num_slopes
         self.common_slope_amps = torch.tensor(room_data.amplitudes)
+        self.num_rooms = room_data.num_rooms
         self.device = device
         self.grid_resolution_m = room_data.grid_spacing_m
         self.room_start_coords = room_data.room_start_coord
@@ -197,7 +162,6 @@ class SpatialSamplingDataset(data.Dataset):
             input_features = InputFeatures(torch.squeeze(self.source_position),
                                            self.listener_positions[idx],
                                            self.norm_listener_position[idx],
-                                           self.mesh_3D,
                                            sph_directions=self.sph_directions)
             target_labels = self.common_slope_amps[idx, ...]
         else:
@@ -205,47 +169,126 @@ class SpatialSamplingDataset(data.Dataset):
             input_features = InputFeatures(self.source_position[idx1],
                                            self.listener_positions[idx2],
                                            self.norm_listener_position[idx2],
-                                           self.mesh_3D,
                                            sph_directions=self.sph_directions)
             target_labels = self.common_slope_amps[idx1, idx2, ...]
 
         return {'input': input_features, 'target': target_labels}
 
+    def get_binary_mask(
+            self,
+            mesh_2D: Union[NDArray,
+                           torch.Tensor]) -> Union[NDArray, torch.Tensor]:
+        """
+        Return a binary mask for points in a 2D mesh that lie within the
+        floor plan of the space. True if points are inside, otherwise False.
+        Args:
+            mesh_2D: (B x 2) / (Nx x Ny x 2) array of grid coordinates
+        Returns:
+            A flattened boolean array of size (B / Nx x Ny)
+        """
+        x_mesh = mesh_2D[..., 0]
+        y_mesh = mesh_2D[..., 1]
+        combined_mask = torch.tensor([], dtype=torch.bool) if isinstance(
+            mesh_2D, torch.Tensor) else np.array([])
+        for i in range(self.num_rooms):
+            cur_mask = (x_mesh >= self.room_start_coords[i][0]) & \
+                       (x_mesh <= self.room_dims[i][0] + self.room_start_coords[i][0]) & \
+                       (y_mesh >= self.room_start_coords[i][1]) & \
+                       (y_mesh <= self.room_dims[i][1] + self.room_start_coords[i][1])
+            if isinstance(mesh_2D, torch.Tensor):
+                combined_mask = cur_mask if combined_mask.numel(
+                ) == 0 else torch.logical_or(combined_mask, cur_mask)
+            else:
+                combined_mask = cur_mask if combined_mask.size == 0 else np.logical_or(
+                    combined_mask, cur_mask)
 
-def custom_collate_spatial_sampling(batch: data.Dataset):
+        return combined_mask
+
+
+def create_2D_grid_data(
+    batch: List[Dict],
+    dataset_ref: Dataset = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Create 2D grid data from 1D position and target labels to feed into CNN.
+    The positions must be on a uniform grid
+    Args:
+        batch (List): the current batch of data as a list of dictionaries. This works iff
+            the batch contains receiver indices that are uniformly distributed in space
+        dataset_ref (Dataset): reference to the Dataset object
+    Returns:
+        Tuple: the 2D meshgrid of shape H,W,2, and the labels interpolated at that 
+               grid of shape H,W,num_directions,num_groups
+    """
+    x_lin = np.array([item['input'].listener_position[0] for item in batch])
+    y_lin = np.array([item['input'].listener_position[1] for item in batch])
+
+    # size is B x J x 3
+    target_labels = np.stack([item['target'] for item in batch])
+
+    x_mesh, y_mesh = np.meshgrid(np.unique(x_lin), np.unique(y_lin))
+    H, W = x_mesh.shape
+
+    # this is of size H x W x 2
+    mesh_2D_data = np.stack((x_mesh, y_mesh), axis=-1)
+    num_groups = target_labels.shape[-1]
+    num_directions = target_labels.shape[1]
+
+    # size is H, W, num_directions, num_groups - using scipy's interpolate because
+    # torch's does not take into account the original x, y coordinates
+    target_labels_2D = griddata((x_lin, y_lin),
+                                target_labels, (x_mesh, y_mesh),
+                                method='nearest')
+
+    # create a mask for values within the limits (so that outside the boundaries the labels are zero)
+    combined_mask = dataset_ref.get_binary_mask(mesh_2D_data)
+    target_labels_2D[~combined_mask, ...] = 0.0
+
+    return torch.tensor(mesh_2D_data), torch.tensor(target_labels_2D).view(
+        H * W, num_directions, num_groups)
+
+
+def custom_collate_spatial_sampling(
+    batch: List[Dict],
+    network_type: str,
+    dataset_ref: Dataset = None,
+) -> Dict:
     """
     Collate datapoints in the dataloader.
     This method is needed because Meshgrid is a custom class, and pytorch's 
     built in collate function cannot collate it
+    Args:
+        batch (List): the current batch of data, as a list of dicts
+        network_type (str): MLP or CNN
+        dataset_ref (Dataset) : reference to the dataset object
     """
     # these are independent of the source/receiver locations
     directions = batch[0]['input'].sph_directions
 
-    # mesh_3D is a Meshgrid object with attributes xmesh, ymesh, zmesh
-    x_mesh = batch[0]['input'].mesh_3D.xmesh
-    y_mesh = batch[0]['input'].mesh_3D.ymesh
-    z_mesh = batch[0]['input'].mesh_3D.zmesh
+    # depends on receiver positions
+    listener_positions = torch.stack(
+        [item['input'].listener_position for item in batch])
+    norm_listener_positions = torch.stack(
+        [item['input'].norm_listener_position for item in batch])
+    target_amplitudes = torch.stack([item['target'] for item in batch])
 
-    # this is of size (Lx * Ly * Lz) x 3
-    mesh_3D_data = torch.stack((x_mesh, y_mesh, z_mesh), dim=1)
+    if network_type == DNNType.CNN:
+        mesh_2D_data, target_amplitudes_2D = create_2D_grid_data(
+            batch, dataset_ref)
 
-    # depends on source/receiver positions
-    source_positions = [item['input'].source_position for item in batch]
-    listener_positions = [item['input'].listener_position for item in batch]
-    norm_listener_positions = [
-        item['input'].norm_listener_position for item in batch
-    ]
-
-    target_amplitudes = [item['target'] for item in batch]
-
-    return {
-        'source_position': torch.stack(source_positions),
-        'listener_position': torch.stack(listener_positions),
-        'norm_listener_position': torch.stack(norm_listener_positions),
-        'mesh_3D': mesh_3D_data,
-        'sph_directions': directions,
-        'target_common_slope_amps': torch.stack(target_amplitudes),
-    }
+        return {
+            'listener_position': listener_positions,
+            'mesh_2D': mesh_2D_data,
+            'sph_directions': directions,
+            'target_common_slope_amps': target_amplitudes_2D,
+        }
+    else:
+        return {
+            'listener_position': listener_positions,
+            'norm_listener_position': norm_listener_positions,
+            'sph_directions': directions,
+            'target_common_slope_amps': target_amplitudes,
+        }
 
 
 def is_multiple(value, d, tol=1e-6):
@@ -253,8 +296,13 @@ def is_multiple(value, d, tol=1e-6):
     return math.isclose(value / d, round(value / d), abs_tol=tol)
 
 
-def find_start_coords(num_rooms: int, dataset: data.Dataset):
-    """Find the first receiver location in each room"""
+def find_start_coords(num_rooms: int, dataset: Dataset):
+    """
+    Find the first receiver location in each room
+    Args:
+        num_rooms (int): number of rooms in the space
+        dataset (Dataset): contains information about room geometry 
+    """
     start_xcoord = -np.ones(num_rooms)
     start_ycoord = -np.ones(num_rooms)
     for k in range(num_rooms):
@@ -277,17 +325,16 @@ def find_start_coords(num_rooms: int, dataset: data.Dataset):
 
 
 def split_dataset_by_resolution(
-    dataset: data.Dataset,
+    dataset: Dataset,
     x_d: float,
 ):
     """
     Split dataset into training and validation based on x_d resolution.
-    If measurements are avaialable in a uniform 2D gri, the measurements at every 
+    If measurements are avaialable in a uniform 2D grid, the measurements at every 
     x_d m is used for training and the rest is used for validation 
 
     dataset: an instance of SpatialDataset.
     x_d: Spacing between selected training points.
-    shuffle (bool): whether to shuffle the indices
     """
     assert x_d >= dataset.grid_resolution_m, "The desired grid spacing must be greater '\
     'than what has been measured in the dataset"
@@ -323,33 +370,40 @@ def split_dataset_by_resolution(
         else:
             val_indices.append(idx)
 
-    train_set = data.Subset(dataset, train_indices)
-    val_set = data.Subset(dataset, val_indices)
+    train_set = Subset(dataset, train_indices)
+    val_set = Subset(dataset, val_indices)
 
     return train_set, val_set
 
 
-def load_dataset(room_data: SpatialRoomDataset,
-                 device: torch.device,
-                 grid_resolution_m: float,
-                 batch_size: int = 32,
-                 shuffle: bool = True,
-                 drop_last: bool = False):
+def load_dataset(
+        room_data: SpatialRoomDataset,
+        device: torch.device,
+        grid_resolution_m: float,
+        network_type: str,
+        batch_size: int = 32,
+        shuffle: bool = True,
+        drop_last: bool = False) -> Tuple[DataLoader, DataLoader, Dataset]:
     """
     Get training and validation dataset
     Args:
         room_data (SpatialRoomDataset): object of type SpatialRoomDataset (for training with a grid of measurements) or 
         device (str): cuda (GPU) or cpu
-        train_valid_split_ratio (float): ratio between training and validation set
+        grid_resolution (float): what is the resolution of the uniform grid used for measurement?
+        network_type (str): is it a CNN or MLP?
         batch_size (int): number of samples in each batch size
         shuffle (bool): whether to randomly shuffle data during training
         drop_last (bool): whether to drop the last batch if it has less elements than batch_size
+    Returns:
+        Tuple: training dataloader, validation dataloader and dataset reference object
     """
     dataset = SpatialSamplingDataset(
         device,
         room_data,
     )
     dataset = to_device(dataset, device)
+    # batch_size = room_data.num_rec if network_type == DNNType.CNN else batch_size
+    shuffle = False if network_type == DNNType.CNN else shuffle
 
     # split data into training and validation set
     train_set, valid_set = split_dataset_by_resolution(dataset,
@@ -367,7 +421,8 @@ def load_dataset(room_data: SpatialRoomDataset,
         shuffle=shuffle,
         device=device,
         drop_last=drop_last,
-        custom_collate_fn=custom_collate_spatial_sampling)
+        custom_collate_fn=lambda batch: custom_collate_spatial_sampling(
+            batch, network_type, dataset))
 
     if len(valid_set) > 0:
         valid_loader = get_dataloader(
@@ -376,10 +431,11 @@ def load_dataset(room_data: SpatialRoomDataset,
             shuffle=shuffle,
             device=device,
             drop_last=drop_last,
-            custom_collate_fn=custom_collate_spatial_sampling)
-        return train_loader, valid_loader
+            custom_collate_fn=lambda batch: custom_collate_spatial_sampling(
+                batch, network_type, dataset))
+        return train_loader, valid_loader, dataset
     else:
-        return train_loader, None
+        return train_loader, None, dataset
 
 
 def parse_room_data(filepath: str):

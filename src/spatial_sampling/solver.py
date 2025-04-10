@@ -12,16 +12,22 @@ from slope2noise.utils import decay_kernel
 import spaudiopy as spa
 import torch
 
+from diff_gfdn.gain_filters import OneHotEncoding
 from diff_gfdn.plot import order_position_matrices
 from diff_gfdn.save_results import save_loss
 from diff_gfdn.utils import db, db2lin, ms_to_samps, samps_to_ms
 
-from .config import SpatialSamplingConfig
+from .config import DNNType, SpatialSamplingConfig
 from .dataloader import load_dataset, parse_room_data, SpatialRoomDataset
-from .model import Directional_Beamforming_Weights_from_MLP, Omni_Amplitudes_from_MLP
+from .model import (
+    Directional_Beamforming_Weights,
+    Directional_Beamforming_Weights_from_CNN,
+    Directional_Beamforming_Weights_from_MLP,
+    Omni_Amplitudes_from_MLP,
+)
 from .trainer import SpatialSamplingTrainer
 
-# pylint: disable=E0606
+# pylint: disable=E0606, E0601
 # flake8: noqa:E231
 
 
@@ -49,11 +55,11 @@ class make_plots:
                                  aperture_coords=room_data.aperture_coords)
 
         # prepare the training and validation data
-        self.train_dataset, _ = load_dataset(
+        self.train_dataset, _, _ = load_dataset(
             room_data,
             config_dict.device,
             grid_resolution_m=room_data.grid_spacing_m,
-            batch_size=config_dict.batch_size,
+            network_type=config_dict.network_type,
             shuffle=False,
         )
 
@@ -61,6 +67,7 @@ class make_plots:
         self.src_pos = np.array(self.room_data.source_position).squeeze()
         self.true_points = self.room_data.receiver_position
         self.true_amps = self.room_data.amplitudes
+        self.one_hot_encoder = OneHotEncoding()
         self._init_decay_kernel()
 
     def _init_decay_kernel(self):
@@ -104,19 +111,29 @@ class make_plots:
             for data in self.train_dataset:
                 position = data['listener_position']
                 model_output = self.model(data)
-                print(
-                    'Standard deviation across spatial position of beamformer weights:'
-                    +
-                    f' {np.round(np.std(model_output.detach().numpy(), axis=0), 3)}'
-                )
-                if isinstance(self.model,
-                              Directional_Beamforming_Weights_from_MLP):
+                if isinstance(self.model, Directional_Beamforming_Weights):
                     cur_est_amps = self.model.get_directional_amplitudes(
                         data['sph_directions'])
+                    if isinstance(self.model,
+                                  Directional_Beamforming_Weights_from_CNN):
+                        # shape H, W, 2
+                        cur_est_mesh = data['mesh_2D']
+                        # find points in the meshgrid closest to current receiver points
+                        # shape B
+                        _, _, closest_points_idx = self.one_hot_encoder(
+                            cur_est_mesh, position)
+                        # check if this works correctly
+                        assert np.allclose(
+                            cur_est_mesh.reshape(-1, 2)[closest_points_idx, :],
+                            position[:, :2])
+                        # sample the closest points from the amplitudes
+                        cur_est_amps = cur_est_amps[closest_points_idx, ...]
+
                 else:
-                    cur_est_amps = model_output.copy()
+                    cur_est_amps = model_output
                 est_pos = np.vstack((est_pos, position))
                 est_amps = np.vstack((est_amps, cur_est_amps))
+
         return est_pos, est_amps
 
     def plot_beamformer_output(self, est_amps: NDArray, filename: str):
@@ -186,9 +203,20 @@ class make_plots:
         fig.subplots_adjust(hspace=0.3)
         fig.savefig(Path(f'{self.config_dict.train_dir}/{filename}').resolve())
 
-    def plot_amplitudes_in_space(self, grid_resolution_m: float,
-                                 est_amps: NDArray, est_points: NDArray):
-        """Plot the true and learned amplitudes as a function of space"""
+    def plot_amplitudes_in_space(self,
+                                 grid_resolution_m: float,
+                                 est_amps: NDArray,
+                                 est_points: NDArray,
+                                 verbose: bool = False):
+        """
+        Plot the true and learned amplitudes as a function of space
+        Args:
+            grid_resolution_m (float): resolution of the uniform grid used for training
+            est_amps (NDArray): estimated omni (num_pos, num_groups) / 
+                                directional amplitudes from NN (num_pos, num_directions, num_groups)
+            est_points (NDArray): receiver positions at which the amplitudes were estimatied
+            verbose (bool): whether to print out mean and std of amplitudes
+        """
         logger.info("Making amplitude plots")
         db_limits = np.zeros((2, self.room_data.num_rooms))
 
@@ -225,16 +253,17 @@ class make_plots:
         else:
             # the amplitudes are direction dependent
             for j in range(self.room_data.num_directions):
-                print(
-                    f'Actual amplitudes mean : {np.round(self.true_amps[:, j, :].mean(axis=0), 3)},'
-                    +
-                    f'Est amplitudes mean: {np.round(est_amps[:, j, :].mean(axis=0), 3)} for direction {j}'
-                )
-                print(
-                    f'Actual amplitudes STD: {np.round(self.true_amps[:, j, :].std(axis=0),3)},'
-                    +
-                    f'est amplitudes STD: {np.round(est_amps[:, j, :].std(axis=0), 3)} for direction {j}'
-                )
+                if verbose:
+                    print(
+                        f'Actual amplitudes mean : {np.round(self.true_amps[:, j, :].mean(axis=0), 3)},'
+                        +
+                        f'Est amplitudes mean: {np.round(est_amps[:, j, :].mean(axis=0), 3)} for direction {j}'
+                    )
+                    print(
+                        f'Actual amplitudes STD: {np.round(self.true_amps[:, j, :].std(axis=0),3)},'
+                        +
+                        f'est amplitudes STD: {np.round(est_amps[:, j, :].std(axis=0), 3)} for direction {j}'
+                    )
 
                 db_limits[0, :] = np.min(db(self.true_amps[:, j, :],
                                             is_squared=True),
@@ -274,7 +303,14 @@ class make_plots:
 
     def plot_edc_error_in_space(self, grid_resolution_m: float,
                                 est_amps: NDArray, est_points: NDArray):
-        """Plot the error between the CS EDC and MLP EDC in space"""
+        """
+        Plot the error between the CS EDC and MLP EDC in space
+        Args:
+            grid_resolution_m (float): resolution of the uniform grid used for training
+            est_amps (NDArray): estimated omni (num_pos, num_groups) / 
+                                directional amplitudes from NN (num_pos, num_directions, num_groups)
+            est_points (NDArray): receiver positions at which the amplitudes were estimatied
+        """
         logger.info("Making EDC error plots")
 
         # order the position indices in the estimated data according to the
@@ -359,21 +395,31 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
             config_dict.num_fourier_features,
             config_dict.num_hidden_layers,
             config_dict.num_neurons_per_layer,
-            config_dict.encoding_type,
             device=config_dict.device,
             gain_limits=(db2lin(-100), db2lin(0)),
         )
 
     else:
-        model = Directional_Beamforming_Weights_from_MLP(
-            room_data.num_rooms,
-            room_data.ambi_order,
-            config_dict.num_fourier_features,
-            config_dict.num_hidden_layers,
-            config_dict.num_neurons_per_layer,
-            config_dict.encoding_type,
-            device=config_dict.device,
-        )
+        if config_dict.network_type == DNNType.MLP:
+            logger.info("Using MLP for training")
+            model = Directional_Beamforming_Weights_from_MLP(
+                room_data.num_rooms,
+                room_data.ambi_order,
+                config_dict.dnn_config.num_fourier_features,
+                config_dict.dnn_config.mlp_config.num_hidden_layers,
+                config_dict.dnn_config.mlp_config.num_neurons_per_layer,
+                device=config_dict.device,
+            )
+        elif config_dict.network_type == DNNType.CNN:
+            logger.info("Using CNN for training")
+            model = Directional_Beamforming_Weights_from_CNN(
+                room_data.num_rooms,
+                room_data.ambi_order,
+                config_dict.dnn_config.num_fourier_features,
+                config_dict.dnn_config.cnn_config.num_hidden_channels,
+                config_dict.dnn_config.cnn_config.num_layers,
+                config_dict.dnn_config.cnn_config.kernel_size,
+            )
 
     # set default device
     torch.set_default_device(config_dict.device)
@@ -400,28 +446,29 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
 
     for k in range(config_dict.num_grid_spacing):
         logger.info(
-            f"Training MLP for grid resolution = {np.round(grid_resolution_m[k], 1)} m"
+            f"Training DNN for grid resolution = {np.round(grid_resolution_m[k], 1)} m"
         )
 
         # go back to training mode from evaluation mode
         model.train()
 
         # prepare the training and validation data for DiffGFDN
-        train_dataset, valid_dataset = load_dataset(
+        train_dataset, valid_dataset, dataset_ref = load_dataset(
             room_data,
             config_dict.device,
-            np.round(grid_resolution_m[k], 1),
-            config_dict.batch_size,
-        )
+            grid_resolution_m=np.round(grid_resolution_m[k], 1),
+            network_type=config_dict.network_type,
+            batch_size=config_dict.batch_size)
 
         # create the trainer object
         trainer = SpatialSamplingTrainer(
             model,
             config_dict,
             common_decay_times=room_data.common_decay_times,
-            receiver_positions=room_data.receiver_position,
+            # receiver_positions=room_data.receiver_position,
             sampling_rate=room_data.sample_rate,
             ir_len_ms=samps_to_ms(room_data.rir_length, room_data.sample_rate),
+            dataset_ref=dataset_ref,
         )
 
         # train the network

@@ -5,106 +5,33 @@ import spaudiopy as sp
 import torch
 from torch import nn
 
-from diff_gfdn.gain_filters import FeatureEncodingType, MLP, OneHotEncoding, ScaledSigmoid, Sigmoid, SinusoidalEncoding
+from diff_gfdn.gain_filters import ConvNet, MLP, ScaledSigmoid, Sigmoid, SinusoidalEncoding
 
 # pylint: disable=E0606
 
 
-class Directional_Beamforming_Weights_from_MLP(nn.Module):
+class Directional_Beamforming_Weights(nn.Module):
+    """Parent class for learning directional beamforming weights with DNN"""
 
-    def __init__(
-        self,
-        num_groups: int,
-        ambi_order: int,
-        num_fourier_features: int,
-        num_hidden_layers: int,
-        num_neurons: int,
-        encoding_type: FeatureEncodingType,
-        device: Optional[torch.device] = 'cpu',
-    ):
+    def __init__(self, num_groups: int, ambi_order: int,
+                 num_fourier_features: int, device: torch.device):
         """
-        Train the MLP to get directional beamformer weights for the amplitudes of each slope, as a function
-        of receiver position. These weights will be multiplied with an SH matrix to get direction dependent 
-        amplitudes for each slope.
+        Initialise parent class parameters
         Args:
-                num_groups (int): number of slopes in model
-                ambi_order (int): ambisonics order for beamformer design
-                num_fourier_features (int): how much will the spatial locations expand as a feature
-                num_hidden_layers (int): Number of hidden layers.
-                num_neurons (int): Number of neurons in each hidden layer.
-                encoding_type (str): whether to use one-hot encoding with the grid geometry information, 
-                                     or directly use the sinusoidal encodings of the position 
-                                     coordinates of the receiversas inputs to the MLP
-
+            num_groups (int): number of groups whose parameters need to be learned
+            ambi_order (int): order of the SMA recordings
+            num_fourier_features (int): number of features used for sinusoidal encoding
+            device (torch.devce) to train on cpu or gpu
         """
         super().__init__()
         self.num_groups = num_groups
-        self.encoding_type = encoding_type
         self.device = device
         self.ambi_order = ambi_order
+        self.num_fourier_features = num_fourier_features
         self.num_out_features = (ambi_order + 1)**2
-
-        if self.encoding_type == FeatureEncodingType.SINE:
-            # if we were feeding the spatial coordinates directly, then the
-            # number of input features would be 3. Since we are encoding them,
-            # the number of features is 3 * num_fourier_features * 2
-            num_input_features = 3 * num_fourier_features * 2
-            self.encoder = SinusoidalEncoding(num_fourier_features)
-
-        elif self.encoding_type == FeatureEncodingType.MESHGRID:
-            # in this case, the (x,y,z) locations of the meshgrid and the
-            # corresponding one-hot vector (1s where all the receiver locations are)
-            # are inputs to the MLP
-            num_input_features = 4
-            self.encoder = OneHotEncoding()
-
-        self.mlp = MLP(num_input_features,
-                       num_hidden_layers,
-                       num_neurons,
-                       self.num_groups,
-                       num_biquads_in_cascade=1,
-                       num_params=self.num_out_features)
-
-        # constraints on output gains - ensures they are positive, and they sum to one.
+        # constraints on directional amplitudes - ensures they are between 0 and 1
         # useful for directional beamforming
         self.scaling = Sigmoid()
-
-    def forward(self, x: Dict) -> torch.tensor:
-        """Run the input features through the MLP. Output is of size batch_size x num_slopes x (N_sp+1)**2"""
-        position = x['norm_listener_position']
-        self.batch_size = position.shape[0]
-        mesh_3D = x['mesh_3D']
-
-        # encode the position coordinates only
-        if self.encoding_type == FeatureEncodingType.SINE:
-            encoded_position = self.encoder(position)
-        elif self.encoding_type == FeatureEncodingType.MESHGRID:
-            encoded_position, _, rec_idx = self.encoder(mesh_3D, position)
-
-        # run the MLP
-        self.weights = self.mlp(encoded_position)
-
-        # if meshgrid encoding is used, the size of MLP outputs is (Lx*Ly*Lz, Ngroup, (N_sp+1)**2).
-        # instead, we want the size to be (B, Ngroup, (N_sp+1)**2). So, we only take the filters
-        # corresponding to the position of the receivers in the meshgrid
-        if self.encoding_type == FeatureEncodingType.MESHGRID:
-            self.gains = self.gains[rec_idx, ...]  # pylint: disable=E0601
-            assert self.gains.shape[0] == self.batch_size
-
-        # always ensure that the filter parameters are constrained
-        reshape_size = (self.batch_size, self.num_groups,
-                        self.num_out_features)
-        self.weights = self.weights.reshape(reshape_size)
-
-        # in the following we can choose between amp preserving or energy preserving
-        # beamforming weights
-
-        # ensure weights are between 0-1 and they add to 1
-        # self.weights = self.scaling(self.weights)
-        return self.weights
-
-        # normalise weights to have unit energy
-        # return self.normalise_beamformer_weights()
 
     def normalise_beamformer_weights(self):
         """Normalise the beamforming weight matrix for energy preservation"""
@@ -158,6 +85,115 @@ class Directional_Beamforming_Weights_from_MLP(nn.Module):
         return param_np
 
 
+class Directional_Beamforming_Weights_from_MLP(Directional_Beamforming_Weights
+                                               ):
+
+    def __init__(
+        self,
+        num_groups: int,
+        ambi_order: int,
+        num_fourier_features: int,
+        num_hidden_layers: int,
+        num_neurons: int,
+        device: Optional[torch.device] = 'cpu',
+    ):
+        """
+        Train the MLP to get directional beamformer weights for the amplitudes of each slope, as a function
+        of receiver position. These weights will be multiplied with an SH matrix to get direction dependent 
+        amplitudes for each slope.
+        Args:
+                num_groups (int): number of slopes in model
+                ambi_order (int): ambisonics order for beamformer design
+                num_fourier_features (int): how much will the spatial locations expand as a feature
+                num_hidden_layers (int): Number of hidden layers.
+                num_neurons (int): Number of neurons in each hidden layer.
+
+        """
+        super().__init__(num_groups, ambi_order, num_fourier_features, device)
+        # if we were feeding the spatial coordinates directly, then the
+        # number of input features would be 3. Since we are encoding them,
+        # the number of features is 3 * num_fourier_features * 2
+        num_input_features = 3 * num_fourier_features * 2
+        self.encoder = SinusoidalEncoding(num_fourier_features)
+
+        self.mlp = MLP(num_input_features,
+                       num_hidden_layers,
+                       num_neurons,
+                       self.num_groups,
+                       num_biquads_in_cascade=1,
+                       num_params=self.num_out_features)
+
+    def forward(self, x: Dict) -> torch.tensor:
+        """Run the input features through the MLP. Output is of size batch_size x num_slopes x (N_sp+1)**2"""
+        position = x['norm_listener_position']
+        self.batch_size = position.shape[0]
+
+        # encode the position coordinates only
+        encoded_position = self.encoder(position)
+
+        # run the MLP
+        self.weights = self.mlp(encoded_position)
+
+        reshape_size = (self.batch_size, self.num_groups,
+                        self.num_out_features)
+        self.weights = self.weights.reshape(reshape_size)
+
+        return self.weights
+
+
+class Directional_Beamforming_Weights_from_CNN(Directional_Beamforming_Weights
+                                               ):
+
+    def __init__(
+        self,
+        num_groups: int,
+        ambi_order: int,
+        num_fourier_features: int,
+        num_hidden_channels: int,
+        num_layers: int,
+        kernel_size: int,
+        device: Optional[torch.device] = 'cpu',
+    ):
+        """
+        Train the CNN to get directional beamformer weights for the amplitudes of each slope, as a function
+        of receiver position. These weights will be multiplied with an SH matrix to get direction dependent 
+        amplitudes for each slope.
+        Args:
+            num_groups (int): number of slopes in model
+            ambi_order (int): ambisonics order for beamformer design
+            num_fourier_features (int): how much will the spatial locations expand as a feature
+            num_hidden_channels (int): Number of hidden layers.
+            num_layers (int): number of layers in the network
+            kernel_size (int): Size of the learnable convolution kernel
+        """
+        super().__init__(num_groups, ambi_order, num_fourier_features, device)
+        self.num_in_features = 2 * num_fourier_features * 2
+        self.num_hidden_channels = num_hidden_channels
+        self.num_layers = num_layers
+        self.kernel_size = kernel_size
+        self.encoder = SinusoidalEncoding(num_fourier_features)
+
+        self.cnn = ConvNet(self.num_in_features, self.num_out_features,
+                           self.num_groups, self.num_hidden_channels,
+                           self.num_layers, self.kernel_size)
+
+    def forward(self, x: Dict) -> torch.tensor:
+        """Run the input features through the CNN. Output is of size H*W x num_slopes x (N_sp+1)**2"""
+        mesh_2D = x['mesh_2D']
+        H, W, num_coords = mesh_2D.shape
+        encoded_mesh = self.encoder(mesh_2D.view(H * W, num_coords))
+
+        encoded_mesh = encoded_mesh.view(self.num_in_features, H, W)
+
+        # shape - H, W, num_groups, (N_sp+1)**2
+        self.weights = self.cnn(encoded_mesh)
+
+        reshape_size = (H * W, self.num_groups, self.num_out_features)
+        self.weights = self.weights.reshape(reshape_size)
+
+        return self.weights
+
+
 class Omni_Amplitudes_from_MLP(nn.Module):
 
     def __init__(
@@ -166,7 +202,6 @@ class Omni_Amplitudes_from_MLP(nn.Module):
         num_fourier_features: int,
         num_hidden_layers: int,
         num_neurons: int,
-        encoding_type: FeatureEncodingType,
         device: Optional[torch.device] = 'cpu',
         gain_limits: Optional[Tuple] = None,
     ):
@@ -184,22 +219,13 @@ class Omni_Amplitudes_from_MLP(nn.Module):
         """
         super().__init__()
         self.num_groups = num_groups
-        self.encoding_type = encoding_type
         self.device = device
 
-        if self.encoding_type == FeatureEncodingType.SINE:
-            # if we were feeding the spatial coordinates directly, then the
-            # number of input features would be 3. Since we are encoding them,
-            # the number of features is 3 * num_fourier_features * 2
-            num_input_features = 3 * num_fourier_features * 2
-            self.encoder = SinusoidalEncoding(num_fourier_features)
-
-        elif self.encoding_type == FeatureEncodingType.MESHGRID:
-            # in this case, the (x,y,z) locations of the meshgrid and the
-            # corresponding one-hot vector (1s where all the receiver locations are)
-            # are inputs to the MLP
-            num_input_features = 4
-            self.encoder = OneHotEncoding()
+        # if we were feeding the spatial coordinates directly, then the
+        # number of input features would be 3. Since we are encoding them,
+        # the number of features is 3 * num_fourier_features * 2
+        num_input_features = 3 * num_fourier_features * 2
+        self.encoder = SinusoidalEncoding(num_fourier_features)
 
         self.mlp = MLP(num_input_features,
                        num_hidden_layers,
@@ -217,23 +243,12 @@ class Omni_Amplitudes_from_MLP(nn.Module):
         """Run the input features through the MLP. Output is of size batch size x num_slopes"""
         position = x['norm_listener_position']
         self.batch_size = position.shape[0]
-        mesh_3D = x['mesh_3D']
 
         # encode the position coordinates only
-        if self.encoding_type == FeatureEncodingType.SINE:
-            encoded_position = self.encoder(position)
-        elif self.encoding_type == FeatureEncodingType.MESHGRID:
-            encoded_position, _, rec_idx = self.encoder(mesh_3D, position)
+        encoded_position = self.encoder(position)
 
         # run the MLP
         self.gains = self.mlp(encoded_position)
-
-        # if meshgrid encoding is used, the size of MLP output is (Lx*Ly*Lz, Ngroup).
-        # instead, we want the size to be (B, Ngroup). So, we only take the gains
-        # corresponding to the position of the receivers in the meshgrid
-        if self.encoding_type == FeatureEncodingType.MESHGRID:
-            self.gains = self.gains[rec_idx, ...]  # pylint: disable=E0601
-            assert self.gains.shape[0] == self.batch_size
 
         # always ensure that the filter parameters are constrained
         reshape_size = (self.batch_size, self.num_groups)

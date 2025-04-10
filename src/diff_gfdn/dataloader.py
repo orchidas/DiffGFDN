@@ -24,7 +24,6 @@ from .utils import ms_to_samps
 class Meshgrid():
     xmesh: torch.tensor
     ymesh: torch.tensor
-    zmesh: torch.tensor
 
 
 @dataclass
@@ -38,26 +37,25 @@ class InputFeatures():
         z_values: values around the unit circle (polar)
         source_position: postion of the source in cartesian coordinates
         listener_position: position of a receiver in cartesian coordinates
-        mesh_3D: mesh grid of the space geometry
+        mesh_2D: mesh grid of the space geometry
         sph_directions (optional): 2D array of azimuth and polar angles if the RIRs are directional
     """
 
     source_position: torch.tensor
     listener_position: torch.tensor
     norm_listener_position: torch.tensor
-    mesh_3D: Meshgrid
+    mesh_2D: Optional[Meshgrid] = None
     sph_directions: Optional[torch.tensor] = None
     z_values: Optional[torch.tensor] = None
 
     def __repr__(self):
         # pylint: disable=E0306
-        return (
-            f"InputFeatures(\n"
-            f"  z_values={self.z_values.tolist()}, \n"
-            f"  source_position={self.source_position.tolist()}, \n"
-            f"  listener_position={self.listener_position.tolist()}, \n",
-            f"  mesh_3D={self.mesh_3D.xmesh, self.mesh_3D.ymesh, self.mesh_3D.zmesh}, \n",
-            f"  directions={self.sph_directions.tolist()}, \n", ")")
+        return (f"InputFeatures(\n"
+                f"  z_values={self.z_values.tolist()}, \n"
+                f"  source_position={self.source_position.tolist()}, \n"
+                f"  listener_position={self.listener_position.tolist()}, \n",
+                f"  mesh_2D={self.mesh_2D.xmesh, self.mesh_2D.ymesh}, \n",
+                f"  directions={self.sph_directions.tolist()}, \n", ")")
 
 
 @dataclass
@@ -252,7 +250,7 @@ class RoomDataset(ABC):
         self.early_late_split()
         # create 3D mesh
         self.grid_spacing_m = grid_spacing_m
-        self.mesh_3D = self.get_3D_meshgrid()
+        self.mesh_2D = self.get_2D_meshgrid()
 
     @property
     def norm_receiver_position(self):
@@ -327,21 +325,19 @@ class RoomDataset(ABC):
         self.rir_mag_response = rfft(new_rirs, n=self.num_freq_bins, axis=-1)
         self.early_late_split()
 
-    def get_3D_meshgrid(self) -> Meshgrid:
+    def get_2D_meshgrid(self) -> Meshgrid:
         """
-        Return the 3D meshgrid of the room's geometry
+        Return the 2D meshgrid of the space' floor plan
         Args:
             grid_spacing_m: spacing for creating the meshgrid
         Returns:
-            Tuple : tuple of x, y and z meshes in 3D
+            Tuple : tuple of x, y meshes in 2D
         """
         Xcombined = []
         Ycombined = []
-        Zcombined = []
         for nroom in range(self.num_rooms):
             num_x_points = int(self.room_dims[nroom][0] / self.grid_spacing_m)
             num_y_points = int(self.room_dims[nroom][1] / self.grid_spacing_m)
-            num_z_points = int(self.room_dims[nroom][2] / self.grid_spacing_m)
             x = np.linspace(
                 self.room_start_coord[nroom][0],
                 self.room_start_coord[nroom][0] + self.room_dims[nroom][0],
@@ -350,51 +346,41 @@ class RoomDataset(ABC):
                 self.room_start_coord[nroom][1],
                 self.room_start_coord[nroom][1] + self.room_dims[nroom][1],
                 num_y_points)
-            z = np.linspace(
-                self.room_start_coord[nroom][2],
-                self.room_start_coord[nroom][2] + self.room_dims[nroom][2],
-                num_z_points)
-            (xm, ym, zm) = np.meshgrid(x, y, z)
+
+            (xm, ym) = np.meshgrid(x, y)
             Xcombined = np.concatenate((Xcombined, xm.flatten()))
             Ycombined = np.concatenate((Ycombined, ym.flatten()))
-            Zcombined = np.concatenate((Zcombined, zm.flatten()))
 
-        return Meshgrid(torch.from_numpy(Xcombined),
-                        torch.from_numpy(Ycombined),
-                        torch.from_numpy(Zcombined))
+        return Meshgrid(
+            torch.from_numpy(Xcombined),
+            torch.from_numpy(Ycombined),
+        )
 
-    def plot_3D_meshgrid(self, mesh_3D: Meshgrid):
+    def plot_2D_meshgrid(self, mesh_2D: Meshgrid):
         """Plot the 3D meshgrid to visualise the room geometry"""
-        xmesh = mesh_3D.xmesh.cpu().detach().numpy()
-        ymesh = mesh_3D.ymesh.cpu().detach().numpy()
-        zmesh = mesh_3D.zmesh.cpu().detach().numpy()
+        xmesh = mesh_2D.xmesh.cpu().detach().numpy()
+        ymesh = mesh_2D.ymesh.cpu().detach().numpy()
 
         x_flat = xmesh.flatten()
         y_flat = ymesh.flatten()
-        z_flat = zmesh.flatten()
 
         # Plot using scatter without any additional data for color
         fig = plt.figure()
-        ax = fig.add_subplot(111, projection='3d')
+        ax = fig.add_subplot(111)
 
         # Plot the X, Y, Z points
-        ax.scatter(x_flat, y_flat, z_flat, color='b', marker='.')
+        ax.scatter(x_flat, y_flat, color='b', marker='.')
 
         # Set the limits for all axes
         ax.set_xlim(0,
                     self.room_dims[-1][0] + self.room_start_coord[-1][0] + 0.5)
         ax.set_ylim(0,
                     self.room_dims[-1][1] + self.room_start_coord[-1][1] + 0.5)
-        ax.set_zlim(0, self.room_dims[-1][-1] + 0.5)
-
-        # Set the viewing angle so the origin is in the front bottom-left corner
-        # ax.view_init(elev=90, azim=-90)
 
         # Labels and title
         ax.set_xlabel('X axis')
         ax.set_ylabel('Y axis')
-        ax.set_zlabel('Z axis')
-        ax.set_title('3D mesh grid of coupled space')
+        ax.set_title('2D mesh grid of coupled space floor plan')
 
         # Show the plot
         plt.show()
@@ -543,7 +529,7 @@ class MultiRIRDataset(data.Dataset):
         self.listener_positions = torch.tensor(room_data.receiver_position)
         self.norm_listener_position = torch.tensor(
             room_data.norm_receiver_position)
-        self.mesh_3D = room_data.mesh_3D
+        self.mesh_2D = room_data.mesh_2D
         self.device = device
 
         # if we have multiple sources in the dataset
@@ -587,7 +573,7 @@ class MultiRIRDataset(data.Dataset):
             input_features = InputFeatures(torch.squeeze(self.source_position),
                                            self.listener_positions[idx],
                                            self.norm_listener_position[idx],
-                                           self.mesh_3D,
+                                           self.mesh_2D,
                                            z_values=self.z_values)
             target_labels = Target(self.early_rir_mag_response[idx, :],
                                    self.late_rir_mag_response[idx, :],
@@ -597,7 +583,7 @@ class MultiRIRDataset(data.Dataset):
             input_features = InputFeatures(self.source_position[idx1],
                                            self.listener_positions[idx2],
                                            self.norm_listener_position[idx2],
-                                           self.mesh_3D,
+                                           self.mesh_2D,
                                            z_values=self.z_values)
             target_labels = Target(self.early_rir_mag_response[idx1, idx2, :],
                                    self.late_rir_mag_response[idx1, idx2, :],
@@ -686,13 +672,12 @@ def custom_collate(batch: data.Dataset):
     # these are independent of the source/receiver locations
     z_values = batch[0]['input'].z_values
 
-    # mesh_3D is a Meshgrid object with attributes xmesh, ymesh, zmesh
-    x_mesh = batch[0]['input'].mesh_3D.xmesh
-    y_mesh = batch[0]['input'].mesh_3D.ymesh
-    z_mesh = batch[0]['input'].mesh_3D.zmesh
+    # mesh_2D is a Meshgrid object with attributes xmesh, ymesh
+    x_mesh = batch[0]['input'].mesh_2D.xmesh
+    y_mesh = batch[0]['input'].mesh_2D.ymesh
 
     # this is of size (Lx * Ly * Lz) x 3
-    mesh_3D_data = torch.stack((x_mesh, y_mesh, z_mesh), dim=1)
+    mesh_2D_data = torch.stack((x_mesh, y_mesh), dim=1)
 
     # depends on source/receiver positions
     source_positions = [item['input'].source_position for item in batch]
@@ -712,7 +697,7 @@ def custom_collate(batch: data.Dataset):
         'source_position': torch.stack(source_positions),
         'listener_position': torch.stack(listener_positions),
         'norm_listener_position': torch.stack(norm_listener_positions),
-        'mesh_3D': mesh_3D_data,
+        'mesh_2D': mesh_2D_data,
         'target_early_response': torch.stack(target_early_response),
         'target_late_response': torch.stack(target_late_response),
         'target_rir_response': torch.stack(target_rir_response)

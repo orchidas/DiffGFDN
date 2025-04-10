@@ -382,20 +382,20 @@ class SinusoidalEncoding(nn.Module):
 class OneHotEncoding(nn.Module):
     """
     Instead of using the spatial coordinates of the receiver positions,
-    uses the meshgrid of the entire 3D geometry of the space, and puts a
-    1 in the binary encoding tensor (same size as the 3D meshgrid) wherever
+    uses the meshgrid of the 2D geometry of the space, and puts a
+    1 in the binary encoding tensor (same size as the 2D meshgrid) wherever
     a receiver is present. This makes use of the knowledge of the room's geometry
     """
 
     def pos_in_meshgrid(
-        self, X_flat: torch.tensor, Y_flat: torch.Tensor, Z_flat: torch.tensor,
+        self, X_flat: torch.tensor, Y_flat: torch.Tensor,
         receiver_pos: torch.tensor
     ) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
         """
         Return a tensor of the same size as meshgrid, with the position
         containing the receiver denoted as 1. This is one-hot encoding
         Args:
-            X_flat, Y_flat, Z_flat : flattened meshgrid points of size (Lx1)
+            X_flat, Y_flat : flattened meshgrid points of size (Lx1)
             receiver_pos : list of receiver positions to look for in meshgrid, of size num_receiver_posx3
         Returns:
             Tuple: one hot encoded vector of size Lx1, containing 1s in all 
@@ -405,14 +405,13 @@ class OneHotEncoding(nn.Module):
         """
         one_hot_encoding = torch.zeros_like(X_flat)
         num_pos_pts = len(receiver_pos)
-        closest_points = torch.zeros_like(receiver_pos)
+        closest_points = torch.zeros_like(receiver_pos[:, :2])
         min_index = torch.zeros(num_pos_pts, dtype=torch.int32)
 
         for k in range(num_pos_pts):
             # Calculate the distance from the target point to each point in the meshgrid
             distances = torch.sqrt((X_flat[:, 0] - receiver_pos[k, 0])**2 +
-                                   (Y_flat[:, 0] - receiver_pos[k, 1])**2 +
-                                   (Z_flat[:, 0] - receiver_pos[k, 2])**2)
+                                   (Y_flat[:, 0] - receiver_pos[k, 1])**2)
 
             # Find the index of the minimum distance
             min_index[k] = torch.argmin(distances)
@@ -421,28 +420,103 @@ class OneHotEncoding(nn.Module):
             # find the closest point in the meshgrid
             closest_points[k, 0] = X_flat[min_index[k]]
             closest_points[k, 1] = Y_flat[min_index[k]]
-            closest_points[k, 2] = Z_flat[min_index[k]]
 
         return one_hot_encoding, closest_points, min_index
 
-    def forward(self, mesh_3D: torch.tensor, receiver_pos: torch.tensor):
+    def forward(self, mesh_2D: torch.tensor, receiver_pos: torch.tensor):
         """
         Args:
-            mesh_3D (torch.tensor): Lx * Ly * Lz, 3 3D mesh coordinates
+            mesh_3D (torch.tensor): Lx * Ly, 2 2D mesh coordinates
             receiver_pos (torch.tensor): Bx3 positions of the receivers in batch
         """
         # Flatten the meshgrid arrays
-        X_flat = mesh_3D[..., 0].view(-1, 1)  # Shape (L_x * L_y * L_z, 1)
-        Y_flat = mesh_3D[..., 1].view(-1, 1)  # Shape (L_x * L_y, * L_z, 1)
-        Z_flat = mesh_3D[..., 2].view(-1, 1)  # Shape (L_x * L_y * L_z, 1)
+        X_flat = mesh_2D[..., 0].view(-1, 1)  # Shape (L_x * L_y, 1)
+        Y_flat = mesh_2D[..., 1].view(-1, 1)  # Shape (L_x * L_y, 1)
 
         one_hot_vector, closest_points, rec_idx = self.pos_in_meshgrid(
-            X_flat, Y_flat, Z_flat, receiver_pos)
+            X_flat, Y_flat, receiver_pos)
 
-        # Shape (L_x * L_y * L_z, 4)
-        input_tensor = torch.cat((X_flat, Y_flat, Z_flat, one_hot_vector),
+        # Shape (L_x * L_y, 3)
+        input_tensor = torch.cat((X_flat, Y_flat, one_hot_vector),
                                  dim=1).to(torch.float32)
         return input_tensor, closest_points, rec_idx
+
+
+class ConvNet(nn.Module):
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        num_groups: int,
+        hidden_channels: int,
+        num_layers: int = 3,
+        kernel_size: int = 3,
+    ):
+        """
+        A generic CNN (fully connected) for spatial processing.
+
+        Args:
+            in_channels (int): Number of input features (channels).
+            out_channels (int): Number of output features (channels).
+            num_groups (int): Number of output groups per spatial location.
+            hidden_channels (int): Number of channels in intermediate layers.
+            num_layers (int): Total number of convolution layers.
+            kernel_size (int): Size of the convolution kernel.
+        """
+        super().__init__()
+
+        layers = []
+        # keeps the same matrix size, HxW
+        padding = (kernel_size - 1) // 2
+
+        # First conv layer
+        layers.append(
+            nn.Conv2d(in_channels,
+                      hidden_channels,
+                      kernel_size=kernel_size,
+                      padding=padding))
+        layers.append(nn.ReLU())
+
+        # Hidden layers
+        for _ in range(num_layers - 2):
+            layers.append(
+                nn.Conv2d(hidden_channels,
+                          hidden_channels,
+                          kernel_size=kernel_size,
+                          padding=padding))
+            layers.append(nn.ReLU())
+
+        # Final conv layer to output `num_groups * out_channels`
+        layers.append(
+            nn.Conv2d(hidden_channels,
+                      num_groups * out_channels,
+                      kernel_size=kernel_size,
+                      padding=padding))
+
+        self.conv_net = nn.Sequential(*layers)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.num_groups = num_groups
+
+    def forward(self, x: torch.Tensor):
+        """
+        Args:
+            x (Tensor): Shape (in_channels // 2, H, W)
+
+        Returns:
+            Tensor of shape (H, W, num_groups, out_channels,)
+        """
+        I, H, W, = x.shape
+        assert I == self.in_channels
+        # now the shape is (num_groups x in_channels, H, W)
+        x = x.view(self.in_channels, H, W)
+        out = self.conv_net(x)  # (num_groups * out_channels, H, W)
+        C, H, W = out.shape
+        # shape H, W, C
+        out = out.permute(1, -1, 0)
+        assert C == self.num_groups * self.out_channels
+        return out.view(H, W, self.num_groups, self.out_channels)
 
 
 class MLP(nn.Module):
@@ -569,10 +643,10 @@ class SVF_from_MLP(nn.Module):
             self.encoder = SinusoidalEncoding(num_fourier_features)
 
         elif self.encoding_type == FeatureEncodingType.MESHGRID:
-            # in this case, the (x,y,z) locations of the meshgrid and the
+            # in this case, the (x,y) locations of the meshgrid and the
             # corresponding one-hot vector (1s where all the receiver locations are)
             # are inputs to the MLP
-            num_input_features = 4
+            num_input_features = 3
             self.encoder = OneHotEncoding()
 
         self.mlp = MLP(num_input_features,
@@ -598,7 +672,6 @@ class SVF_from_MLP(nn.Module):
             'listener_position'] if self.position_type == "output_gains" else x[
                 'source_position']
         self.batch_size = position.shape[0]
-        mesh_3D = x['mesh_3D']
 
         # this will be the output tensor
         H = torch.zeros((self.batch_size, self.num_delay_lines, len(z_values)),
@@ -609,12 +682,12 @@ class SVF_from_MLP(nn.Module):
         if self.encoding_type == FeatureEncodingType.SINE:
             encoded_position = self.encoder(position)
         elif self.encoding_type == FeatureEncodingType.MESHGRID:
-            encoded_position, _, rec_idx = self.encoder(mesh_3D, position)
+            encoded_position, _, rec_idx = self.encoder(x['mesh_2D'], position)
 
         # run the MLP, output of the MLP are the state variable filter coefficients
         self.svf_params = self.mlp(encoded_position)
 
-        # if meshgrid encoding is used, the size of svf_params is (Lx*Ly*Lz, N, K, 2).
+        # if meshgrid encoding is used, the size of svf_params is (Lx*Ly, N, K, 2).
         # instead, we want the size to be (B, N, K, 2). So, we only take the filters
         # corresponding to the position of the receivers in the meshgrid
         if self.encoding_type == FeatureEncodingType.MESHGRID:
@@ -737,7 +810,7 @@ class Gains_from_MLP(nn.Module):
             # in this case, the (x,y,z) locations of the meshgrid and the
             # corresponding one-hot vector (1s where all the receiver locations are)
             # are inputs to the MLP
-            num_input_features = 4
+            num_input_features = 3
             self.encoder = OneHotEncoding()
 
         self.mlp = MLP(num_input_features,
@@ -762,18 +835,17 @@ class Gains_from_MLP(nn.Module):
             'norm_listener_position'] if self.position_type == "output_gains" else x[
                 'source_position']
         self.batch_size = position.shape[0]
-        mesh_3D = x['mesh_3D']
 
         # encode the position coordinates only
         if self.encoding_type == FeatureEncodingType.SINE:
             encoded_position = self.encoder(position)
         elif self.encoding_type == FeatureEncodingType.MESHGRID:
-            encoded_position, _, rec_idx = self.encoder(mesh_3D, position)
+            encoded_position, _, rec_idx = self.encoder(x['mesh_2D'], position)
 
         # run the MLP, output of the MLP are the state variable filter coefficients
         self.gains = self.mlp(encoded_position)
 
-        # if meshgrid encoding is used, the size of svf_params is (Lx*Ly*Lz, Ngroup, K, 2).
+        # if meshgrid encoding is used, the size of svf_params is (Lx*Ly, Ngroup, K, 2).
         # instead, we want the size to be (B, Ngroup, K, 2). So, we only take the filters
         # corresponding to the position of the receivers in the meshgrid
         if self.encoding_type == FeatureEncodingType.MESHGRID:
