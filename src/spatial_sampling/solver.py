@@ -134,6 +134,7 @@ class make_plots:
                     cur_est_amps = model_output
                 est_pos = np.vstack((est_pos, position))
                 est_amps = np.vstack((est_amps, cur_est_amps))
+            print('Number of estimated positions :', len(est_pos))
 
         return est_pos, est_amps
 
@@ -335,7 +336,7 @@ class make_plots:
                 self.true_points,
                 self.src_pos,
                 db2lin(error_db),
-                scatter_plot=False,
+                scatter_plot=True,
                 cur_freq_hz=None,
                 save_path=Path(
                     f'{self.config_dict.train_dir}/edc_error_in_space_' +
@@ -359,7 +360,7 @@ class make_plots:
                     self.true_points,
                     self.src_pos,
                     db2lin(error_db[:, j]),
-                    scatter_plot=False,
+                    scatter_plot=True,
                     cur_freq_hz=None,
                     save_path=Path(
                         f'{self.config_dict.train_dir}/direction={j+1}/edc_error_in_space_'
@@ -466,7 +467,7 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
             model,
             config_dict,
             common_decay_times=room_data.common_decay_times,
-            # receiver_positions=room_data.receiver_position,
+            receiver_positions=room_data.receiver_position,
             sampling_rate=room_data.sample_rate,
             ir_len_ms=samps_to_ms(room_data.rir_length, room_data.sample_rate),
             dataset_ref=dataset_ref,

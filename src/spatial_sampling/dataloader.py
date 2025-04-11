@@ -8,9 +8,9 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.interpolate import griddata
 import torch
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Dataset, Sampler, Subset
 
-from diff_gfdn.dataloader import get_dataloader, InputFeatures, to_device
+from diff_gfdn.dataloader import InputFeatures, to_device
 
 from .config import DNNType
 
@@ -158,6 +158,9 @@ class SpatialSamplingDataset(Dataset):
         """Get data at a particular index"""
         # Return an instance of InputFeatures
 
+        if idx >= len(self):
+            raise IndexError(f"Index {idx} is out of bounds.")
+
         if self.source_position.shape[0] == 1:
             input_features = InputFeatures(torch.squeeze(self.source_position),
                                            self.listener_positions[idx],
@@ -223,7 +226,11 @@ def create_2D_grid_data(
 
     def create_2D_mesh(x_lin: ArrayLike, y_lin: ArrayLike) -> Tuple[NDArray]:
         """Create 2D mesh from x, y coordinates"""
-        x_mesh, y_mesh = np.meshgrid(np.unique(x_lin), np.unique(y_lin))
+        x_lin_unique = np.unique(x_lin)
+        y_lin_unique = np.unique(y_lin)
+        x_mesh, y_mesh = np.meshgrid(x_lin_unique, y_lin_unique)
+
+        # TO-DO discard indices that don't fall in a regular grid
 
         # this is of size H x W x 2
         mesh_2D_data = np.stack((x_mesh, y_mesh), axis=-1)
@@ -232,6 +239,8 @@ def create_2D_grid_data(
     # create mesh for listener positions
     x_lin = np.array([item['input'].listener_position[0] for item in batch])
     y_lin = np.array([item['input'].listener_position[1] for item in batch])
+    print('Listener position in current batch')
+    print(np.stack((x_lin, y_lin), axis=1))
     mesh_2D_data = create_2D_mesh(x_lin, y_lin)
 
     # create mesh for normalised listener positions
@@ -308,11 +317,6 @@ def custom_collate_spatial_sampling(
         }
 
 
-def is_multiple(value, d, tol=1e-6):
-    """Check if value is an approximate multiple of d."""
-    return math.isclose(value / d, round(value / d), abs_tol=tol)
-
-
 def find_start_coords(num_rooms: int, dataset: Dataset):
     """
     Find the first receiver location in each room
@@ -356,6 +360,10 @@ def split_dataset_by_resolution(
     assert x_d >= dataset.grid_resolution_m, "The desired grid spacing must be greater '\
     'than what has been measured in the dataset"
 
+    def is_multiple(value, d, tol=1e-6):
+        """Check if value is an approximate multiple of d."""
+        return math.isclose(value / d, round(value / d), abs_tol=tol)
+
     train_indices = []
     val_indices = []
     num_rooms = len(dataset.room_dims)  # Number of rooms
@@ -393,6 +401,151 @@ def split_dataset_by_resolution(
     return train_set, val_set
 
 
+class SquarePatchSampler(Sampler):
+    """Custom sampler for sampling a square patch from the receiver positions"""
+
+    def __init__(
+        self,
+        grid_indices: List,
+        patch_size: int,
+    ):
+        """
+        Args:
+            grid_indices (List): vector of integers representing indices 
+                                 of the listener locations in the dataset
+            patch_size (int): size of the square patch
+        """
+        super().__init__()
+        self.patch_size = patch_size
+
+        self.num_rows, self.num_cols = self.closest_square_root(
+            len(grid_indices))
+        self.grid_indices = grid_indices[:self.num_rows * self.num_cols]
+
+        assert self.num_rows * self.num_cols == len(self.grid_indices)
+        self.num_iter = np.ceil(
+            np.sqrt((self.num_cols * self.num_rows) /
+                    self.patch_size**2)).astype(int)
+
+        # Create a mapping from subset indices to relative indices
+        self.index_to_relative = {
+            idx: i
+            for i, idx in enumerate(self.grid_indices)
+        }
+
+        # Create a list of relative indices for the subset
+        self.relative_indices = torch.tensor(
+            [self.index_to_relative[idx] for idx in self.grid_indices])
+
+        # Create a 2D array of relative subset indices (relative positions in the subset)
+        self.indices_2d = self.relative_indices.view(self.num_rows,
+                                                     self.num_cols)
+
+    def __iter__(self):
+        for i in range(self.num_iter):
+            for j in range(self.num_iter):
+                # this division is necessary to get the right
+                # corresponding indices in the dataset
+                patch = self.sample_square_patch(i, j)
+                # print('Patch indices :', patch)
+                yield patch.tolist()
+
+    def __len__(self):
+        return self.num_iter**2
+
+    @staticmethod
+    def closest_square_root(N: int):
+        """
+        Find the closest square number to a given number and return
+        square_root * largest number greater than square root < N
+        """
+        # Step 1: Find the square root of the given number
+        root = math.sqrt(N)
+
+        # Step 2: Round the square root to the nearest integer
+        nearest_integer = math.floor(root)
+
+        # closest rectangular grid to the given positions
+        other_factor = nearest_integer
+        while nearest_integer * (other_factor + 1) < N:
+            other_factor += 1
+
+        # Step 4: Return the square root of the closest square
+        return nearest_integer, other_factor
+
+    def sample_square_patch(self, i: int, j: int):
+        """Sample a square patch from a regular grid of 2D positions"""
+        # starting positions
+        start_pos_row = i * self.patch_size
+        start_pos_col = j * self.patch_size
+
+        # Extract the square patch of size patch_size x patch_size
+        # things might not divide equally so we wont always get a square patch
+        patch = self.indices_2d[
+            start_pos_row:min(start_pos_row + self.patch_size, self.num_rows),
+            start_pos_col:min(start_pos_col + self.patch_size, self.num_cols)]
+
+        # Optionally, flatten the patch if you need a 1D array
+        return patch.flatten()
+
+
+def get_dataloader(
+    dataset: Dataset,
+    batch_size: int,
+    shuffle: bool = True,
+    device='cpu',
+    drop_last: bool = True,
+    custom_collate_fn=None,
+    sample_square_patches: bool = False,
+) -> DataLoader:
+    """
+    Create torch dataloader form given dataset.
+    Args:
+        dataset (Dataset): SpatialRoomDataset for sampling
+        batch_size (int): number of positions in each batch
+        shuffle (bool): whether to shuffle the batches while training
+        device (torch.device): device on which to train
+        drop_last (bool): whether to drop the last few samples 
+                          if it doesnt match batch size
+        custom_collate_fn: custom collate function
+        sample_square_patches (bool): whether to sample a square or rectangular patch of points
+                                      for creating a batch. Square should be used for CNN.
+    """
+    if sample_square_patches:
+        logger.info(
+            "Sampling a square patch of 2D grid points for CNN training")
+        # if training a CNN we want to sample a square patch from the
+        # 2D grid of listener positions. Without this, a rectangular patch
+        # is sampled
+
+        # listener positions indices in the training / validation dataset
+        subset_listener_pos_idx = dataset.indices
+        # determine patch size from batch size
+        patch_size = int(math.sqrt(batch_size))
+
+        sampler = SquarePatchSampler(
+            subset_listener_pos_idx,
+            patch_size=patch_size,
+        )
+        dataloader = DataLoader(
+            dataset,
+            batch_sampler=sampler,  # << replace batch_size and shuffle
+            generator=torch.Generator(device=device),
+            drop_last=drop_last,  # still valid
+            collate_fn=custom_collate_fn  # keep your existing collate function
+        )
+    else:
+        dataloader = DataLoader(dataset,
+                                batch_size=batch_size,
+                                shuffle=shuffle,
+                                generator=torch.Generator(device=device),
+                                drop_last=drop_last,
+                                collate_fn=custom_collate_fn)
+
+    logger.info(f"Number of batches: {len(dataloader)}")
+    return dataloader
+
+
 def load_dataset(
         room_data: SpatialRoomDataset,
         device: torch.device,
@@ -420,10 +573,13 @@ def load_dataset(
     )
     dataset = to_device(dataset, device)
     shuffle = False if network_type == DNNType.CNN else shuffle
+    sample_square_patches = True if network_type == DNNType.CNN else False
 
     # split data into training and validation set
     train_set, valid_set = split_dataset_by_resolution(dataset,
                                                        grid_resolution_m)
+    print('Listener positions in the training set:')
+    print(room_data.receiver_position[train_set.indices][:, :2])
 
     logger.info(
         f'The length of training dataset is {len(train_set)} and valid ' +
@@ -438,7 +594,8 @@ def load_dataset(
         device=device,
         drop_last=drop_last,
         custom_collate_fn=lambda batch: custom_collate_spatial_sampling(
-            batch, network_type, dataset))
+            batch, network_type, dataset),
+        sample_square_patches=sample_square_patches)
 
     if len(valid_set) > 0:
         valid_loader = get_dataloader(
@@ -448,7 +605,9 @@ def load_dataset(
             device=device,
             drop_last=drop_last,
             custom_collate_fn=lambda batch: custom_collate_spatial_sampling(
-                batch, network_type, dataset))
+                batch, network_type, dataset),
+            sample_square_patches=sample_square_patches)
+
         return train_loader, valid_loader, dataset
     else:
         return train_loader, None, dataset

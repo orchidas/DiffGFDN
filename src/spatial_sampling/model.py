@@ -179,17 +179,19 @@ class Directional_Beamforming_Weights_from_CNN(Directional_Beamforming_Weights
 
     def forward(self, x: Dict) -> torch.tensor:
         """Run the input features through the CNN. Output is of size H*W x num_slopes x (N_sp+1)**2"""
-        mesh_2D = x['mesh_2D_norm']
-        H, W, num_coords = mesh_2D.shape
+        mesh_2D = x['mesh_2D']
         # size is. (H*W, num_in_features)
-        encoded_mesh = self.encoder(mesh_2D.view(H * W, num_coords))
+        H, W, num_coords = mesh_2D.shape
+        mesh_2D = mesh_2D.view(H * W, num_coords)
+        B = H * W
 
+        encoded_mesh = self.encoder(mesh_2D)
         encoded_mesh = encoded_mesh.view(self.num_in_features, H, W)
 
         # shape - H, W, num_groups, (N_sp+1)**2
         self.weights = self.cnn(encoded_mesh)
 
-        reshape_size = (H * W, self.num_groups, self.num_out_features)
+        reshape_size = (B, self.num_groups, self.num_out_features)
         self.weights = self.weights.reshape(reshape_size)
 
         return self.weights

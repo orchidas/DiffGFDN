@@ -1,6 +1,6 @@
 room_dataset_path: 'resources/Georg_3room_FDTD/srirs_spatial_band_centre=1000Hz.pkl'
 seed: 24051
-batch_size: 100
+batch_size: 49
 max_epochs: 15
 train_dir: 'output/spatial_sampling/grid_rir_treble_band_centre=1000Hz_directional_spatial_sampling_ratio_cnn/'
 num_grid_spacing: 3

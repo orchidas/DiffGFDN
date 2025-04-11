@@ -262,7 +262,9 @@ class SpatialSamplingTrainer:
             epoch_loss = 0
             spatial_loss = 0
             for data in train_dataset:
-                if len(self.criterion) == 1:
+
+                if len(self.criterion
+                       ) == 1 or self.network_type == DNNType.CNN:
                     cur_epoch_loss = self.train_step(data)
                 else:
                     cur_epoch_loss, cur_spatial_loss = self.train_step(data)
@@ -322,11 +324,6 @@ class SpatialSamplingTrainer:
                 data['sph_directions'])
             target_dir_output = data['target_common_slope_amps'].float()
 
-            if len(self.criterion) > 1:
-                spatial_loss = self.spatial_smoothness_weight * self.criterion[
-                    1](data['listener_position'], est_dir_output)
-                loss += spatial_loss
-
             if self.network_type == DNNType.CNN:
                 # make sure no region outside the boundary is chosen for EDC loss calculation
                 binary_floor_mask = self.dataset_ref.get_binary_mask(
@@ -339,14 +336,20 @@ class SpatialSamplingTrainer:
 
                 loss += self.edc_loss_weight * self.criterion[0](
                     masked_est_output, masked_target_output)
-            else:
+
+            elif self.network_type == DNNType.MLP:
+                if len(self.criterion) > 1:
+                    spatial_loss = self.spatial_smoothness_weight * self.criterion[
+                        1](data['listener_position'], est_dir_output)
+                loss += spatial_loss
                 loss += self.edc_loss_weight * self.criterion[0](
                     est_dir_output, target_dir_output)
 
         loss.backward()
         self.optimizer.step()
         return loss.item() if len(
-            self.criterion) == 1 else (loss.item(), spatial_loss.item())
+            self.criterion) == 1 or self.network_type == DNNType.CNN else (
+                loss.item(), spatial_loss.item())
 
     def valid_step(self, data):
         """Validate each batch"""
@@ -367,10 +370,6 @@ class SpatialSamplingTrainer:
                 data['sph_directions'])
             target_dir_output = data['target_common_slope_amps'].float()
 
-            if len(self.criterion) > 1:
-                loss += self.spatial_smoothness_weight * self.criterion[1](
-                    data['listener_position'], est_dir_output)
-
             if self.network_type == DNNType.CNN:
                 # make sure no region outside the boundary is chosen for loss calculation
                 # size H, W
@@ -384,7 +383,12 @@ class SpatialSamplingTrainer:
 
                 loss += self.edc_loss_weight * self.criterion[0](
                     masked_est_output, masked_target_output)
-            else:
+
+            elif self.network_type == DNNType.MLP:
+                if len(self.criterion) > 1:
+                    loss += self.spatial_smoothness_weight * self.criterion[1](
+                        data['listener_position'], est_dir_output)
+
                 loss += self.edc_loss_weight * self.criterion[0](
                     est_dir_output, target_dir_output)
 

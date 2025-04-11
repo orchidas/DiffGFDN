@@ -480,24 +480,11 @@ class ConvNet(nn.Module):
 
         # Hidden layers
         for _ in range(num_layers - 2):
-            # horizontal convolution
             layers.append(
                 nn.Conv2d(hidden_channels,
                           hidden_channels,
-                          kernel_size=(1, kernel_size[-1]),
-                          padding=(0, padding_left)))
-            # vertical convolution
-            layers.append(
-                nn.Conv2d(hidden_channels,
-                          hidden_channels,
-                          kernel_size=(kernel_size[0], 1),
-                          padding=(padding_up, 0)))
-
-            # layers.append(
-            #     nn.Conv2d(hidden_channels,
-            #               hidden_channels,
-            #               kernel_size=kernel_size,
-            #               padding=(padding_up, padding_left)))
+                          kernel_size=kernel_size,
+                          padding=(padding_up, padding_left)))
 
             layers.append(nn.ReLU())
 
@@ -518,15 +505,11 @@ class ConvNet(nn.Module):
     def forward(self, x: torch.Tensor):
         """
         Args:
-            x (Tensor): Shape (in_channels // 2, H, W)
+            x (Tensor): Shape (in_channels H, W)
 
         Returns:
             Tensor of shape (H, W, num_groups, out_channels,)
         """
-        I, H, W, = x.shape
-        assert I == self.in_channels
-        # now the shape is (num_groups x in_channels, H, W)
-        x = x.view(self.in_channels, H, W)
         out = self.conv_net(x)  # (num_groups * out_channels, H, W)
         C, H, W = out.shape
         # shape H, W, C
