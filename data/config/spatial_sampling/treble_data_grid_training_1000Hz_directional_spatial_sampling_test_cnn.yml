@@ -3,7 +3,7 @@ seed: 24051
 batch_size: 49
 max_epochs: 15
 train_dir: 'output/spatial_sampling/grid_rir_treble_band_centre=1000Hz_directional_spatial_sampling_ratio_cnn/'
-num_grid_spacing: 3
+num_grid_spacing: 2
 dnn_config:
   num_fourier_features: 10
   cnn_config:

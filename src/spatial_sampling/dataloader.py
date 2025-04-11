@@ -229,6 +229,8 @@ def create_2D_grid_data(
         x_lin_unique = np.unique(x_lin)
         y_lin_unique = np.unique(y_lin)
         x_mesh, y_mesh = np.meshgrid(x_lin_unique, y_lin_unique)
+        # print('Listener position in current batch')
+        # print(x_lin_unique, y_lin_unique)
 
         # TO-DO discard indices that don't fall in a regular grid
 
@@ -239,8 +241,6 @@ def create_2D_grid_data(
     # create mesh for listener positions
     x_lin = np.array([item['input'].listener_position[0] for item in batch])
     y_lin = np.array([item['input'].listener_position[1] for item in batch])
-    print('Listener position in current batch')
-    print(np.stack((x_lin, y_lin), axis=1))
     mesh_2D_data = create_2D_mesh(x_lin, y_lin)
 
     # create mesh for normalised listener positions
@@ -402,91 +402,92 @@ def split_dataset_by_resolution(
 
 
 class SquarePatchSampler(Sampler):
-    """Custom sampler for sampling a square patch from the receiver positions"""
 
     def __init__(
         self,
-        grid_indices: List,
+        coords: NDArray,
         patch_size: int,
+        grid_spacing_m: float,
+        shuffle: bool = False,
+        drop_incomplete: bool = False,
+        step_size: int = 1,
     ):
         """
+        Yield indices from square patches in a 2D grid.
         Args:
-            grid_indices (List): vector of integers representing indices 
-                                 of the listener locations in the dataset
-            patch_size (int): size of the square patch
+            coords (NDArray): grid of 2D coordinates of the subset
+            patch_size: Size of the square patch (e.g., 3 for 3×3).
+            grid_spacing: Rounding factor for position normalization.
+            shuffle: If True, shuffle the patches.
+            drop_incomplete: If True, discard patches smaller than full size.
+            step_size (int): determines how much the patches overlap. A step size of
+                             1 gives maximum overlapping patches but increases training time.
         """
         super().__init__()
         self.patch_size = patch_size
+        self.grid_spacing_m = grid_spacing_m
+        self.shuffle = shuffle
+        self.drop_incomplete = drop_incomplete
 
-        self.num_rows, self.num_cols = self.closest_square_root(
-            len(grid_indices))
-        self.grid_indices = grid_indices[:self.num_rows * self.num_cols]
+        # extract coordinates
+        self.original_indices = list(range(len(coords)))
+        self.coords = coords
+        self.step_size = min(step_size, patch_size)
+        self.patches = self._find_all_patches()
 
-        assert self.num_rows * self.num_cols == len(self.grid_indices)
-        self.num_iter = np.ceil(
-            np.sqrt((self.num_cols * self.num_rows) /
-                    self.patch_size**2)).astype(int)
+    def _find_all_patches(self) -> List[List[int]]:
+        coords = self.coords
+        origin = coords.min(dim=0, keepdim=True)[0]  # shape: (1, 2)
+        adjusted_coords = (coords - origin) / self.grid_spacing_m
+        rounded_coords = adjusted_coords.round().int()
+        rounded_coords = (coords / self.grid_spacing_m).round().int()
+        x_unique = torch.unique(rounded_coords[:, 0])
+        y_unique = torch.unique(rounded_coords[:, 1])
 
-        # Create a mapping from subset indices to relative indices
-        self.index_to_relative = {
-            idx: i
-            for i, idx in enumerate(self.grid_indices)
-        }
+        patches = []
 
-        # Create a list of relative indices for the subset
-        self.relative_indices = torch.tensor(
-            [self.index_to_relative[idx] for idx in self.grid_indices])
+        # how much we step by determines the how much the patches overlap
+        # and what the batch size is
+        for i in range(0, len(x_unique) - self.patch_size + 1, self.step_size):
+            for j in range(0,
+                           len(y_unique) - self.patch_size + 1,
+                           self.step_size):
+                x_start = x_unique[i]
+                y_start = y_unique[j]
+                # same as meshgrid, followed by stack
+                # gives all possible combinations of coordinates
+                patch = torch.cartesian_prod(
+                    torch.arange(x_start, x_start + self.patch_size),
+                    torch.arange(y_start, y_start + self.patch_size))
 
-        # Create a 2D array of relative subset indices (relative positions in the subset)
-        self.indices_2d = self.relative_indices.view(self.num_rows,
-                                                     self.num_cols)
+                # Match the patch that actually falls in the provided grid samples
+                # rounded_coords: (N, 2), patch: (P, 2) - ideal grid of square patch
+                # mask gives tensor of shape (N, P, 2) - comparison of every dataset point to every patch location
+                # .all(-1) -> (N, P) true if coordinates match exactly
+                # .any(1) -> N, true if a point matches any location in patch
+                mask = ((
+                    rounded_coords[:, None] == patch[None, :]).all(-1)).any(1)
+                matched_idx = torch.where(mask)[0]
+
+                if self.drop_incomplete and len(
+                        matched_idx) != self.patch_size**2:
+                    continue
+
+                patch_indices = [
+                    self.original_indices[i.item()] for i in matched_idx
+                ]
+                patches.append(patch_indices)
+
+        return patches
 
     def __iter__(self):
-        for i in range(self.num_iter):
-            for j in range(self.num_iter):
-                # this division is necessary to get the right
-                # corresponding indices in the dataset
-                patch = self.sample_square_patch(i, j)
-                # print('Patch indices :', patch)
-                yield patch.tolist()
+        if self.shuffle:
+            np.random.shuffle(self.patches)
+        for patch in self.patches:
+            yield from patch  # yield indices from each patch in order
 
     def __len__(self):
-        return self.num_iter**2
-
-    @staticmethod
-    def closest_square_root(N: int):
-        """
-        Find the closest square number to a given number and return
-        square_root * largest number greater than square root < N
-        """
-        # Step 1: Find the square root of the given number
-        root = math.sqrt(N)
-
-        # Step 2: Round the square root to the nearest integer
-        nearest_integer = math.floor(root)
-
-        # closest rectangular grid to the given positions
-        other_factor = nearest_integer
-        while nearest_integer * (other_factor + 1) < N:
-            other_factor += 1
-
-        # Step 4: Return the square root of the closest square
-        return nearest_integer, other_factor
-
-    def sample_square_patch(self, i: int, j: int):
-        """Sample a square patch from a regular grid of 2D positions"""
-        # starting positions
-        start_pos_row = i * self.patch_size
-        start_pos_col = j * self.patch_size
-
-        # Extract the square patch of size patch_size x patch_size
-        # things might not divide equally so we wont always get a square patch
-        patch = self.indices_2d[
-            start_pos_row:min(start_pos_row + self.patch_size, self.num_rows),
-            start_pos_col:min(start_pos_col + self.patch_size, self.num_cols)]
-
-        # Optionally, flatten the patch if you need a 1D array
-        return patch.flatten()
+        return sum(len(p) for p in self.patches)
 
 
 def get_dataloader(
@@ -497,6 +498,7 @@ def get_dataloader(
     drop_last: bool = True,
     custom_collate_fn=None,
     sample_square_patches: bool = False,
+    grid_spacing_m: Optional[float] = None,
 ) -> DataLoader:
     """
     Create torch dataloader form given dataset.
@@ -523,13 +525,17 @@ def get_dataloader(
         # determine patch size from batch size
         patch_size = int(math.sqrt(batch_size))
 
+        # create sampler with square patches
         sampler = SquarePatchSampler(
-            subset_listener_pos_idx,
-            patch_size=patch_size,
-        )
+            dataset.dataset.listener_positions[subset_listener_pos_idx, :2],
+            patch_size,
+            grid_spacing_m,
+            step_size=patch_size // 2)
+
         dataloader = DataLoader(
             dataset,
-            batch_sampler=sampler,  # << replace batch_size and shuffle
+            batch_size=batch_size,
+            sampler=sampler,  # << replace batch_size and shuffle
             generator=torch.Generator(device=device),
             drop_last=drop_last,  # still valid
             collate_fn=custom_collate_fn  # keep your existing collate function
@@ -573,13 +579,13 @@ def load_dataset(
     )
     dataset = to_device(dataset, device)
     shuffle = False if network_type == DNNType.CNN else shuffle
-    sample_square_patches = True if network_type == DNNType.CNN else False
+    sample_square_patches = network_type == DNNType.CNN
 
     # split data into training and validation set
     train_set, valid_set = split_dataset_by_resolution(dataset,
                                                        grid_resolution_m)
-    print('Listener positions in the training set:')
-    print(room_data.receiver_position[train_set.indices][:, :2])
+    # print('Listener positions in the training set:')
+    # print(room_data.receiver_position[train_set.indices][:, :2])
 
     logger.info(
         f'The length of training dataset is {len(train_set)} and valid ' +
@@ -595,7 +601,8 @@ def load_dataset(
         drop_last=drop_last,
         custom_collate_fn=lambda batch: custom_collate_spatial_sampling(
             batch, network_type, dataset),
-        sample_square_patches=sample_square_patches)
+        sample_square_patches=sample_square_patches,
+        grid_spacing_m=grid_resolution_m)
 
     if len(valid_set) > 0:
         valid_loader = get_dataloader(
@@ -606,7 +613,8 @@ def load_dataset(
             drop_last=drop_last,
             custom_collate_fn=lambda batch: custom_collate_spatial_sampling(
                 batch, network_type, dataset),
-            sample_square_patches=sample_square_patches)
+            sample_square_patches=sample_square_patches,
+            grid_spacing_m=grid_resolution_m)
 
         return train_loader, valid_loader, dataset
     else:
