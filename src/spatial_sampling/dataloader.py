@@ -408,7 +408,6 @@ class SquarePatchSampler(Sampler):
         coords: NDArray,
         patch_size: int,
         grid_spacing_m: float,
-        parent_dataset: SpatialSamplingDataset,
         shuffle: bool = False,
         drop_incomplete: bool = False,
         step_size: int = 1,
@@ -419,8 +418,6 @@ class SquarePatchSampler(Sampler):
             coords (NDArray): grid of 2D coordinates of the subset
             patch_size: Size of the square patch (e.g., 3 for 3×3).
             grid_spacing: Rounding factor for position normalization.
-            parent_dataset (SpatialSamplingDataset): parent dataset from which the
-                    training / validation subset has been created
             shuffle: If True, shuffle the patches.
             drop_incomplete: If True, discard patches smaller than full size.
             step_size (int): determines how much the patches overlap. A step size of
@@ -436,57 +433,14 @@ class SquarePatchSampler(Sampler):
         self.original_indices = list(range(len(coords)))
         self.coords = coords
         self.step_size = min(step_size, patch_size)
-        self.parent_dataset = parent_dataset
-        self.num_rooms = len(self.parent_dataset.room_dims)
-
-        self.rounded_coords = self._find_rounded_coords()
         self.patches = self._find_all_patches()
-
-    def _find_rounded_coords(self) -> torch.Tensor:
-        """Find the rounded coordinates after adjusting for the origin in each room"""
-        # find the start coordinates for each room
-        (start_xcoord,
-         start_ycoord) = find_start_coords(self.num_rooms, self.parent_dataset)
-        room = torch.zeros(len(self.coords), dtype=torch.int32)
-
-        # find which room each point is in
-        for idx in range(len(self.coords)):
-            listener_position = self.coords[idx]  # (x, y, z)
-            x_pos, y_pos = listener_position[:2].tolist()  # Extract x, y
-
-            # Identify which room the point belongs to
-            room[idx] = -1
-            for k in range(self.num_rooms):
-                room_start_x, room_start_y = self.parent_dataset.room_start_coords[
-                    k][:2]
-                room_width, room_height = self.parent_dataset.room_dims[k][:2]
-
-                if (room_start_x <= x_pos < room_start_x + room_width and
-                        room_start_y <= y_pos < room_start_y + room_height):
-                    room[idx] = k
-                    break
-        # loop through each room and fill the rounded coords
-        rounded_coords = torch.zeros_like(self.coords)
-        for k in range(self.num_rooms):
-            mask_idx = torch.argwhere(room == k)[0]
-            adjusted_x_coord = self.coords[mask_idx, 0] - start_xcoord[k]
-            adjusted_y_coord = self.coords[mask_idx, 1] - start_ycoord[k]
-            cur_rounded_coords = (torch.stack(
-                (adjusted_x_coord, adjusted_y_coord), dim=1) /
-                                  self.grid_spacing_m)
-
-            # adjust the current rounded coordinates to be aligned with the
-            # previous rounded coordinates
-            start_idx = [0, 0] if k == 0 else rounded_coords.max(dim=0)[0]
-            start_idx_tensor = torch.tensor(
-                start_idx, dtype=cur_rounded_coords.dtype).repeat(
-                    cur_rounded_coords.shape[0], 1)
-            rounded_coords[mask_idx, :] = (cur_rounded_coords +
-                                           start_idx_tensor)
-        return rounded_coords.round().int()
 
     def _find_all_patches(self) -> List[List[int]]:
         """Find all square patches of size pacth_size**2 among the given 2D coordinates"""
+        # adjust the coordinates by subtracting the origin
+        origin = self.coords.min(dim=0, keepdim=True)[0]  # shape: (1, 2)
+        adjusted_coords = (self.coords - origin) / self.grid_spacing_m
+        self.rounded_coords = adjusted_coords.round().int()
         x_unique = torch.unique(self.rounded_coords[:, 0])
         y_unique = torch.unique(self.rounded_coords[:, 1])
         patches = []
@@ -571,8 +525,7 @@ def get_dataloader(
             dataset.dataset.listener_positions[subset_listener_pos_idx, :2],
             patch_size,
             grid_spacing_m,
-            step_size=patch_size,
-            parent_dataset=dataset.dataset)
+            step_size=patch_size)
 
         dataloader = DataLoader(
             dataset,
