@@ -440,7 +440,6 @@ class SquarePatchSampler(Sampler):
         origin = coords.min(dim=0, keepdim=True)[0]  # shape: (1, 2)
         adjusted_coords = (coords - origin) / self.grid_spacing_m
         rounded_coords = adjusted_coords.round().int()
-        rounded_coords = (coords / self.grid_spacing_m).round().int()
         x_unique = torch.unique(rounded_coords[:, 0])
         y_unique = torch.unique(rounded_coords[:, 1])
 
@@ -448,12 +447,8 @@ class SquarePatchSampler(Sampler):
 
         # how much we step by determines the how much the patches overlap
         # and what the batch size is
-        for i in range(0, len(x_unique) - self.patch_size + 1, self.step_size):
-            for j in range(0,
-                           len(y_unique) - self.patch_size + 1,
-                           self.step_size):
-                x_start = x_unique[i]
-                y_start = y_unique[j]
+        for x_start in x_unique[::self.step_size]:
+            for y_start in y_unique[::self.step_size]:
                 # same as meshgrid, followed by stack
                 # gives all possible combinations of coordinates
                 patch = torch.cartesian_prod(
@@ -530,7 +525,7 @@ def get_dataloader(
             dataset.dataset.listener_positions[subset_listener_pos_idx, :2],
             patch_size,
             grid_spacing_m,
-            step_size=patch_size // 2)
+            step_size=patch_size)
 
         dataloader = DataLoader(
             dataset,
