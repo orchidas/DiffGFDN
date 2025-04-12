@@ -261,7 +261,7 @@ def create_2D_grid_data(
     target_labels_2D = griddata((x_lin, y_lin),
                                 target_labels,
                                 (mesh_2D_data[..., 0], mesh_2D_data[..., 1]),
-                                method='nearest')
+                                method='cubic')
 
     # create a mask for values within the limits (so that outside the boundaries the labels are zero)
     combined_mask = dataset_ref.get_binary_mask(mesh_2D_data)
@@ -440,6 +440,8 @@ class SquarePatchSampler(Sampler):
         # adjust the coordinates by subtracting the origin
         origin = self.coords.min(dim=0, keepdim=True)[0]  # shape: (1, 2)
         adjusted_coords = (self.coords - origin) / self.grid_spacing_m
+        is_integer = (adjusted_coords - adjusted_coords.round()).abs() < 1e-6
+        assert is_integer.all()
         self.rounded_coords = adjusted_coords.round().int()
         x_unique = torch.unique(self.rounded_coords[:, 0])
         y_unique = torch.unique(self.rounded_coords[:, 1])
@@ -457,11 +459,14 @@ class SquarePatchSampler(Sampler):
 
                 # Match the patch that actually falls in the provided grid samples
                 # rounded_coords: (N, 2), patch: (P, 2) - ideal grid of square patch
-                # mask gives tensor of shape (N, P, 2) - comparison of every dataset point to every patch location
-                # .all(-1) -> (N, P) true if coordinates match exactly
-                # .any(1) -> N, true if a point matches any location in patch
+                # mask gives tensor of shape (N, P, 2) - comparison of every dataset point
+                #                                        to every patch location xy coords
+                # .all(-1) -> (N, P) - true if coordinates match exactly. Remember N = len(dataset),
+                #                      P = patch_size**2, so rounded_coords includes all patch_coords
+                # .any(1) -> N, - true if a point matches any location in patch
                 mask = ((self.rounded_coords[:, None] == patch[None, :]
                          ).all(-1)).any(1)
+                # points where rounded_coords matches location in patch
                 matched_idx = torch.where(mask)[0]
 
                 if self.drop_incomplete and len(
@@ -525,6 +530,7 @@ def get_dataloader(
             dataset.dataset.listener_positions[subset_listener_pos_idx, :2],
             patch_size,
             grid_spacing_m,
+            drop_incomplete=True,
             step_size=patch_size)
 
         dataloader = DataLoader(
