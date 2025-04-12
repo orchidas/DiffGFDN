@@ -445,8 +445,8 @@ class SquarePatchSampler(Sampler):
     def _find_rounded_coords(self) -> torch.Tensor:
         """Find the rounded coordinates after adjusting for the origin in each room"""
         # find the start coordinates for each room
-        (start_xcoord,
-         start_ycoord) = find_start_coords(self.num_rooms, self.parent_dataset)
+        start_xcoord, start_ycoord = find_start_coords(self.num_rooms,
+                                                       self.parent_dataset)
         room = torch.zeros(len(self.coords), dtype=torch.int32)
 
         # find which room each point is in
@@ -465,15 +465,17 @@ class SquarePatchSampler(Sampler):
                         room_start_y <= y_pos < room_start_y + room_height):
                     room[idx] = k
                     break
+
         # loop through each room and fill the rounded coords
         rounded_coords = torch.zeros_like(self.coords)
         for k in range(self.num_rooms):
-            mask_idx = torch.argwhere(room == k)[0]
+            mask_idx = torch.argwhere(room == k).squeeze()
             adjusted_x_coord = self.coords[mask_idx, 0] - start_xcoord[k]
             adjusted_y_coord = self.coords[mask_idx, 1] - start_ycoord[k]
-            cur_rounded_coords = (torch.stack(
-                (adjusted_x_coord, adjusted_y_coord), dim=1) /
-                                  self.grid_spacing_m)
+
+            cur_rounded_coords = torch.stack(
+                (adjusted_x_coord, adjusted_y_coord),
+                dim=1) / self.grid_spacing_m
 
             # adjust the current rounded coordinates to be aligned with the
             # previous rounded coordinates
@@ -483,6 +485,9 @@ class SquarePatchSampler(Sampler):
                     cur_rounded_coords.shape[0], 1)
             rounded_coords[mask_idx, :] = (cur_rounded_coords +
                                            start_idx_tensor)
+
+        # is_integer = (rounded_coords - rounded_coords.round()).abs() < 1e-6
+        # assert is_integer.all()
         return rounded_coords.round().int()
 
     def _find_all_patches(self) -> List[List[int]]:
@@ -503,11 +508,15 @@ class SquarePatchSampler(Sampler):
 
                 # Match the patch that actually falls in the provided grid samples
                 # rounded_coords: (N, 2), patch: (P, 2) - ideal grid of square patch
-                # mask gives tensor of shape (N, P, 2) - comparison of every dataset point to every patch location
-                # .all(-1) -> (N, P) true if coordinates match exactly
-                # .any(1) -> N, true if a point matches any location in patch
+                # mask gives tensor of shape (N, P, 2) - comparison of every dataset point to
+                #                                         every patch location's xy coords
+                # .all(-1) -> (N, P) - true if coordinates match exactly. N = len(dataset),
+                #                      P=patch_size**2, N contains many points in P, find those
+                # .any(1) -> N, true if a point matches any location in patch, each variable is True/False
+                #                true if the location matches that in patch, false otherwise
                 mask = ((self.rounded_coords[:, None] == patch[None, :]
                          ).all(-1)).any(1)
+                # extract only matching locations
                 matched_idx = torch.where(mask)[0]
 
                 if self.drop_incomplete and len(
