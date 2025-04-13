@@ -251,14 +251,16 @@ def create_2D_grid_data(
     mesh_2D_norm_data = create_2D_mesh(x_lin_norm, y_lin_norm)
 
     # target amplitudes, size is B x num_directions x num_groups
-    target_labels = np.stack([item['target'] for item in batch])
+    target_labels = dataset_ref.common_slope_amps
     num_groups = target_labels.shape[-1]
     num_directions = target_labels.shape[1]
     H, W = mesh_2D_data.shape[:-1]
 
     # size is H, W, num_directions, num_groups - using scipy's interpolate because
     # torch's does not take into account the original x, y coordinates
-    target_labels_2D = griddata((x_lin, y_lin),
+    # note that we are using the entire set of available positions to form this 2D grid
+    target_labels_2D = griddata((dataset_ref.listener_positions[:, 0],
+                                 dataset_ref.listener_positions[:, 1]),
                                 target_labels,
                                 (mesh_2D_data[..., 0], mesh_2D_data[..., 1]),
                                 method='nearest')

@@ -134,18 +134,22 @@ class make_plots:
                     cur_est_amps = model_output
                 est_pos = np.vstack((est_pos, position))
                 est_amps = np.vstack((est_amps, cur_est_amps))
-            print('Number of estimated positions :', len(est_pos))
 
         return est_pos, est_amps
 
-    def plot_beamformer_output(self, est_amps: NDArray, filename: str):
+    def plot_beamformer_output(self,
+                               est_amps: NDArray,
+                               filename: str,
+                               contour_plot: bool = True):
         """
         Plot beamformer output as function of elevation and azimuth angles
+        est_amps (NDArray): amplitudes estimated by the DNN
         filename (str): filename for saving
+        contour_plot (bool): whether to plot spherical or contour plot
         """
         # Create grid of elevation and azimuth angles
-        num_azi = 20
-        num_el = 20
+        num_azi = 10
+        num_el = 10
         azimuths = np.degrees(np.linspace(0, 2 * np.pi, num_azi))
         elevations = np.degrees(np.linspace(-np.pi / 2, np.pi / 2, num_el))
         polars = 90 - elevations
@@ -158,51 +162,65 @@ class make_plots:
         z = np.sin(elevation_grid)
 
         # Plotting beamforming weights as a spherical surface
-        fig, ax = plt.subplots(self.room_data.num_rooms,
-                               1,
-                               subplot_kw={'projection': '3d'},
-                               figsize=(6, 3 * self.room_data.num_rooms))
+        fig, ax = plt.subplots(
+            self.room_data.num_rooms,
+            1,
+            # subplot_kw={'projection': '3d'},
+            figsize=(6, 3 * self.room_data.num_rooms))
 
         # spherical harmonic interpolation
-        sph_matrix = spa.sph.sh_matrix(self.room_data.ambi_order,
-                                       self.room_data.sph_directions[0, :],
-                                       self.room_data.sph_directions[1, :],
-                                       sh_type='real')
+        sph_matrix_orig = spa.sph.sh_matrix(
+            self.room_data.ambi_order,
+            self.room_data.sph_directions[0, :],
+            self.room_data.sph_directions[1, :],
+            sh_type='real')
 
         sph_matrix_dense = spa.sph.sh_matrix(self.room_data.ambi_order,
                                              np.degrees(azimuth_grid).ravel(),
                                              np.degrees(polar_grid).ravel(),
                                              sh_type='real')
 
-        weights = np.einsum('bjk, jn -> bkn', est_amps, sph_matrix)
+        # project on original spherical harmonic matrix
+        weights = np.einsum('bjk, jn -> bkn', est_amps, sph_matrix_orig)
+        # retrieve the amplitudes by projecting on denser spherical grid
         amps_interp = np.einsum('bkn, nd -> bdk', weights, sph_matrix_dense.T)
         num_row, num_col = azimuth_grid.shape
 
         for k in range(self.room_data.num_rooms):
-            amps_mean_interp = amps_interp[0, :, k].reshape(num_row, num_col)
+            amps_mean_interp = np.mean(amps_interp[..., k],
+                                       axis=0).reshape(num_row, num_col)
 
             # Plot the ellipsoid surface with beamforming weights as color values
-            surf = ax[k].plot_surface(
-                x,
-                y,
-                z,
-                facecolors=plt.cm.viridis(amps_mean_interp /
-                                          amps_mean_interp.max()),
-                rstride=1,
-                cstride=1,
-                linewidth=0,
-                antialiased=False,
-                alpha=0.5,
-            )
+            if contour_plot:
+                surf = ax[k].contourf(np.degrees(azimuth_grid),
+                                      np.degrees(polar_grid),
+                                      db(amps_mean_interp, is_squared=True),
+                                      cmap='plasma')
+                ax[k].set_xlabel('Azimuth angles')
+                ax[k].set_ylabel('Polar angles')
+            else:
+                surf = ax[k].plot_surface(
+                    x,
+                    y,
+                    z,
+                    facecolors=plt.cm.viridis(amps_mean_interp /
+                                              amps_mean_interp.max()),
+                    rstride=1,
+                    cstride=1,
+                    linewidth=0,
+                    antialiased=False,
+                    alpha=0.5,
+                )
+                ax[k].set_xlabel('X')
+                ax[k].set_ylabel('Y')
+                ax[k].set_zlabel('Z)')
 
             # Add a colorbar
-            fig.colorbar(surf, ax=ax[k], shrink=0.5, aspect=5)
-            ax[k].set_xlabel('X')
-            ax[k].set_ylabel('Y')
-            ax[k].set_zlabel('Z)')
+            cbar = fig.colorbar(surf, ax=ax[k], shrink=0.8, aspect=5)
+            cbar.set_label('dB')
             ax[k].set_title(f'Group = {k+1}')
 
-        fig.subplots_adjust(hspace=0.3)
+        fig.subplots_adjust(hspace=0.4)
         fig.savefig(Path(f'{self.config_dict.train_dir}/{filename}').resolve())
 
     def plot_amplitudes_in_space(self,
@@ -224,9 +242,9 @@ class make_plots:
 
         if self.true_amps.ndim == 2:
             db_limits[0, :] = np.min(db(self.true_amps, is_squared=True),
-                                     axis=-1)
+                                     axis=0)
             db_limits[1, :] = np.max(db(self.true_amps, is_squared=True),
-                                     axis=-1)
+                                     axis=0)
             # the amplitudes are omni directional
             self.room.plot_amps_at_receiver_points(
                 self.true_points,
@@ -394,9 +412,9 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
     if room_data.sph_directions is None:
         model = Omni_Amplitudes_from_MLP(
             room_data.num_rooms,
-            config_dict.num_fourier_features,
-            config_dict.num_hidden_layers,
-            config_dict.num_neurons_per_layer,
+            config_dict.dnn_config.num_fourier_features,
+            config_dict.dnn_config.mlp_config.num_hidden_layers,
+            config_dict.dnn_config.mlp_config.num_neurons_per_layer,
             device=config_dict.device,
             gain_limits=(db2lin(-100), db2lin(0)),
         )
@@ -430,8 +448,9 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
     # plot object
     plot_obj = make_plots(room_data, config_dict, model)
 
-    plot_obj.plot_beamformer_output(room_data.amplitudes,
-                                    filename='true_directional_amplitudes.png')
+    if isinstance(model, Directional_Beamforming_Weights_from_MLP):
+        plot_obj.plot_beamformer_output(
+            room_data.amplitudes, filename='true_directional_amplitudes.png')
 
     # at least one mic in each room
     assert config_dict.num_grid_spacing * room_data.grid_spacing_m <= np.min(
@@ -467,7 +486,7 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
             model,
             config_dict,
             common_decay_times=room_data.common_decay_times,
-            receiver_positions=room_data.receiver_position,
+            # receiver_positions=room_data.receiver_position,
             sampling_rate=room_data.sample_rate,
             ir_len_ms=samps_to_ms(room_data.rir_length, room_data.sample_rate),
             dataset_ref=dataset_ref,

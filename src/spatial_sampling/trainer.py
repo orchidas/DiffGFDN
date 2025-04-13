@@ -341,7 +341,7 @@ class SpatialSamplingTrainer:
                 if len(self.criterion) > 1:
                     spatial_loss = self.spatial_smoothness_weight * self.criterion[
                         1](data['listener_position'], est_dir_output)
-                loss += spatial_loss
+                    loss += spatial_loss
                 loss += self.edc_loss_weight * self.criterion[0](
                     est_dir_output, target_dir_output)
 
