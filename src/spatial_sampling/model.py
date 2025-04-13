@@ -5,7 +5,7 @@ import spaudiopy as sp
 import torch
 from torch import nn
 
-from diff_gfdn.gain_filters import ConvNet, MLP, ScaledSigmoid, Sigmoid, SinusoidalEncoding
+from diff_gfdn.dnn import ConvNet, MLP, ScaledSigmoid, Sigmoid, SinusoidalEncoding
 
 # pylint: disable=E0606
 

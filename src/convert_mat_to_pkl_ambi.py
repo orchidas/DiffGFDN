@@ -2,15 +2,17 @@ import gc
 import os
 from pathlib import Path
 import pickle
-from typing import List, Tuple, Union
+from typing import List, Union
 
 import h5py
 import joblib
 from loguru import logger
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering
+from slope2noise.utils import octave_filtering
 import spaudiopy as sp
+
+from convert_mat_to_pkl import calculate_cs_params_custom
 
 # flake8: noqa:E231
 
@@ -72,6 +74,7 @@ def save_subband_srirs(srirs: NDArray,
                     centre_freqs,
                     sample_rate,
                     batch_size=receiver_position.shape[-1],
+                    downsample_factor=10,
                 )
 
                 # Write the data to a pickle file
@@ -154,60 +157,6 @@ def process_ambi_srirs(ambi_srirs: NDArray, ambi_order: int,
     # desired SRIRs in given directions
     dir_srirs = np.einsum('jn, ntr -> jtr', beamform_matrix, ambi_srirs)
     return dir_srirs
-
-
-def calculate_cs_params_custom(
-    srirs: NDArray,
-    t_vals: NDArray,
-    f_bands: List,
-    fs: int,
-    batch_size: int = 50,
-) -> Tuple[NDArray, NDArray]:
-    """
-    Calculate custom CS parameters from the common decay times
-    Args:
-        srirs (NDArray): rir matrix of size n_rirs x ir_len x n_bands
-        t_vals (NDArray): common decay times of size n_bands x 1 x n_slopes
-        f_bands (List): list of frequencies for filtering
-        fs (int): sampling frequency
-        batch_size: running estimation for all RIRs at once is difficult, so split in batches
-    Returns:
-        Tuple[NDArray, NDArray]: Amplitudes of shape n_bands x n_slopes x n_rirs
-                                 Noise of shape n_bands x 1 x n_rirs
-    """
-    num_rirs = srirs.shape[0]
-    num_slopes = t_vals.shape[-1]
-    num_batches = int(np.ceil(num_rirs / float(batch_size)))
-    logger.info(f"Number of batches : {num_batches}")
-    a_vals = np.zeros((len(f_bands), num_slopes, num_rirs))
-    n_vals = np.zeros((len(f_bands), 1, num_rirs))
-
-    for n in range(num_batches):
-        batch_idx = np.arange(n * batch_size,
-                              max(num_rirs, (n + 1) * batch_size),
-                              dtype=np.int32)
-        cur_srirs = srirs[batch_idx, :]
-        num_rirs_per_batch = cur_srirs.shape[0]
-        # convert to shape 1 x n_slopes x n_bands
-        t_vals_exp = t_vals.transpose(1, -1, 0)
-        # ensure t_vals is of shape n_rirs x n_slopes x n_bands
-        t_vals_exp = np.repeat(t_vals_exp, num_rirs_per_batch, axis=0)
-
-        assert t_vals_exp.shape[0] == num_rirs_per_batch and t_vals_exp.shape[
-            -1] == len(f_bands)
-
-        # of shape n_rirs x ir_len x n_bands
-
-        # calculate amplitudes and noise floor - this is of shape nrirs x n_slopes+1 x n_bands
-        est_amps = calculate_amplitudes_least_squares(t_vals_exp,
-                                                      fs,
-                                                      cur_srirs,
-                                                      f_bands,
-                                                      leave_out_ms=1000)
-        a_vals[..., batch_idx] = est_amps[:, 1:, :].transpose(-1, 1, 0)
-        n_vals[..., batch_idx] = np.expand_dims(est_amps[:, 0, :],
-                                                axis=1).transpose(-1, 1, 0)
-    return a_vals, n_vals
 
 
 def main():

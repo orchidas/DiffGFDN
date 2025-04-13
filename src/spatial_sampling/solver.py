@@ -12,7 +12,7 @@ from slope2noise.utils import decay_kernel
 import spaudiopy as spa
 import torch
 
-from diff_gfdn.gain_filters import OneHotEncoding
+from diff_gfdn.dnn import OneHotEncoding
 from diff_gfdn.plot import order_position_matrices
 from diff_gfdn.save_results import save_loss
 from diff_gfdn.utils import db, db2lin, ms_to_samps, samps_to_ms
