@@ -188,6 +188,7 @@ class SpatialSamplingTrainer:
         self,
         net: Union[Omni_Amplitudes_from_MLP, Directional_Beamforming_Weights],
         trainer_config: SpatialSamplingConfig,
+        grid_spacing_m: float,
         sampling_rate: float = 44100,
         ir_len_ms: float = 2000,
         dataset_ref: Dataset = None,
@@ -198,6 +199,7 @@ class SpatialSamplingTrainer:
         Args:
             net (Gains_from_MLP): the MLP module (pre-initialised)
             trainer_config (SpatialSamplingConfig): config containing training params
+            grid_spacing_m (float): the grid spacing in m
             sampling_rate (float): sampling rate in Hz
             ir_len_ms (float): length of the RIR in ms
             dataset_ref (Dataset): reference to the dataset object
@@ -208,6 +210,7 @@ class SpatialSamplingTrainer:
         self.net = net
         self.network_type = trainer_config.network_type
         self.device = trainer_config.device
+        self.grid_spacing_m = grid_spacing_m
         self.max_epochs = trainer_config.max_epochs
         self.patience = 5
         self.early_stop = 0
@@ -320,8 +323,7 @@ class SpatialSamplingTrainer:
             loss = 0.0
             # convert MLP output to directional output by multipying
             # with SH matrix
-            est_dir_output = self.net.get_directional_amplitudes(
-                data['sph_directions'])
+            est_dir_output = self.net.get_directional_amplitudes()
             target_dir_output = data['target_common_slope_amps'].float()
 
             if self.network_type == DNNType.CNN:
@@ -366,8 +368,7 @@ class SpatialSamplingTrainer:
             loss = 0.0
             # convert MLP output to directional output by multipying
             # with SH matrix
-            est_dir_output = self.net.get_directional_amplitudes(
-                data['sph_directions'])
+            est_dir_output = self.net.get_directional_amplitudes()
             target_dir_output = data['target_common_slope_amps'].float()
 
             if self.network_type == DNNType.CNN:
@@ -401,7 +402,9 @@ class SpatialSamplingTrainer:
 
     def save_model(self, e: int):
         """Save the model parameters at each epoch"""
-        dir_path = os.path.join(self.train_dir, 'checkpoints')
+        dir_path = os.path.join(
+            self.train_dir,
+            f'checkpoints/grid_resolution={self.grid_spacing_m:.1f}/')
         # create checkpoint folder
         if not os.path.exists(dir_path):
             os.makedirs(dir_path)

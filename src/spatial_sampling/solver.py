@@ -87,14 +87,15 @@ class make_plots:
                                                 normalize_envelope=True,
                                                 add_noise=False).squeeze()
 
-    def get_model_output(self, num_epochs: int) -> Tuple[NDArray, NDArray]:
+    def get_model_output(self, num_epochs: int,
+                         grid_spacing_m: float) -> Tuple[NDArray, NDArray]:
         """
         Get the estimated common slope amplitudes.
         Returns the positions and the amplitudes at those positions
         """
         # load the trained weights for the particular epoch
         checkpoint = torch.load(Path(
-            f'{self.config_dict.train_dir}/checkpoints/model_e{num_epochs - 1}.pt'
+            f'{self.config_dict.train_dir}/checkpoints/grid_resolution={grid_spacing_m:.1f}/model_e{num_epochs - 1}.pt'
         ).resolve(),
                                 weights_only=True,
                                 map_location=torch.device('cpu'))
@@ -112,9 +113,9 @@ class make_plots:
             for data in self.train_dataset:
                 position = data['listener_position']
                 model_output = self.model(data)
+
                 if isinstance(self.model, Directional_Beamforming_Weights):
-                    cur_est_amps = self.model.get_directional_amplitudes(
-                        data['sph_directions'])
+                    cur_est_amps = self.model.get_directional_amplitudes()
                     if isinstance(self.model,
                                   Directional_Beamforming_Weights_from_CNN):
                         # shape H, W, 2
@@ -408,18 +409,11 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
     else:
         logger.error("Currently only the three room dataset is supported")
 
-    # are we learning OMNI amplitudes or directional amplitudes?
-    if room_data.sph_directions is None:
-        model = Omni_Amplitudes_from_MLP(
-            room_data.num_rooms,
-            config_dict.dnn_config.num_fourier_features,
-            config_dict.dnn_config.mlp_config.num_hidden_layers,
-            config_dict.dnn_config.mlp_config.num_neurons_per_layer,
-            device=config_dict.device,
-            gain_limits=(db2lin(-100), db2lin(0)),
-        )
+    config_dict = config_dict.model_copy(
+        update={'use_directional_rirs': room_data.sph_directions is not None})
 
-    else:
+    # are we learning OMNI amplitudes or directional amplitudes?
+    if config_dict.use_directional_rirs:
         if config_dict.network_type == DNNType.MLP:
             logger.info("Using MLP for training")
             model = Directional_Beamforming_Weights_from_MLP(
@@ -428,6 +422,8 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
                 config_dict.dnn_config.num_fourier_features,
                 config_dict.dnn_config.mlp_config.num_hidden_layers,
                 config_dict.dnn_config.mlp_config.num_neurons_per_layer,
+                desired_directions=room_data.sph_directions,
+                beamformer_type=config_dict.dnn_config.beamformer_type,
                 device=config_dict.device,
             )
         elif config_dict.network_type == DNNType.CNN:
@@ -439,7 +435,18 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
                 config_dict.dnn_config.cnn_config.num_hidden_channels,
                 config_dict.dnn_config.cnn_config.num_layers,
                 config_dict.dnn_config.cnn_config.kernel_size,
-            )
+                desired_directions=room_data.sph_directions,
+                beamformer_type=config_dict.dnn_config.beamformer_type,
+                device=config_dict.device)
+    else:
+        model = Omni_Amplitudes_from_MLP(
+            room_data.num_rooms,
+            config_dict.dnn_config.num_fourier_features,
+            config_dict.dnn_config.mlp_config.num_hidden_layers,
+            config_dict.dnn_config.mlp_config.num_neurons_per_layer,
+            device=config_dict.device,
+            gain_limits=(db2lin(-100), db2lin(0)),
+        )
 
     # set default device
     torch.set_default_device(config_dict.device)
@@ -485,6 +492,7 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
         trainer = SpatialSamplingTrainer(
             model,
             config_dict,
+            grid_spacing_m=grid_resolution_m[k],
             common_decay_times=room_data.common_decay_times,
             # receiver_positions=room_data.receiver_position,
             sampling_rate=room_data.sample_rate,
@@ -529,7 +537,7 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
 
         # get the model output
         est_points, est_amps = plot_obj.get_model_output(
-            len(trainer_loss[grid_resolution_m[k]]))
+            len(trainer_loss[grid_resolution_m[k]]), grid_resolution_m[k])
 
         # make plots
         if isinstance(model, Directional_Beamforming_Weights_from_MLP):

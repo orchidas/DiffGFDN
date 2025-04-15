@@ -150,7 +150,7 @@ def process_ambi_srirs(ambi_srirs: NDArray, ambi_order: int,
                                   des_dir[0, :],
                                   des_dir[1, :],
                                   sh_type='real')
-    # butterworth weights
+    # butterworth weights of size (N+1)^2
     beamform_weights = sp.sph.butterworth_modal_weights(ambi_order, k=5, n_c=3)
     # beamforming matrix of size num_directions * (N+1)^2
     beamform_matrix = sp.sph.repeat_per_order(beamform_weights) * sph_matrix
@@ -205,7 +205,7 @@ def main():
                 directions = data['secDirs_deg'][:]
 
         # get beamformed signals in different directions
-        directional_srirs = process_ambi_srirs(srirs, ambi_order, directions)
+        directional_rirs = process_ambi_srirs(srirs, ambi_order, directions)
         common_t60 = np.asarray(common_t60)
         amplitudes_norm = np.asarray(amplitudes_norm)
         noise_floor_norm = np.asarray(noise_floor_norm)
@@ -215,7 +215,8 @@ def main():
             'fs': sample_rate,
             'srcPos': source_position,
             'rcvPos': receiver_position,
-            'dir_srirs': directional_srirs,
+            'dir_srirs': directional_rirs,
+            'srirs': srirs,
             'band_centre_hz': freqs,
             'common_decay_times': common_t60,
             'amplitudes_norm': amplitudes_norm,
@@ -228,12 +229,13 @@ def main():
             pickle.dump(data_dict, pickle_file)
 
         logger.info("Saved pickle file")
+
     else:
         logger.info("Reading from saved pickle file")
         with open(pickle_file_path, 'rb') as handle:
             data_dict = pickle.load(handle)
 
-        directional_srirs = data_dict['dir_srirs']
+        directional_rirs = data_dict['dir_srirs']
         common_t60 = data_dict['common_decay_times']
         amplitudes_norm = data_dict['amplitudes_norm']
         directions = data_dict['directions']
@@ -242,7 +244,7 @@ def main():
         source_position = data_dict['srcPos']
         receiver_position = data_dict['rcvPos']
 
-    save_subband_srirs(directional_srirs.copy(), sample_rate, common_t60,
+    save_subband_srirs(directional_rirs.copy(), sample_rate, common_t60,
                        amplitudes_norm, noise_floor_norm, freqs,
                        source_position, receiver_position, directions,
                        use_amp_preserving_filterbank)

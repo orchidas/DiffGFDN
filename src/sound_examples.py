@@ -1,5 +1,5 @@
 import subprocess
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from loguru import logger
 from matplotlib import animation, patches
@@ -7,13 +7,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 import pyloudnorm as pyln
+from scipy.fft import rfft
 from scipy.signal import fftconvolve
 from slope2noise.rooms import RoomGeometry
 
 from diff_gfdn.dataloader import RoomDataset
 from diff_gfdn.utils import ms_to_samps
+from sofa_parser import HRIRSOFAReader
+from spatial_sampling.dataloader import SpatialRoomDataset
 
 # pylint: disable=R1707
+# flake8: noqa:E231
 
 
 class dynamic_rendering_moving_receiver:
@@ -202,3 +206,101 @@ class dynamic_rendering_moving_receiver:
         except subprocess.CalledProcessError as e:
             logger.error(e)
         logger.info("Done saving video file")
+
+
+class binaural_dynamic_rendering(dynamic_rendering_moving_receiver):
+    """
+    Class for binaural dynamic rendering with moving listener and rotating head.
+    Directional, position-dependent common slope amplitudes learned by the DNN
+    """
+
+    def __init__(
+        self,
+        room_dataset: SpatialRoomDataset,
+        rec_pos_list: NDArray,
+        orientation_list: NDArray,
+        stimulus: ArrayLike,
+        hrtf_reader: HRIRSOFAReader,
+        update_ms: float = 100,
+    ):
+        """
+        Create sound examples of rendered stimuli (and optionally, animation) of a receiver moving through a room.
+        Args:
+            room_dataset: SpatialRoomDataset object containing the SRIRs and the source-receiver configuration
+            rec_pos_list: List of receiver positions to navigate through, of size num_pos, 3
+            orientation_list: List of head orientations to navigate through, of size num_pos, 2, az, el in degrees
+            update_ms: How often is the receiver position updated
+            stimulus: dry source, mono
+            hrtf_reader(HRIRSOFAReader): reader object for the HRTF dataset
+        """
+        super().__init__(room_dataset, rec_pos_list, stimulus, update_ms)
+        self.orientation_list = orientation_list
+        self.num_out_channels = 2
+        assert self.orientation_list.shape[0] == self.rec_pos_list.shape[
+            0], "Number of orientations must match number of listener positions"
+        # initialise HRTF reader
+        self.hrtf_reader = hrtf_reader
+        # if there is a sampling rate mismatch
+        if self.hrtf_reader.sample_rate != room_dataset.sample_rate:
+            logger.info(
+                f"Resampling HRTFs to {room_dataset.sample_rate:.0f} Hz")
+            self.hrtf_reader.resample(room_dataset.sample_rate)
+
+        self.num_freq_bins = int(np.ceil(2**np.log2(self.room.rir_length)))
+        # these are of shape num_pos x num_ambi_channels x num_time_samples
+        self.ambi_rtfs = rfft(self.room.rirs, n=self.num_freq_bins, axis=-1)
+        self.late_ambi_rtfs = rfft(self.room.late_rirs,
+                                   n=self.num_freq_bins,
+                                   axis=-1)
+        # these are of shape num_ambi_channels x num_time_samples x 2
+        self.ambi_hrtfs = rfft(self.hrtf_reader.sh_ir,
+                               n=self.num_freq_bins,
+                               axis=1)
+
+    def get_binaural_rir(self, cur_head_orientation: Tuple,
+                         rec_pos_idx: int) -> NDArray:
+        """
+        For a particular head orientation and receiver position, calculate the binaural RIR
+        Returns:
+            NDArray: rir_length x 2 binaural RIR in time domain
+        """
+        if use_whole_rir:
+            cur_ambi_rir = self.ambi_rirs[rec_pos_idx, ...]
+        else:
+            cur_ambi_rir = self.late_ambi_rtfs[rec_pos_idx, ...]
+
+    def binaural_filter_overlap_add(self, use_whole_rir: bool = False):
+        """Filter and cross-fade the stimulus with the RIRs associated with the moving listener."""
+        output_signal = np.zeros(
+            (len(self.extended_stimulus), self.num_out_channels))
+
+        for k in range(self.num_pos):
+            b_idx = np.arange(k * self.hop_size,
+                              min((k + 1) * self.hop_size, self.total_sim_len),
+                              dtype=np.int32)
+            if use_whole_rir:
+                cur_filter = self.ambi_rirs[k, ...]
+            else:
+                cur_filter = self.late_ambi_rtfs[k, ...]
+
+            cur_stimulus = self.extended_stimulus[b_idx]
+            cur_head_orientation = self.orientation_list[k]
+            cur_filter = self.get_binaural_rir(cur_head_oientation, k)
+
+            start_idx = k * self.hop_size
+
+            # loop over both ears
+            for j in range(self.num_out_channels):
+                cur_filtered_signal = fftconvolve(cur_stimulus,
+                                                  cur_filter[..., j],
+                                                  mode='full')
+                end_idx = min(start_idx + len(cur_filtered_signal),
+                              output_signal.shape[0])
+
+                # cur_filtered_signal[:self.win_size] *= self.window
+                # cur_filtered_signal[-self.win_size:] *= self.window
+                output_signal[start_idx:end_idx,
+                              j] += cur_filtered_signal[:len(
+                                  np.arange(start_idx, end_idx))]
+
+        return output_signal

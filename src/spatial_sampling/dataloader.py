@@ -42,8 +42,8 @@ class SpatialRoomDataset(ABC):
             sample_rate (float): sample rate of dataset
             source_position (NDArray): position of sources in cartesian coordinate
             receiver_position (NDArray): position of receivers in cartesian coordinate
-            rirs (NDArray): omni / directional rirs at all source and receiver positions of size
-                            (num_positions, num_directions, num_time_samples)
+            rirs (NDArray): omni / ambisonic rirs at all source and receiver positions of size
+                            (num_positions, num_time_samples, num_ambi_channels)
             band_centre_hz (optinal, ArrayLike): octave band centres where common T60s are calculated
             common_decay_times (List[Union[ArrayLike, float]]): common decay times for the different rooms of 
                                                                 num_freq_bands x num_rooms
@@ -71,7 +71,7 @@ class SpatialRoomDataset(ABC):
         self.num_rec = self.receiver_position.shape[0]
         self.num_src = self.source_position.shape[
             0] if self.source_position.ndim > 1 else 1
-        self.rir_length = self.rirs.shape[-1]
+        self.rir_length = self.rirs.shape[1]
         self.room_dims = room_dims
         self.room_start_coord = room_start_coord
         self.aperture_coords = aperture_coords
@@ -136,7 +136,7 @@ class SpatialSamplingDataset(Dataset):
         self.sph_directions = room_data.sph_directions
 
         # shape num_receivers, num_slopes or num_receivers, num_directions, num_slopes
-        self.common_slope_amps = torch.tensor(room_data.amplitudes)
+        self.common_slope_amps = torch.tensor(room_data.amplitudes).float()
         self.num_rooms = room_data.num_rooms
         self.device = device
         self.grid_resolution_m = room_data.grid_spacing_m

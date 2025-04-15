@@ -6,6 +6,14 @@ from typing import Optional, Tuple
 from pydantic import BaseModel, computed_field
 
 
+class BeamformerType(Enum):
+    """Different types of beamformers"""
+
+    BUTTER = 'butterworth'
+    MAX_DI = 'max_directivity'
+    MAX_RE = 'max_re'
+
+
 class DNNType(Enum):
     """Different types of DNNs for training"""
 
@@ -35,6 +43,8 @@ class DNNConfig(BaseModel):
     mlp_config: Optional[MLPConfig()] = None
     cnn_config: Optional[CNNConfig()] = None
     num_fourier_features: int = 10
+    # beamforming type for converting from SHD to directional amplitudes
+    beamformer_type: Optional[BeamformerType] = None
 
 
 class SpatialSamplingConfig(BaseModel):
@@ -59,6 +69,8 @@ class SpatialSamplingConfig(BaseModel):
     train_dir: str = "output/spatial-sampling/"
     # DNN configs
     dnn_config: DNNConfig()
+    # whether to use directional RIRs or not
+    use_directional_rirs: bool = False
 
     @computed_field
     @property

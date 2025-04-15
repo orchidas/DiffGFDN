@@ -3,8 +3,8 @@ from typing import List, Optional, Tuple
 import librosa
 from loguru import logger
 import numpy as np
+import pyfar as pf
 from scipy.fft import rfftfreq
-from slope2noise.utils import get_bandpass_filters
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -167,8 +167,14 @@ class edc_loss(nn.Module):
         self.band_centre_hz = band_centre_hz
         self.mixing_time_samps = ms_to_samps(mixing_time_ms, sample_rate)
         if band_centre_hz is not None:
-            self.filter_coeffs_sos = get_bandpass_filters(
-                sample_rate, band_centre_hz)
+            subband_filters = pf.dsp.filter.fractional_octave_bands(
+                None,
+                num_fractions=1,
+                frequency_range=(63, 16000),
+                sampling_rate=sample_rate,
+            )
+            self.filter_coeffs_sos = subband_filters.coefficients.transpose(
+                1, -1, 0)
             self.filter_order = self.filter_coeffs_sos.shape[0]
         self.use_mask = use_mask
         if self.use_mask:

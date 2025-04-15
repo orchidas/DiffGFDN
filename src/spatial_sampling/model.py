@@ -1,5 +1,7 @@
 from typing import Dict, Optional, Tuple
 
+from loguru import logger
+import numpy as np
 from numpy.typing import NDArray
 import spaudiopy as sp
 import torch
@@ -7,21 +9,31 @@ from torch import nn
 
 from diff_gfdn.dnn import ConvNet, MLP, ScaledSigmoid, Sigmoid, SinusoidalEncoding
 
+from .config import BeamformerType
+
 # pylint: disable=E0606
 
 
 class Directional_Beamforming_Weights(nn.Module):
     """Parent class for learning directional beamforming weights with DNN"""
 
-    def __init__(self, num_groups: int, ambi_order: int,
-                 num_fourier_features: int, device: torch.device):
+    def __init__(self,
+                 num_groups: int,
+                 ambi_order: int,
+                 num_fourier_features: int,
+                 desired_directions: NDArray,
+                 device: torch.device,
+                 beamformer_type: Optional[BeamformerType] = None):
         """
         Initialise parent class parameters
         Args:
             num_groups (int): number of groups whose parameters need to be learned
             ambi_order (int): order of the SMA recordings
             num_fourier_features (int): number of features used for sinusoidal encoding
+            desired_directions (NDArray): 2 x num_directions array with desired azimuth and polar angles
             device (torch.devce) to train on cpu or gpu
+            beamformer_type (BeamformerType): type of beamformer used to convert 
+                                              from SHD to directional weights
         """
         super().__init__()
         self.num_groups = num_groups
@@ -32,34 +44,58 @@ class Directional_Beamforming_Weights(nn.Module):
         # constraints on directional amplitudes - ensures they are between 0 and 1
         # useful for directional beamforming
         self.scaling = Sigmoid()
+        self.initialise_beamformer(beamformer_type, desired_directions)
 
-    def normalise_beamformer_weights(self):
-        """Normalise the beamforming weight matrix for energy preservation"""
+    def initialise_beamformer(self, beamformer_type: BeamformerType,
+                              desired_directions: NDArray):
+        """Initialise the beamformer used to convert from SH to directional amplitudes"""
+        if beamformer_type == BeamformerType.MAX_DI:
+            self.modal_weights = sp.sph.cardioid_modal_weights(self.ambi_order)
+        elif beamformer_type == BeamformerType.MAX_RE:
+            self.modal_weights = sp.sph.max_re_modal_weights(self.ambi_order)
+        elif beamformer_type == BeamformerType.BUTTER:
+            self.modal_weights = sp.sph.butterworth_modal_weights(
+                self.ambi_order, k=5, n_c=3)
+        else:
+            self.modal_weights = np.ones(self.ambi_order + 1)
+            logger.warning(
+                "Other types of beamformers not available, using unity weights"
+            )
+
+        # output of size num_directions x (N_sp+1)^2
+        self.analysis_matrix, _ = sp.sph.design_sph_filterbank(
+            self.ambi_order,
+            desired_directions[0, :],
+            desired_directions[1, :],
+            self.modal_weights,
+            mode='perfect',
+            sh_type='real')
+
+        self.analysis_matrix = torch.tensor(self.analysis_matrix,
+                                            dtype=torch.float32,
+                                            device=self.device)
+
+    def normalise_weights(self):
+        """Normalise the learned weight matrix for energy preservation"""
         return self.weights / (torch.norm(self.weights, dim=-1, keepdim=True) +
                                1e-6)
 
-    def get_directional_amplitudes(
-            self, desired_directions: NDArray) -> torch.Tensor:
+    def get_directional_amplitudes(self) -> torch.Tensor:
         """
-        Convert beamforming weights into directional amplitudes by multiplying with SH matrix
-        Args:
-            desired_directions (NDArray): 2 x num_directions matrix of azimuth and polar angles
+        Convert learned weights into directional amplitudes by multiplying with SH matrix
         Returns:
-            torch.Tensor: output matrix of size batch size x num_slopes x num_directions
+            torch.Tensor: output matrix of size batch size x num_directions x num_slopes
         """
-        # output of size num_directions x (N_sp+1)^2
-        sph_matrix = torch.tensor(sp.sph.sh_matrix(self.ambi_order,
-                                                   desired_directions[0, :],
-                                                   desired_directions[1, :],
-                                                   sh_type='real'),
-                                  dtype=torch.float32,
-                                  device=self.device)
-
         # normalise weights to have unit energy
-        self.normalise_beamformer_weights()
+        self.normalise_weights()
 
-        # we want the output shape to be num_batches, num_slopes, num_directions
-        output = torch.einsum('bkn, nj -> bjk', self.weights, sph_matrix.T)
+        # we want the output shape to be num_batches, num_directions, num_slopes
+        output = torch.einsum(
+            'jn, nbk -> jbk',
+            self.analysis_matrix,
+            self.weights.permute(-1, 0, 1),
+        ).permute(1, 0, -1)
+
         # ensure the amplitudes are between 0 and 1
         return self.scaling(output)
 
@@ -80,8 +116,7 @@ class Directional_Beamforming_Weights(nn.Module):
         self.forward(x)
         param_np = {}
         param_np['beamformer_weights'] = self.weights.squeeze().cpu().numpy()
-        param_np['directional_weights'] = self.get_directional_amplitudes(
-            x['sph_directions'])
+        param_np['directional_weights'] = self.get_directional_amplitudes()
         return param_np
 
 
@@ -95,7 +130,9 @@ class Directional_Beamforming_Weights_from_MLP(Directional_Beamforming_Weights
         num_fourier_features: int,
         num_hidden_layers: int,
         num_neurons: int,
+        desired_directions: NDArray,
         device: Optional[torch.device] = 'cpu',
+        beamformer_type: Optional[BeamformerType] = None,
     ):
         """
         Train the MLP to get directional beamformer weights for the amplitudes of each slope, as a function
@@ -109,7 +146,8 @@ class Directional_Beamforming_Weights_from_MLP(Directional_Beamforming_Weights
                 num_neurons (int): Number of neurons in each hidden layer.
 
         """
-        super().__init__(num_groups, ambi_order, num_fourier_features, device)
+        super().__init__(num_groups, ambi_order, num_fourier_features,
+                         desired_directions, device, beamformer_type)
         # if we were feeding the spatial coordinates directly, then the
         # number of input features would be 3. Since we are encoding them,
         # the number of features is 3 * num_fourier_features * 2
@@ -152,7 +190,9 @@ class Directional_Beamforming_Weights_from_CNN(Directional_Beamforming_Weights
         num_hidden_channels: int,
         num_layers: int,
         kernel_size: int,
+        desired_directions=NDArray,
         device: Optional[torch.device] = 'cpu',
+        beamformer_type: Optional[BeamformerType] = None,
     ):
         """
         Train the CNN to get directional beamformer weights for the amplitudes of each slope, as a function
@@ -166,7 +206,8 @@ class Directional_Beamforming_Weights_from_CNN(Directional_Beamforming_Weights
             num_layers (int): number of layers in the network
             kernel_size (int): Size of the learnable convolution kernel
         """
-        super().__init__(num_groups, ambi_order, num_fourier_features, device)
+        super().__init__(num_groups, ambi_order, num_fourier_features,
+                         desired_directions, device, beamformer_type)
         self.num_in_features = 2 * num_fourier_features * 2
         self.num_hidden_channels = num_hidden_channels
         self.num_layers = num_layers
