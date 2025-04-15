@@ -151,12 +151,11 @@ class make_plots:
         # Create grid of elevation and azimuth angles
         num_azi = 10
         num_el = 10
-        azimuths = np.degrees(np.linspace(0, 2 * np.pi, num_azi))
-        elevations = np.degrees(np.linspace(-np.pi / 2, np.pi / 2, num_el))
-        polars = 90 - elevations
+        azimuths = np.linspace(0, 2 * np.pi, num_azi)
+        elevations = np.linspace(-np.pi / 2, np.pi / 2, num_el)
+        polars = np.pi / 2 - elevations
 
-        azimuth_grid, polar_grid = np.meshgrid(np.deg2rad(azimuths),
-                                               np.deg2rad(polars))
+        azimuth_grid, polar_grid = np.meshgrid(azimuths, polars)
         elevation_grid = np.pi / 2 - polar_grid
         x = np.cos(elevation_grid) * np.sin(azimuth_grid)
         y = np.cos(elevation_grid) * np.cos(azimuth_grid)
@@ -177,8 +176,8 @@ class make_plots:
             sh_type='real')
 
         sph_matrix_dense = spa.sph.sh_matrix(self.room_data.ambi_order,
-                                             np.degrees(azimuth_grid).ravel(),
-                                             np.degrees(polar_grid).ravel(),
+                                             azimuth_grid.ravel(),
+                                             polar_grid.ravel(),
                                              sh_type='real')
 
         # project on original spherical harmonic matrix
@@ -293,8 +292,10 @@ class make_plots:
                                             is_squared=True),
                                          axis=0)
                 dir_string = (
-                    f'az = {self.room_data.sph_directions[0, j]:.2f} deg, ' +
-                    f' pol = {self.room_data.sph_directions[1, j]:.2f} deg')
+                    f'az = {np.degrees(self.room_data.sph_directions[0, j]):.2f} deg, '
+                    +
+                    f' pol = {np.degrees(self.room_data.sph_directions[1, j]):.2f} deg'
+                )
 
                 directory = Path(
                     f'{self.config_dict.train_dir}/direction={j+1}').resolve()
@@ -388,8 +389,11 @@ class make_plots:
                     ).resolve(),
                     title=
                     f'Training grid resolution={np.round(grid_resolution_m, 3)}m, '
-                    + f'az = {self.room_data.sph_directions[0, j]:.2f} deg,' +
-                    f' pol = {self.room_data.sph_directions[1, j]:.2f} deg')
+                    +
+                    f'az = {np.degrees(self.room_data.sph_directions[0, j]):.2f} deg,'
+                    +
+                    f' pol = {np.degrees(self.room_data.sph_directions[1, j]):.2f} deg'
+                )
 
 
 ############################################################################

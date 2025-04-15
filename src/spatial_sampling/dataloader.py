@@ -11,6 +11,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset, Sampler, Subset
 
 from diff_gfdn.dataloader import InputFeatures, to_device
+from diff_gfdn.utils import ms_to_samps
 
 from .config import DNNType
 
@@ -35,6 +36,7 @@ class SpatialRoomDataset(ABC):
         sph_directions: Optional[NDArray] = None,
         ambi_order: Optional[int] = None,
         grid_spacing_m: float = 0.3,
+        mixing_time_ms: float = 50,
     ):
         """
         Args:
@@ -55,7 +57,7 @@ class SpatialRoomDataset(ABC):
             room_start_coord (List): coordinates of the room's starting vertex (first room starts at origin)
             aperture_coords (List, optional): coordinates of the apertures in the geometry
             sph_directions (NDArray, optional): if the RIRs are spatial, then the directions at which they were measured
-                                                size is (2, num_directions)
+                                                size is (2, num_directions) in radians
             ambi_order (int. optional): order of the ambisonics SMA used for recording RIRs
             grid_spacing_m (optional, float): distance between each mic measurement in uniform grid, in m
         """
@@ -81,6 +83,7 @@ class SpatialRoomDataset(ABC):
         self.num_directions = None if self.sph_directions is None else self.sph_directions.shape[
             -1]
         self.ambi_order = ambi_order
+        self.mixing_time_ms = mixing_time_ms
 
     @property
     def norm_receiver_position(self):
@@ -106,6 +109,25 @@ class SpatialRoomDataset(ABC):
         """Update room impulse responses"""
         self.rirs = new_rirs
         self.rir_length = new_rirs.shape[-1]
+
+    def early_late_split(self, win_len_ms: float = 5.0):
+        """Split the RIRs into early and late response based on mixing time"""
+        mixing_time_samps = ms_to_samps(self.mixing_time_ms, self.sample_rate)
+        win_len_samps = ms_to_samps(win_len_ms, self.sample_rate)
+        window = np.broadcast_to(np.hanning(win_len_samps),
+                                 self.rirs.shape[:-1] + (win_len_samps, ))
+
+        # create fade in and fade out windows to avoid discontinuities
+        fade_in_win = window[..., :win_len_samps // 2]
+        fade_out_win = window[..., win_len_samps // 2:]
+
+        # truncate rir into early and late parts
+        self.early_rirs = self.rirs[..., :mixing_time_samps]
+        self.late_rirs = self.rirs[..., mixing_time_samps:]
+
+        # apply fade-in and fade-out windows
+        self.early_rirs[..., -win_len_samps // 2:] *= fade_out_win
+        self.late_rirs[..., :win_len_samps // 2] *= fade_in_win
 
 
 class SpatialSamplingDataset(Dataset):
@@ -688,8 +710,8 @@ def parse_room_data(filepath: str):
             common_decay_times = srir_mat['common_decay_times']
             amplitudes = srir_mat['amplitudes_norm'].T
             noise_floor = srir_mat['noise_floor_norm'].T
-            sph_directions = srir_mat[
-                'directions'] if 'directions' in srir_mat else None
+            sph_directions = np.deg2rad(
+                srir_mat['directions']) if 'directions' in srir_mat else None
     except Exception as exc:
         raise FileNotFoundError("pickle file not read correctly") from exc
 

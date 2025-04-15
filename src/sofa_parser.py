@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Tuple, Union
 
 from librosa import resample
 from loguru import logger
@@ -65,7 +65,7 @@ def unpack_coordinates(
 
 class HRIRSOFAReader:
 
-    def __init__(self, sofa_path: Path, ambi_order: Optional[int] = None):
+    def __init__(self, sofa_path: Path):
         """
         Args:
             sofa_path (Path): path to the sofa file containing HRTFs
@@ -96,9 +96,6 @@ class HRIRSOFAReader:
         else:
             self.listener_view = self.get_listener_view(coord_type="spherical")
 
-        if self.ambi_order is not None:
-            self.get_spherical_harmonic_representation(ambi_order)
-
     def get_listener_view(self, coord_type: str = "cartesian") -> NDArray:
         """Get the listener view array. An array of vectors corresponding to the view direction of the listener.
         This can be in spherical or cartesian coordinates.
@@ -126,7 +123,7 @@ class HRIRSOFAReader:
             list_view_cart = self.sofa_reader.ListenerView
         else:
             # check that we've got angles in degrees
-            if self.file.ListenerView_Units != "degree, degree, metre":
+            if self.sofa_reader.ListenerView_Units != "degree, degree, metre":
                 raise ValueError(
                     f"Incompatible units for type of ListenerView in SOFA file. "
                     f"Type: {self.sofa_reader.ListenerView_Type}, Units: {self.sofa_reader.ListenerView_Units} "
@@ -170,7 +167,7 @@ class HRIRSOFAReader:
             list_view_cart = self.sofa_reader.SourcePosition
         else:
             # check that we've got angles in degrees
-            if self.file.SourcePosition_Units != "degree, degree, metre":
+            if self.sofa_reader.SourcePosition_Units != "degree, degree, metre":
                 raise ValueError(
                     f"Incompatible units for type of SourcePosition in SOFA file. "
                     f"Type: {self.sofa_reader.SourcePosition_Type}, Units: {self.sofa_reader.SourcePosition_Units} "
@@ -187,10 +184,19 @@ class HRIRSOFAReader:
         else:
             return np.stack((az, el, r), axis=-1)
 
-    def resample_hrirs(self, new_fs: float, ambi_order: int):
+    def resample_hrirs(self, new_fs: float):
         """Resample the HRIRs to a new sampling rate"""
-        self.ir_data = resample(self.ir_data.copy(), self.fs, new_fs, axis=1)
-        self.get_spherical_harmonic_representation(ambi_order)
+        # librosa can only handle one ear axis at a time
+        left_ir_data = resample(self.ir_data[:, 0, :].copy(),
+                                orig_sr=self.fs,
+                                target_sr=new_fs,
+                                axis=1)
+        right_ir_data = resample(self.ir_data[:, 1, :].copy(),
+                                 orig_sr=self.fs,
+                                 target_sr=new_fs,
+                                 axis=1)
+        self.ir_data = np.stack((left_ir_data, right_ir_data),
+                                axis=-1).transpose(0, -1, 1)
 
     def get_ir_corresponding_to_listener_view(
         self,
@@ -249,13 +255,15 @@ class HRIRSOFAReader:
         assert receiver_idx < self.num_receivers
         return self.sofa_reader.Data_IR[:, receiver_idx, ...]
 
-    def get_spherical_harmonic_representation(self, ambi_order: int):
+    def get_spherical_harmonic_representation(self,
+                                              ambi_order: int) -> NDArray:
         """Get the spherical harmonic representation of the HRTFs using specified ambisonics order"""
         # get azimuth and elevation angles from the dataset
-        incidence_az = self.listener_view[..., 0]
+        incidence_az = np.deg2rad(self.listener_view[..., 0])
         # zenith angle is different from elevation angle
-        incidence_zen = self.listener_view[..., 1] - 90
+        incidence_zen = np.deg2rad(90 - self.listener_view[..., 1])
         # of shape (num_hrtf_directions, (N_sp + 1)**2)
-        self.sh_matrix = spa.sht.sh_matrix(ambi_order, incidence_az,
-                                           incidence_zen)
-        self.sh_ir = np.einsum('jtr, jn -> ntr', self.ir_data, self.sh_matrix)
+        sh_matrix = spa.sph.sh_matrix(ambi_order, incidence_az, incidence_zen)
+        # output is of size num_ambi_channels x num_receivers x num_time_samples
+        sh_ir = np.einsum('jrt, jn -> nrt', self.ir_data, sh_matrix)
+        return sh_ir

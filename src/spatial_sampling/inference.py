@@ -85,7 +85,7 @@ def convert_directional_rirs_to_ambisonics(ambi_order: int,
         beamformer_type (BeamformerType): type of beamforming done - Butterworth, max-DI, or max-RE
         directional_rirs (NDArray): directional RIRs of shape num_directions x num_pos x num_time_samples
     Returns:
-        NDArray: ambisonics RIRs of shape num_ambi_channels x num_pos x num_time_samples
+        NDArray: ambisonics RIRs of shape num_pos x num_ambi_channels x num_time_samples 
     """
     # get the modal beamformer weights
     if beamformer_type == BeamformerType.MAX_DI:
@@ -109,7 +109,7 @@ def convert_directional_rirs_to_ambisonics(ambi_order: int,
         sh_type='real')
 
     ambi_rirs = np.einsum('nj, jbt -> nbt', synthesis_matrix, directional_rirs)
-    return ambi_rirs
+    return ambi_rirs.transpose(1, 0, -1)
 
 
 def get_soundfield_from_trained_model(
@@ -126,7 +126,7 @@ def get_soundfield_from_trained_model(
         full_band_room_data (SpatialRoomDataset): dataset containing parameters for all frequency bands
         rec_pos_list (List): list of receiver positions for which we want the SH weights
     Returns:
-        NDArray, NDArray: the omni / ambisonics RIRs of shape num_channels x num_pos x ir_len and 
+        NDArray, NDArray: the omni / ambisonics RIRs of shape num_pos x num_ambi_channels x ir_len and 
                          the learned amplitudes of shape num_pos x num_directions x  num_groups x num_bands
     """
     sample_rate = full_band_room_data.sample_rate
@@ -181,7 +181,7 @@ def get_soundfield_from_trained_model(
         # get the output of the DNN
         # dictionary with rec_pos_list as keys
         learned_amplitudes_cur_band = get_output_from_trained_model(
-            config_dict, desired_directions, rec_pos_list,
+            config_dict, rec_pos_list, desired_directions,
             full_band_room_data.grid_spacing_m, dataloader, num_slopes,
             ambi_order)
 
@@ -190,7 +190,7 @@ def get_soundfield_from_trained_model(
 
         # shape: (num_pos, num_groups, num_directions)
         learned_amplitudes[..., b_idx] = np.stack(
-            [v.detach().numpy() for v in amp_values], axis=0).T
+            [v.detach().numpy() for v in amp_values], axis=0)
 
     if ambi_order is not None:
         directional_rirs = np.zeros((num_directions, num_pos, ir_len_samps))

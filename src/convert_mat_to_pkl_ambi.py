@@ -147,8 +147,8 @@ def process_ambi_srirs(ambi_srirs: NDArray, ambi_order: int,
     assert ambi_srirs.shape[0] == (ambi_order + 1)**2
     # output of size num_directions x (N_sp+1)^2
     sph_matrix = sp.sph.sh_matrix(ambi_order,
-                                  des_dir[0, :],
-                                  des_dir[1, :],
+                                  np.deg2rad(des_dir[0, :]),
+                                  np.deg2rad(des_dir[1, :]),
                                   sh_type='real')
     # butterworth weights of size (N+1)^2
     beamform_weights = sp.sph.butterworth_modal_weights(ambi_order, k=5, n_c=3)
