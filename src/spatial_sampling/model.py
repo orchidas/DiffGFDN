@@ -41,10 +41,10 @@ class Directional_Beamforming_Weights(nn.Module):
         self.ambi_order = ambi_order
         self.num_fourier_features = num_fourier_features
         self.num_out_features = (ambi_order + 1)**2
+        self.initialise_beamformer(beamformer_type, desired_directions)
         # constraints on directional amplitudes - ensures they are between 0 and 1
         # useful for directional beamforming
         self.scaling = Sigmoid()
-        self.initialise_beamformer(beamformer_type, desired_directions)
 
     def initialise_beamformer(self, beamformer_type: BeamformerType,
                               desired_directions: NDArray):
@@ -52,7 +52,7 @@ class Directional_Beamforming_Weights(nn.Module):
         if beamformer_type == BeamformerType.MAX_DI:
             self.modal_weights = sp.sph.cardioid_modal_weights(self.ambi_order)
         elif beamformer_type == BeamformerType.MAX_RE:
-            self.modal_weights = sp.sph.max_re_modal_weights(self.ambi_order)
+            self.modal_weights = sp.sph.maxre_modal_weights(self.ambi_order)
         elif beamformer_type == BeamformerType.BUTTER:
             self.modal_weights = sp.sph.butterworth_modal_weights(
                 self.ambi_order, k=5, n_c=3)
@@ -68,7 +68,7 @@ class Directional_Beamforming_Weights(nn.Module):
             desired_directions[0, :],
             desired_directions[1, :],
             self.modal_weights,
-            mode='perfect',
+            mode='energy',
             sh_type='real')
 
         self.analysis_matrix = torch.tensor(self.analysis_matrix,
@@ -90,11 +90,9 @@ class Directional_Beamforming_Weights(nn.Module):
         self.normalise_weights()
 
         # we want the output shape to be num_batches, num_directions, num_slopes
-        output = torch.einsum(
-            'jn, nbk -> jbk',
-            self.analysis_matrix,
-            self.weights.permute(-1, 0, 1),
-        ).permute(1, 0, -1)
+        # I have cross-checked that the following is correct
+        output = torch.einsum('bkn, nj -> bjk', self.weights,
+                              self.analysis_matrix.T)
 
         # ensure the amplitudes are between 0 and 1
         return self.scaling(output)
@@ -116,7 +114,8 @@ class Directional_Beamforming_Weights(nn.Module):
         self.forward(x)
         param_np = {}
         param_np['beamformer_weights'] = self.weights.squeeze().cpu().numpy()
-        param_np['directional_weights'] = self.get_directional_amplitudes()
+        param_np['directional_weights'] = self.get_directional_amplitudes(
+        ).squeeze().cpu().numpy()
         return param_np
 
 

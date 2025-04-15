@@ -493,11 +493,11 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
             model,
             config_dict,
             grid_spacing_m=grid_resolution_m[k],
-            common_decay_times=room_data.common_decay_times,
-            # receiver_positions=room_data.receiver_position,
             sampling_rate=room_data.sample_rate,
             ir_len_ms=samps_to_ms(room_data.rir_length, room_data.sample_rate),
             dataset_ref=dataset_ref,
+            common_decay_times=room_data.common_decay_times,
+            # receiver_positions=room_data.receiver_position,
         )
 
         # train the network

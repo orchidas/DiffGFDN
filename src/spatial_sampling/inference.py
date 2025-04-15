@@ -23,7 +23,7 @@ from .model import (
 )
 
 # flake8: noqa:E231, E722, F841, W0612
-# pylint: disable=W0702, E0606
+# pylint: disable=W0702, E0606, W0640, W0612
 
 
 def get_ambisonic_rirs(rec_pos_list: NDArray, output_pkl_path: str,

@@ -44,7 +44,7 @@ class DNNConfig(BaseModel):
     cnn_config: Optional[CNNConfig()] = None
     num_fourier_features: int = 10
     # beamforming type for converting from SHD to directional amplitudes
-    beamformer_type: Optional[BeamformerType] = None
+    beamformer_type: BeamformerType = BeamformerType.MAX_DI
 
 
 class SpatialSamplingConfig(BaseModel):

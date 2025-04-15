@@ -216,7 +216,7 @@ def main():
             'srcPos': source_position,
             'rcvPos': receiver_position,
             'dir_srirs': directional_rirs,
-            'srirs': srirs,
+            'srirs': srirs.transpose(1, 0, -1),
             'band_centre_hz': freqs,
             'common_decay_times': common_t60,
             'amplitudes_norm': amplitudes_norm,
