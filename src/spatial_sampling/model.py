@@ -45,7 +45,7 @@ class Directional_Beamforming_Weights(nn.Module):
         Args:
             desired_directions (NDArray): 2 x num_directions matrix of azimuth and polar angles
         Returns:
-            torch.Tensor: output matrix of size batch size x num_slopes x num_directions
+            torch.Tensor: output matrix of size batch size x num_directions x num+s;p[es]
         """
         # output of size num_directions x (N_sp+1)^2
         sph_matrix = torch.tensor(sp.sph.sh_matrix(self.ambi_order,
@@ -58,7 +58,7 @@ class Directional_Beamforming_Weights(nn.Module):
         # normalise weights to have unit energy
         self.normalise_beamformer_weights()
 
-        # we want the output shape to be num_batches, num_slopes, num_directions
+        # we want the output shape to be num_batches, num_directions, num_slopes,
         output = torch.einsum('bkn, nj -> bjk', self.weights, sph_matrix.T)
         # ensure the amplitudes are between 0 and 1
         return self.scaling(output)
