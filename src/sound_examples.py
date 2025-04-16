@@ -17,7 +17,7 @@ from diff_gfdn.utils import ms_to_samps
 from sofa_parser import HRIRSOFAReader
 from spatial_sampling.dataloader import SpatialRoomDataset
 
-# pylint: disable=R1707, E1126
+# pylint: disable=R1707, E1126, E0203
 # flake8: noqa:E231
 
 
@@ -58,17 +58,12 @@ class dynamic_rendering_moving_receiver:
         """Hop size for each update"""
         return self.update_len_samp
 
-    @property
-    def window(self) -> ArrayLike:
-        return np.hanning(2 * self.hop_size)
-
-    @property
-    def fade_in_window(self) -> ArrayLike:
-        return self.window[:self.hop_size]
-
-    @property
-    def fade_out_window(self) -> ArrayLike:
-        return self.window[self.hop_size:]
+    @staticmethod
+    def get_fade_windows(win_len_samps: int,
+                         fade_out: bool = False) -> ArrayLike:
+        n = np.linspace(start=0, stop=1, num=win_len_samps)
+        fade: NDArray = 0.5 - 0.5 * np.cos(np.pi * (n + int(fade_out)))
+        return fade
 
     @property
     def total_sim_len(self) -> int:
@@ -333,13 +328,18 @@ class binaural_dynamic_rendering(dynamic_rendering_moving_receiver):
         self.ambi_hrtfs = rfft(self.hrir_sh, n=self.num_freq_bins, axis=-1)
         logger.info("Done calculating FFTs")
 
-    def get_binaural_rir(self, cur_head_orientation: Tuple,
-                         rec_pos_idx: int) -> NDArray:
+    def get_binaural_rir(self,
+                         cur_head_orientation: Tuple,
+                         rec_pos_idx: int,
+                         alpha: float = 0.5) -> NDArray:
         """
         For a particular head orientation and receiver position, calculate the binaural RIR
         Args:
-            cur_head_orientation (tuple): tuple containing the yaw, pitch, roll values of head orientation
+            cur_head_orientation (tuple): tuple containing the yaw, pitch, 
+                                          roll values of head orientation in radians
+
             rec_pos_idx (int): current receiver index
+            alpha (float): weighting factor between current and previous head orientation
         Returns:
             NDArray: rir_length x 2 binaural RIR in time domain
         """
@@ -347,17 +347,27 @@ class binaural_dynamic_rendering(dynamic_rendering_moving_receiver):
         cur_ambi_rtf = self.ambi_rtfs[rec_pos_idx, ...]
 
         #rotate the soundfield in the opposite direction - size num_freq_bins x num_ambi_channels
-        rotated_ambi_rtf = spa.sph.rotate_sh(cur_ambi_rtf.T,
-                                             -cur_head_orientation[0],
-                                             -cur_head_orientation[1],
-                                             0,
-                                             sh_type='real')
+        cur_rotation_matrix = spa.sph.sh_rotation_matrix(
+            self.room.ambi_order,
+            -cur_head_orientation[0],
+            -cur_head_orientation[1],
+            0,
+            sh_type='real')
+        # interpolate rotation matrices to avoid ITD discontinuities
+        if hasattr(self, 'prev_rotation_matrix'):
+            weighted_rotation_matrix = alpha * cur_rotation_matrix + (
+                1 - alpha) * self.prev_rotation_matrix
+        else:
+            weighted_rotation_matrix = cur_rotation_matrix
+
+        rotated_ambi_rtf = cur_ambi_rtf.T @ weighted_rotation_matrix.T
 
         # get the binaural room transfer function
         cur_brtf = np.einsum('nrf, fn -> fr', np.conj(self.ambi_hrtfs),
                              rotated_ambi_rtf)
         # get the BRIR
         cur_brir = irfft(cur_brtf, n=self.num_freq_bins, axis=0)
+        self.prev_rotation_matrix = cur_rotation_matrix.copy()
         return cur_brir
 
     def binaural_filter_overlap_add(self):
@@ -372,7 +382,9 @@ class binaural_dynamic_rendering(dynamic_rendering_moving_receiver):
 
             cur_stimulus = self.extended_stimulus[b_idx]
             cur_head_orientation = self.orientation_list[k]
-            cur_filter = self.get_binaural_rir(cur_head_orientation, k)
+
+            cur_brir = self.get_binaural_rir(cur_head_orientation, k)
+            cur_filter = cur_brir
 
             start_idx = k * self.hop_size
 
@@ -381,13 +393,12 @@ class binaural_dynamic_rendering(dynamic_rendering_moving_receiver):
                 cur_filtered_signal = fftconvolve(cur_stimulus,
                                                   cur_filter[..., j],
                                                   mode='full')
+
                 end_idx = min(start_idx + len(cur_filtered_signal),
                               output_signal.shape[0])
 
                 cur_trunc_filtered_signal = cur_filtered_signal[:end_idx -
                                                                 start_idx]
-                cur_trunc_filtered_signal[-self.
-                                          hop_size:] *= self.fade_out_window
                 output_signal[start_idx:end_idx,
                               j] += cur_trunc_filtered_signal
 
