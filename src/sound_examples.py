@@ -105,9 +105,15 @@ class dynamic_rendering_moving_receiver:
 
         return stimulus_extended
 
-    def filter_overlap_add(self, use_whole_rir: bool = False) -> NDArray:
+    def filter_overlap_add(self,
+                           use_whole_rir: bool = False,
+                           fade_len_ms: float = 5) -> NDArray:
         """Filter and cross-fade the stimulus with the RIRs associated with the moving listener."""
         output_signal = np.zeros_like(self.extended_stimulus)
+        fade_len = ms_to_samps(fade_len_ms, self.sample_rate)
+        fade_out = self.get_fade_windows(fade_len, fade_out=True)
+        fade_in = self.get_fade_windows(fade_len, fade_out=False)
+        prev_tail = np.zeros(fade_len)
 
         for k in range(self.num_pos):
             b_idx = np.arange(k * self.hop_size,
@@ -125,9 +131,29 @@ class dynamic_rendering_moving_receiver:
             start_idx = k * self.hop_size
             end_idx = min(start_idx + len(cur_filtered_signal),
                           len(output_signal))
+            cur_trunc_filtered_signal = cur_filtered_signal[:end_idx -
+                                                            start_idx]
+            # Crossfade overlapping samples between previous tail and current head
+            if k > 0:
+                overlap_len = min(fade_len, len(cur_trunc_filtered_signal))
+                crossfaded = prev_tail[:overlap_len] * fade_out[:overlap_len] + \
+                             cur_trunc_filtered_signal[:overlap_len] * fade_in[:overlap_len]
 
-            output_signal[start_idx:end_idx] += cur_filtered_signal[:len(
-                np.arange(start_idx, end_idx))]
+                output_signal[start_idx:start_idx + overlap_len] += crossfaded
+
+                output_signal[
+                    start_idx +
+                    overlap_len:end_idx] += cur_trunc_filtered_signal[
+                        overlap_len:]
+            else:
+                output_signal[start_idx:end_idx] += cur_trunc_filtered_signal
+
+            # Save tail for next iteration
+            if len(cur_trunc_filtered_signal) >= fade_len:
+                prev_tail[:fade_len] = cur_trunc_filtered_signal[-fade_len:]
+            else:
+                prev_tail[:len(cur_trunc_filtered_signal
+                               )] = cur_trunc_filtered_signal
 
         return output_signal
 
@@ -319,7 +345,7 @@ class binaural_dynamic_rendering(dynamic_rendering_moving_receiver):
                                   n=self.num_freq_bins,
                                   axis=-1)
         else:
-            self.room.early_late_split()
+            self.room.early_late_split(win_len_ms=10)
             self.ambi_rtfs = rfft(self.room.late_rirs,
                                   n=self.num_freq_bins,
                                   axis=-1)
@@ -370,10 +396,15 @@ class binaural_dynamic_rendering(dynamic_rendering_moving_receiver):
         self.prev_rotation_matrix = cur_rotation_matrix.copy()
         return cur_brir
 
-    def binaural_filter_overlap_add(self):
+    def binaural_filter_overlap_add(self, fade_len_ms: float = 5):
         """Filter and cross-fade the stimulus with the RIRs associated with the moving listener."""
         output_signal = np.zeros(
             (len(self.extended_stimulus), self.num_out_channels))
+
+        fade_len = ms_to_samps(fade_len_ms, self.sample_rate)
+        fade_out = self.get_fade_windows(fade_len, fade_out=True)
+        fade_in = self.get_fade_windows(fade_len, fade_out=False)
+        prev_tail = np.zeros((fade_len, self.num_out_channels))
 
         for k in range(self.num_pos):
             b_idx = np.arange(k * self.hop_size,
@@ -399,8 +430,28 @@ class binaural_dynamic_rendering(dynamic_rendering_moving_receiver):
 
                 cur_trunc_filtered_signal = cur_filtered_signal[:end_idx -
                                                                 start_idx]
-                output_signal[start_idx:end_idx,
-                              j] += cur_trunc_filtered_signal
+                # Crossfade overlapping samples between previous tail and current head
+                if k > 0:
+                    overlap_len = min(fade_len, len(cur_trunc_filtered_signal))
+                    crossfaded = prev_tail[:overlap_len, j] * fade_out[:overlap_len] + \
+                                 cur_trunc_filtered_signal[:overlap_len] * fade_in[:overlap_len]
+
+                    output_signal[start_idx:start_idx + overlap_len,
+                                  j] += crossfaded
+
+                    output_signal[start_idx + overlap_len:end_idx,
+                                  j] += cur_trunc_filtered_signal[overlap_len:]
+                else:
+                    output_signal[start_idx:end_idx,
+                                  j] += cur_trunc_filtered_signal
+
+                # Save tail for next iteration
+                if len(cur_trunc_filtered_signal) >= fade_len:
+                    prev_tail[:fade_len,
+                              j] = cur_trunc_filtered_signal[-fade_len:]
+                else:
+                    prev_tail[:len(cur_trunc_filtered_signal),
+                              j] = cur_trunc_filtered_signal
 
         return output_signal
 

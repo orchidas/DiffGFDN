@@ -66,8 +66,10 @@ class make_plots:
 
         # get the reference output
         self.src_pos = np.array(self.room_data.source_position).squeeze()
-        self.true_points = self.room_data.receiver_position
-        self.true_amps = self.room_data.amplitudes
+        self.true_points = torch.tensor(self.room_data.receiver_position,
+                                        dtype=torch.float32)
+        self.true_amps = torch.tensor(self.room_data.amplitudes,
+                                      dtype=torch.float32)
         self.one_hot_encoder = OneHotEncoding()
         self._init_decay_kernel()
 
@@ -87,6 +89,8 @@ class make_plots:
                                                 normalize_envelope=True,
                                                 add_noise=False).squeeze()
 
+        self.envelopes = torch.tensor(self.envelopes, dtype=torch.float32)
+
     def get_model_output(self, num_epochs: int,
                          grid_spacing_m: float) -> Tuple[NDArray, NDArray]:
         """
@@ -105,9 +109,9 @@ class make_plots:
         # run the model in eval mode
         self.model.eval()
 
-        est_pos = np.empty((0, 3))
-        est_amps = np.empty((0, self.room_data.num_rooms)) if isinstance(
-            self.model, Omni_Amplitudes_from_MLP) else np.empty(
+        est_pos = torch.empty((0, 3))
+        est_amps = torch.empty((0, self.room_data.num_rooms)) if isinstance(
+            self.model, Omni_Amplitudes_from_MLP) else torch.empty(
                 (0, self.room_data.num_directions, self.room_data.num_rooms))
         with torch.no_grad():
             for data in self.train_dataset:
@@ -125,7 +129,7 @@ class make_plots:
                         _, _, closest_points_idx = self.one_hot_encoder(
                             cur_est_mesh, position)
                         # check if this works correctly
-                        assert np.allclose(
+                        assert torch.allclose(
                             cur_est_mesh.reshape(-1, 2)[closest_points_idx, :],
                             position[:, :2])
                         # sample the closest points from the amplitudes
@@ -133,8 +137,8 @@ class make_plots:
 
                 else:
                     cur_est_amps = model_output
-                est_pos = np.vstack((est_pos, position))
-                est_amps = np.vstack((est_amps, cur_est_amps))
+                est_pos = torch.vstack((est_pos, position))
+                est_amps = torch.vstack((est_amps, cur_est_amps))
 
         return est_pos, est_amps
 
@@ -238,13 +242,13 @@ class make_plots:
             verbose (bool): whether to print out mean and std of amplitudes
         """
         logger.info("Making amplitude plots")
-        db_limits = np.zeros((2, self.room_data.num_rooms))
+        db_limits = torch.zeros((2, self.room_data.num_rooms))
 
         if self.true_amps.ndim == 2:
-            db_limits[0, :] = np.min(db(self.true_amps, is_squared=True),
-                                     axis=0)
-            db_limits[1, :] = np.max(db(self.true_amps, is_squared=True),
-                                     axis=0)
+            db_limits[0, :], _ = torch.min(db(self.true_amps, is_squared=True),
+                                           dim=0)
+            db_limits[1, :], _ = torch.max(db(self.true_amps, is_squared=True),
+                                           dim=0)
             # the amplitudes are omni directional
             self.room.plot_amps_at_receiver_points(
                 self.true_points,
@@ -275,22 +279,22 @@ class make_plots:
             for j in range(self.room_data.num_directions):
                 if verbose:
                     print(
-                        f'Actual amplitudes mean : {np.round(self.true_amps[:, j, :].mean(axis=0), 3)},'
+                        f'Actual amplitudes mean : {np.round(self.true_amps[:, j, :].mean(dim=0), 3)},'
                         +
-                        f'Est amplitudes mean: {np.round(est_amps[:, j, :].mean(axis=0), 3)} for direction {j}'
+                        f'Est amplitudes mean: {np.round(est_amps[:, j, :].mean(dim=0), 3)} for direction {j}'
                     )
                     print(
-                        f'Actual amplitudes STD: {np.round(self.true_amps[:, j, :].std(axis=0),3)},'
+                        f'Actual amplitudes STD: {np.round(self.true_amps[:, j, :].std(dim=0),3)},'
                         +
-                        f'est amplitudes STD: {np.round(est_amps[:, j, :].std(axis=0), 3)} for direction {j}'
+                        f'est amplitudes STD: {np.round(est_amps[:, j, :].std(dim=0), 3)} for direction {j}'
                     )
 
-                db_limits[0, :] = np.min(db(self.true_amps[:, j, :],
-                                            is_squared=True),
-                                         axis=0)
-                db_limits[1, :] = np.max(db(self.true_amps[:, j, :],
-                                            is_squared=True),
-                                         axis=0)
+                db_limits[0, :], _ = torch.min(db(self.true_amps[:, j, :],
+                                                  is_squared=True),
+                                               dim=0)
+                db_limits[1, :], _ = torch.max(db(self.true_amps[:, j, :],
+                                                  is_squared=True),
+                                               dim=0)
                 dir_string = (
                     f'az = {np.degrees(self.room_data.sph_directions[0, j]):.2f} deg, '
                     +
@@ -340,18 +344,16 @@ class make_plots:
         ordered_pos_idx = order_position_matrices(self.true_points, est_points)
 
         if self.true_amps.ndim == 2:
-            original_edc = db(np.sum(np.einsum('bk, kt -> bkt', self.true_amps,
-                                               self.envelopes),
-                                     axis=1),
+            original_edc = db(torch.einsum('bk, kt -> bt', self.true_amps,
+                                           self.envelopes),
                               is_squared=True)
-            est_edc = db(np.sum(np.einsum('bk, kt -> bkt', est_amps,
-                                          self.envelopes),
-                                axis=1),
+            est_edc = db(torch.einsum('bk, kt -> bt', est_amps,
+                                      self.envelopes),
                          is_squared=True)
 
-            error_db = np.mean(np.abs(original_edc -
-                                      est_edc[ordered_pos_idx, ...]),
-                               axis=-1)
+            error_db = torch.mean(torch.abs(original_edc -
+                                            est_edc[ordered_pos_idx, ...]),
+                                  dim=-1)
             self.room.plot_edc_error_at_receiver_points(
                 self.true_points,
                 self.src_pos,
@@ -365,17 +367,18 @@ class make_plots:
                 title=
                 f'Training grid resolution={np.round(grid_resolution_m, 3)}m')
         else:
-            original_edc = db(np.einsum('bjk, kt -> bjt', self.true_amps,
-                                        self.envelopes),
+            original_edc = db(torch.einsum('bjk, kt -> bjt', self.true_amps,
+                                           self.envelopes),
                               is_squared=True)
-            est_edc = db(np.einsum('bjk, kt -> bjt', est_amps, self.envelopes),
+            est_edc = db(torch.einsum('bjk, kt -> bjt', est_amps,
+                                      self.envelopes),
                          is_squared=True)
-
-            error_db = np.mean(np.abs(original_edc -
-                                      est_edc[ordered_pos_idx, ...]),
-                               axis=-1)
+            error_db = torch.mean(torch.abs(original_edc -
+                                            est_edc[ordered_pos_idx, ...]),
+                                  dim=-1)
 
             for j in range(self.room_data.num_directions):
+                logger.info(f'EDC error plots for direction {j}')
                 self.room.plot_edc_error_at_receiver_points(
                     self.true_points,
                     self.src_pos,
