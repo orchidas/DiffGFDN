@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 from typing import Tuple, Union
 
 from librosa import resample
@@ -150,7 +151,7 @@ class HRIRSOFAReader:
 
         Returns:
             NDArray:
-                Array of listener view vectors in HuRRAh coordinate convention. Dims: [M/I, C]
+                Array of listener view vectors Dims: [M/I, C]
                 M is number of measurements. I is 1. C is 3 (for 3D coordinates).
                 Spherical coordinates have angles in degrees.
 
@@ -267,3 +268,137 @@ class HRIRSOFAReader:
         # output is of size num_ambi_channels x num_receivers x num_time_samples
         sh_ir = np.einsum('jrt, jn -> nrt', self.ir_data, sh_matrix)
         return sh_ir
+
+
+class SRIRSOFAWriter:
+    """Write SRIR data to a SOFA file, using convention "SingleRoomSRIR".
+
+    This is defined online at
+    https://www.sofaconventions.org/mediawiki/index.php/MultiSpeakerBRIR
+
+    Args:
+        num_receivers (int): Number of receivers (microphones) distributed across the room.
+        ambi_order(int): Ambisonics order
+        ir_length (int): The length in samples of the IRs
+        samplerate (int): The sample rate of the data, defaults to 48000
+    """
+
+    def __init__(
+        self,
+        num_receivers: int,
+        ambi_order: int,
+        ir_length: int,
+        samplerate: float = 48000.0,
+    ):
+        # convention definition is given online
+        self.conv = "SingleRoomSRIR"
+        num_channels = (ambi_order + 1)**2
+        self.dims = {
+            "R": num_receivers,
+            "M": num_channels,
+            "N": ir_length,
+            "C": 3,  # coordinate dimension (xyz or aed)
+            "I": 1,  # for singleton dimensions
+        }
+        self.sofa = sofar.Sofa(self.conv)
+        self.samplerate = samplerate
+
+        # Fill in dimensions
+        self.sofa.Data_SamplingRate = np.array([self.samplerate])
+        # Metadata (optional)
+        self.sofa.GLOBAL_ApplicationName = 'AmbisonicSRIRWriter'
+        self._init_sofa()
+
+    def _init_sofa(self):
+        # other attributes that need to be saved to initialise the SOFA object
+        self.sofa.ListenerPosition = np.zeros((self.dims["M"], self.dims["C"]),
+                                              dtype=np.float32)
+        self.sofa.ListenerPosition_Type = 'cartesian'
+        self.sofa.ListenerPosition_Units = 'meter'
+
+        # should be of shape (R, C, I)
+        self.sofa.ReceiverView = np.tile(
+            np.array([0, 1, 0], dtype=np.float32),
+            (self.dims["R"], self.dims["I"]))[:, :, None]  # Facing +Y
+        self.sofa.ReceiverUp = np.tile(
+            np.array([0, 0, 1], dtype=np.float32),
+            (self.dims["R"], self.dims["I"]))[:, :, None]  # Up +Z
+        # shape is (R,S)
+        self.sofa.ReceiverDescriptions = np.array(["SecondOrderMics"] *
+                                                  self.dims["R"],
+                                                  dtype='U')
+        # shape is (I, R)
+        self.sofa.Data_Delay = np.zeros((self.dims["I"], self.dims["R"]),
+                                        dtype=np.float32)
+        # shape is M,
+        self.sofa.MeasurementDate = np.full(self.dims["M"],
+                                            time.time(),
+                                            dtype=np.float64)
+
+    def set_receiver_positions(self,
+                               receiver_positions: NDArray,
+                               coord_sys: str = 'cartesian'):
+        """Set receiver positions"""
+        assert receiver_positions.shape == (
+            self.dims["R"],
+            self.dims["C"]), "Receiver positions should be of size R, 3"
+        if coord_sys != 'cartesian':
+            receiver_positions = sph2cart(receiver_positions[:, 0],
+                                          receiver_positions[:, 1],
+                                          receiver_positions[:, 2])
+        # shape is RCI
+        self.sofa.ReceiverPosition = receiver_positions[..., None].astype(
+            np.float32)
+
+        # Set units
+        self.sofa.ReceiverPosition_Type = 'cartesian'
+        self.sofa.ReceiverPosition_Units = 'meter'
+
+    def set_source_position(self,
+                            source_position: ArrayLike,
+                            coord_sys: str = 'cartesian'):
+        """Set source position"""
+        if source_position.ndim > 1:
+            assert source_position.shape[-1] == self.dims["C"]
+        else:
+            assert len(source_position) == self.dims["C"]
+
+        # shape should be (1, 3)
+        if coord_sys != 'cartesian':
+            source_position = sph2cart(source_position[:, 0],
+                                       source_position[:, 1],
+                                       source_position[:, 2])
+        else:
+            source_position = source_position.reshape(1, self.dims["C"])
+
+        # should be of shape (M, C)
+        self.sofa.SourcePosition = np.tile(
+            source_position, (self.dims["M"], 1)).astype(np.float32)
+
+        self.sofa.SourcePosition_Type = 'cartesian'
+        self.sofa.SourcePosition_Units = 'meter'
+
+    def set_ir_data(self, rir_data: NDArray):
+        """
+        Set the IR data for the SOFA writer, 
+        dimensions should be be  num_ambi_channels x num_receivers x time_samples
+        """
+        assert rir_data.shape == (
+            self.dims["M"], self.dims["R"], self.dims["N"]
+        ), "RIRs should be of shape num_ambi_channels x num_receivers x time_samples"
+        self.sofa.Data_IR = rir_data.astype(np.float32)  # Shape: [M, R, N]
+
+    def write_to_file(self, filename: str, compression: int = 4):
+        """Write the SOFa object to a file.
+
+        Args:
+            filename (str): The filename to use.
+            compression (int): Amount of data compression used in the underlying HDF5 file.
+            The range if 0 (no compression) to 9 (most compression). Defaults to 4.
+        """
+        self.sofa.verify()
+        sofar.write_sofa(
+            filename,
+            self.sofa,
+            compression=compression,
+        )

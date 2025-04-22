@@ -60,10 +60,15 @@ class dynamic_rendering_moving_receiver:
 
     @staticmethod
     def get_fade_windows(win_len_samps: int,
-                         fade_out: bool = False) -> ArrayLike:
-        n = np.linspace(start=0, stop=1, num=win_len_samps)
-        fade: NDArray = 0.5 - 0.5 * np.cos(np.pi * (n + int(fade_out)))
-        return fade
+                         fade_out: bool = False,
+                         uncorr_fade: bool = False) -> ArrayLike:
+        """
+        Linear fade-in and fade-out windows. Can be correlated or uncorrelated
+        """
+        n = np.linspace(start=-1, stop=1, num=win_len_samps)
+        fade = 0.5 * (1 + (1 - 2 * int(fade_out)) * n)
+        # fade: NDArray = 0.5 - 0.5 * np.cos(np.pi * (n + int(fade_out)))
+        return np.sqrt(fade) if uncorr_fade else fade
 
     @property
     def total_sim_len(self) -> int:
@@ -386,7 +391,13 @@ class binaural_dynamic_rendering(dynamic_rendering_moving_receiver):
         else:
             weighted_rotation_matrix = cur_rotation_matrix
 
-        rotated_ambi_rtf = cur_ambi_rtf.T @ weighted_rotation_matrix.T
+        if hasattr(self, 'prev_ambi_rtf'):
+            weighted_ambi_rtf = alpha * cur_ambi_rtf + (
+                1 - alpha) * self.prev_ambi_rtf
+        else:
+            weighted_ambi_rtf = cur_ambi_rtf
+
+        rotated_ambi_rtf = weighted_ambi_rtf.T @ weighted_rotation_matrix.T
 
         # get the binaural room transfer function
         cur_brtf = np.einsum('nrf, fn -> fr', np.conj(self.ambi_hrtfs),
@@ -394,16 +405,21 @@ class binaural_dynamic_rendering(dynamic_rendering_moving_receiver):
         # get the BRIR
         cur_brir = irfft(cur_brtf, n=self.num_freq_bins, axis=0)
         self.prev_rotation_matrix = cur_rotation_matrix.copy()
+        self.prev_ambi_rtf = cur_ambi_rtf.copy()
         return cur_brir
 
-    def binaural_filter_overlap_add(self, fade_len_ms: float = 5):
+    def binaural_filter_overlap_add(self):
         """Filter and cross-fade the stimulus with the RIRs associated with the moving listener."""
         output_signal = np.zeros(
             (len(self.extended_stimulus), self.num_out_channels))
-
+        fade_len_ms = self.update_ms
         fade_len = ms_to_samps(fade_len_ms, self.sample_rate)
-        fade_out = self.get_fade_windows(fade_len, fade_out=True)
-        fade_in = self.get_fade_windows(fade_len, fade_out=False)
+        fade_out = self.get_fade_windows(fade_len,
+                                         fade_out=True,
+                                         uncorr_fade=True)
+        fade_in = self.get_fade_windows(fade_len,
+                                        fade_out=False,
+                                        uncorr_fade=True)
         prev_tail = np.zeros((fade_len, self.num_out_channels))
 
         for k in range(self.num_pos):

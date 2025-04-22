@@ -1,7 +1,7 @@
 from copy import deepcopy
 import os
 from pathlib import Path
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 
 from loguru import logger
 import matplotlib.pyplot as plt
@@ -27,7 +27,7 @@ from .model import (
 )
 from .trainer import SpatialSamplingTrainer
 
-# pylint: disable=E0606, E0601
+# pylint: disable=E0606, E0601, W0718
 # flake8: noqa:E231
 
 
@@ -98,13 +98,24 @@ class make_plots:
         Returns the positions and the amplitudes at those positions
         """
         # load the trained weights for the particular epoch
-        checkpoint = torch.load(Path(
-            f'{self.config_dict.train_dir}/checkpoints/grid_resolution={grid_spacing_m:.1f}/model_e{num_epochs - 1}.pt'
-        ).resolve(),
-                                weights_only=True,
-                                map_location=torch.device('cpu'))
-        # Load the trained model state
-        self.model.load_state_dict(checkpoint, strict=False)
+        checkpoint_found = False
+        while not checkpoint_found:
+            try:
+                checkpoint = torch.load(Path(
+                    f'{self.config_dict.train_dir}/checkpoints/grid_resolution={grid_spacing_m:.1f}/'
+                    + f'model_e{num_epochs - 1}.pt').resolve(),
+                                        weights_only=True,
+                                        map_location=torch.device('cpu'))
+                # Load the trained model state
+                self.model.load_state_dict(checkpoint, strict=False)
+                checkpoint_found = True
+                logger.debug(f'Checkpoint found for epoch = {num_epochs}')
+                break
+            except Exception as exc:
+                num_epochs -= 1
+                if num_epochs < 0:
+                    raise FileNotFoundError(
+                        'Trained model does not exist!') from exc
 
         # run the model in eval mode
         self.model.eval()
@@ -145,16 +156,18 @@ class make_plots:
     def plot_beamformer_output(self,
                                est_amps: NDArray,
                                filename: str,
-                               contour_plot: bool = True):
+                               contour_plot: bool = True,
+                               db_limits: Optional[Tuple] = None) -> Tuple:
         """
         Plot beamformer output as function of elevation and azimuth angles
         est_amps (NDArray): amplitudes estimated by the DNN
         filename (str): filename for saving
         contour_plot (bool): whether to plot spherical or contour plot
+        db_limits (optional, tuple): the limits of the colorbar
         """
         # Create grid of elevation and azimuth angles
-        num_azi = 10
-        num_el = 10
+        num_azi = 20
+        num_el = 20
         azimuths = np.linspace(0, 2 * np.pi, num_azi)
         elevations = np.linspace(-np.pi / 2, np.pi / 2, num_el)
         polars = np.pi / 2 - elevations
@@ -188,17 +201,26 @@ class make_plots:
         weights = np.einsum('bjk, jn -> bkn', est_amps, sph_matrix_orig)
         # retrieve the amplitudes by projecting on denser spherical grid
         amps_interp = np.einsum('bkn, nd -> bdk', weights, sph_matrix_dense.T)
+        amps_interp_mean = np.mean(amps_interp, axis=0)
+        amps_interp_mean_db = db(amps_interp_mean, is_squared=True)
         num_row, num_col = azimuth_grid.shape
 
+        if db_limits is None:
+            db_limits = np.zeros((2, self.room_data.num_rooms))
+            db_limits[0, :] = np.min(amps_interp_mean_db, axis=0)
+            db_limits[1, :] = np.max(amps_interp_mean_db, axis=0)
+
         for k in range(self.room_data.num_rooms):
-            amps_mean_interp = np.mean(amps_interp[..., k],
-                                       axis=0).reshape(num_row, num_col)
+            amps_interp_mean_db_2D = amps_interp_mean_db[:, k].reshape(
+                num_row, num_col)
 
             # Plot the ellipsoid surface with beamforming weights as color values
             if contour_plot:
                 surf = ax[k].contourf(np.degrees(azimuth_grid),
                                       np.degrees(polar_grid),
-                                      db(amps_mean_interp, is_squared=True),
+                                      amps_interp_mean_db_2D,
+                                      vmin=db_limits[0, k],
+                                      vmax=db_limits[1, k],
                                       cmap='plasma')
                 ax[k].set_xlabel('Azimuth angles')
                 ax[k].set_ylabel('Polar angles')
@@ -207,8 +229,8 @@ class make_plots:
                     x,
                     y,
                     z,
-                    facecolors=plt.cm.viridis(amps_mean_interp /
-                                              amps_mean_interp.max()),
+                    facecolors=plt.cm.viridis(amps_interp_mean_db_2D /
+                                              amps_interp_mean_db_2D.max()),
                     rstride=1,
                     cstride=1,
                     linewidth=0,
@@ -226,6 +248,7 @@ class make_plots:
 
         fig.subplots_adjust(hspace=0.4)
         fig.savefig(Path(f'{self.config_dict.train_dir}/{filename}').resolve())
+        return db_limits
 
     def plot_amplitudes_in_space(self,
                                  grid_resolution_m: float,
@@ -377,8 +400,9 @@ class make_plots:
                                             est_edc[ordered_pos_idx, ...]),
                                   dim=-1)
 
+            logger.info(f'Mean EDC error in dB is {error_db.mean():.3f} dB')
+
             for j in range(self.room_data.num_directions):
-                logger.info(f'EDC error plots for direction {j}')
                 self.room.plot_edc_error_at_receiver_points(
                     self.true_points,
                     self.src_pos,
@@ -402,9 +426,13 @@ class make_plots:
 ############################################################################
 
 
-def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
+def run_training_spatial_sampling(config_dict: SpatialSamplingConfig,
+                                  plot_results_only: bool = False):
     """
     Run the training to test for spatial sampling resolution
+    Args:
+        config_dict: config file for training
+        plot_results_only (bool): training already done, only plot the results
     Returns:
         A list of ColorlessFDNResults dataclass, each for one FDN in the GFDN
     """
@@ -463,7 +491,7 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
     plot_obj = make_plots(room_data, config_dict, model)
 
     if isinstance(model, Directional_Beamforming_Weights_from_MLP):
-        plot_obj.plot_beamformer_output(
+        true_db_limits = plot_obj.plot_beamformer_output(
             room_data.amplitudes, filename='true_directional_amplitudes.png')
 
     # at least one mic in each room
@@ -480,78 +508,87 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig):
     fig, ax = plt.subplots(2, 1, figsize=(6, 8))
 
     for k in range(config_dict.num_grid_spacing):
-        logger.info(
-            f"Training DNN for grid resolution = {np.round(grid_resolution_m[k], 1)} m"
-        )
 
-        # go back to training mode from evaluation mode
-        model.train()
+        if not plot_results_only:
+            logger.info(
+                f"Training DNN for grid resolution = {np.round(grid_resolution_m[k], 1)} m"
+            )
 
-        # prepare the training and validation data for DiffGFDN
-        train_dataset, valid_dataset, dataset_ref = load_dataset(
-            room_data,
-            config_dict.device,
-            grid_resolution_m=np.round(grid_resolution_m[k], 1),
-            network_type=config_dict.network_type,
-            batch_size=config_dict.batch_size)
+            # go back to training mode from evaluation mode
+            model.train()
 
-        # create the trainer object
-        trainer = SpatialSamplingTrainer(
-            model,
-            config_dict,
-            grid_spacing_m=grid_resolution_m[k],
-            sampling_rate=room_data.sample_rate,
-            ir_len_ms=samps_to_ms(room_data.rir_length, room_data.sample_rate),
-            dataset_ref=dataset_ref,
-            common_decay_times=room_data.common_decay_times,
-            # receiver_positions=room_data.receiver_position,
-        )
+            # prepare the training and validation data for DiffGFDN
+            train_dataset, valid_dataset, dataset_ref = load_dataset(
+                room_data,
+                config_dict.device,
+                grid_resolution_m=np.round(grid_resolution_m[k], 1),
+                network_type=config_dict.network_type,
+                batch_size=config_dict.batch_size)
 
-        # train the network
-        trainer.train(train_dataset, valid_dataset)
+            # create the trainer object
+            trainer = SpatialSamplingTrainer(
+                model,
+                config_dict,
+                grid_spacing_m=grid_resolution_m[k],
+                sampling_rate=room_data.sample_rate,
+                ir_len_ms=samps_to_ms(room_data.rir_length,
+                                      room_data.sample_rate),
+                dataset_ref=dataset_ref,
+                common_decay_times=room_data.common_decay_times,
+                # receiver_positions=room_data.receiver_position,
+            )
 
-        # save train loss evolution
-        save_loss(trainer.train_loss,
-                  config_dict.train_dir +
-                  f"grid_resolution={np.round(grid_resolution_m[k], 3)}",
-                  save_plot=True,
-                  filename='training_loss_vs_epoch')
+            # train the network
+            trainer.train(train_dataset, valid_dataset)
 
-        # save the validation loss
-        save_loss(
-            trainer.valid_loss,
-            config_dict.train_dir +
-            f"grid_resolution={np.round(grid_resolution_m[k], 3)}",
-            save_plot=True,
-            filename='valid_loss_vs_position',
-            xaxis_label='Position #',
-        )
+            # save train loss evolution
+            save_loss(trainer.train_loss,
+                      config_dict.train_dir +
+                      f"grid_resolution={np.round(grid_resolution_m[k], 3)}",
+                      save_plot=True,
+                      filename='training_loss_vs_epoch')
 
-        trainer_loss[grid_resolution_m[k]] = trainer.train_loss
-        valid_loss[grid_resolution_m[k]] = trainer.valid_loss
+            # save the validation loss
+            save_loss(
+                trainer.valid_loss,
+                config_dict.train_dir +
+                f"grid_resolution={np.round(grid_resolution_m[k], 3)}",
+                save_plot=True,
+                filename='valid_loss_vs_position',
+                xaxis_label='Position #',
+            )
 
-        # plot the loss as a function of the grid_resolution
-        ax[0].semilogy(
-            np.arange(len(trainer_loss[grid_resolution_m[k]])),
-            trainer_loss[grid_resolution_m[k]],
-            label=f'Grid resolution = {np.round(grid_resolution_m[k], 3)}m')
-        ax[1].semilogy(
-            np.arange(len(trainer_loss[grid_resolution_m[k]])),
-            valid_loss[grid_resolution_m[k]],
-            label=f'Grid resolution = {np.round(grid_resolution_m[k], 3)}m')
+            trainer_loss[grid_resolution_m[k]] = trainer.train_loss
+            valid_loss[grid_resolution_m[k]] = trainer.valid_loss
 
-        del trainer
+            # plot the loss as a function of the grid_resolution
+            ax[0].semilogy(
+                np.arange(len(trainer_loss[grid_resolution_m[k]])),
+                trainer_loss[grid_resolution_m[k]],
+                label=f'Grid resolution = {np.round(grid_resolution_m[k], 3)}m'
+            )
+            ax[1].semilogy(
+                np.arange(len(trainer_loss[grid_resolution_m[k]])),
+                valid_loss[grid_resolution_m[k]],
+                label=f'Grid resolution = {np.round(grid_resolution_m[k], 3)}m'
+            )
+
+            del trainer
+
+        num_epochs = config_dict.max_epochs if plot_results_only else len(
+            trainer_loss[grid_resolution_m[k]])
 
         # get the model output
         est_points, est_amps = plot_obj.get_model_output(
-            len(trainer_loss[grid_resolution_m[k]]), grid_resolution_m[k])
+            num_epochs, grid_resolution_m[k])
 
         # make plots
         if isinstance(model, Directional_Beamforming_Weights_from_MLP):
-            plot_obj.plot_beamformer_output(
+            _ = plot_obj.plot_beamformer_output(
                 est_amps,
                 filename='learned_directional_amplitudes ' +
-                f'grid_resolution_m={np.round(grid_resolution_m[k], 3)}.png')
+                f'grid_resolution_m={np.round(grid_resolution_m[k], 3)}.png',
+                db_limits=true_db_limits)
 
         plot_obj.plot_amplitudes_in_space(
             grid_resolution_m[k],
