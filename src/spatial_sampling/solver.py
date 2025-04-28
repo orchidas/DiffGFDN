@@ -1,7 +1,7 @@
 from copy import deepcopy
 import os
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 from loguru import logger
 import matplotlib.pyplot as plt
@@ -156,12 +156,15 @@ class make_plots:
     def plot_beamformer_output(self,
                                est_amps: NDArray,
                                filename: str,
+                               pos_to_investigate: List,
                                contour_plot: bool = True,
                                db_limits: Optional[Tuple] = None) -> Tuple:
         """
         Plot beamformer output as function of elevation and azimuth angles
         est_amps (NDArray): amplitudes estimated by the DNN
         filename (str): filename for saving
+        pos_to_investigate (List): the position at which to plot the directional
+                                    distribution of amplitudes
         contour_plot (bool): whether to plot spherical or contour plot
         db_limits (optional, tuple): the limits of the colorbar
         """
@@ -201,24 +204,32 @@ class make_plots:
         weights = np.einsum('bjk, jn -> bkn', est_amps, sph_matrix_orig)
         # retrieve the amplitudes by projecting on denser spherical grid
         amps_interp = np.einsum('bkn, nd -> bdk', weights, sph_matrix_dense.T)
-        amps_interp_mean = np.mean(amps_interp, axis=0)
-        amps_interp_mean_db = db(amps_interp_mean, is_squared=True)
+
+        # find receiver position idx
+        rec_pos_idx = ((self.room_data.receiver_position -
+                        pos_to_investigate)**2).sum(axis=1).argmin()
+        logger.info(
+            f"Plotting contours at position {np.round(self.room_data.receiver_position[rec_pos_idx, :], 2)}"
+        )
+
+        amps_interp_at_pos = amps_interp[rec_pos_idx, ...]
+        amps_interp_at_pos_db = db(amps_interp_at_pos, is_squared=True)
         num_row, num_col = azimuth_grid.shape
 
         if db_limits is None:
             db_limits = np.zeros((2, self.room_data.num_rooms))
-            db_limits[0, :] = np.min(amps_interp_mean_db, axis=0)
-            db_limits[1, :] = np.max(amps_interp_mean_db, axis=0)
+            db_limits[0, :] = np.min(amps_interp_at_pos_db, axis=0)
+            db_limits[1, :] = np.max(amps_interp_at_pos_db, axis=0)
 
         for k in range(self.room_data.num_rooms):
-            amps_interp_mean_db_2D = amps_interp_mean_db[:, k].reshape(
+            amps_interp_at_pos_db_2D = amps_interp_at_pos_db[:, k].reshape(
                 num_row, num_col)
 
             # Plot the ellipsoid surface with beamforming weights as color values
             if contour_plot:
                 surf = ax[k].contourf(np.degrees(azimuth_grid),
                                       np.degrees(polar_grid),
-                                      amps_interp_mean_db_2D,
+                                      amps_interp_at_pos_db_2D,
                                       vmin=db_limits[0, k],
                                       vmax=db_limits[1, k],
                                       cmap='plasma')
@@ -229,8 +240,8 @@ class make_plots:
                     x,
                     y,
                     z,
-                    facecolors=plt.cm.viridis(amps_interp_mean_db_2D /
-                                              amps_interp_mean_db_2D.max()),
+                    facecolors=plt.cm.viridis(amps_interp_at_pos_db_2D /
+                                              amps_interp_at_pos_db_2D.max()),
                     rstride=1,
                     cstride=1,
                     linewidth=0,
@@ -491,8 +502,12 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig,
     plot_obj = make_plots(room_data, config_dict, model)
 
     if isinstance(model, Directional_Beamforming_Weights_from_MLP):
+        # at the aperture between the first and second rooms
+        pos_to_investigate = [4.0, 4.0, 1.5]
         true_db_limits = plot_obj.plot_beamformer_output(
-            room_data.amplitudes, filename='true_directional_amplitudes.png')
+            room_data.amplitudes,
+            pos_to_investigate=pos_to_investigate,
+            filename='true_directional_amplitudes.png')
 
     # at least one mic in each room
     assert config_dict.num_grid_spacing * room_data.grid_spacing_m <= np.min(
@@ -586,6 +601,7 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig,
         if isinstance(model, Directional_Beamforming_Weights_from_MLP):
             _ = plot_obj.plot_beamformer_output(
                 est_amps,
+                pos_to_investigate=pos_to_investigate,
                 filename='learned_directional_amplitudes ' +
                 f'grid_resolution_m={np.round(grid_resolution_m[k], 3)}.png',
                 db_limits=true_db_limits)
