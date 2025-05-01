@@ -597,6 +597,7 @@ def plot_edc_error_in_space(
     pos_sorted: bool = False,
     norm_edc: bool = False,
     use_amp_preserving_filterbank: bool = True,
+    title: Optional[str] = None,
 ):
     """
     Plot the EDC matching error in dB as a function of spatial location
@@ -719,6 +720,7 @@ def plot_edc_error_in_space(
             var_to_plot,
             scatter_plot=scatter,
             cur_freq_hz=freq_to_plot,
+            title=title,
             save_path=Path(f'{save_name}_edc_error_in_space.png').resolve()
             if save_path is not None else None)
 
@@ -730,6 +732,7 @@ def plot_edr_error_in_space(
     scatter: bool = False,
     save_path: Optional[str] = None,
     pos_sorted: bool = False,
+    title: Optional[str] = None,
 ):
     """
     Plot the EDR matching error in dB as a function of spatial location
@@ -833,6 +836,7 @@ def plot_edr_error_in_space(
             var_to_plot[..., np.newaxis],
             scatter_plot=scatter,
             cur_freq_hz=None,
+            title=title,
             save_path=Path(f'{save_name}_edr_error_in_space.png').resolve()
             if save_path is not None else None)
 
