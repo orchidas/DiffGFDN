@@ -1,8 +1,7 @@
-# Differentiable Grouped Feedback Delay Networks
+# Differentiable Grouped Feedback Delay Networks for late reverberation modelling in complex spaces
 
 We proposed the Grouped Feedback Delay Network [1-3] to model multi-slope decay in late reverberation, which is commonly observed in coupled rooms and rooms with non-uniform absorption.
-While the network is highly parameterised, it is still tricky to model a measured space by tuning its parameters. In this work, we automatically learn the parameters of the GFDN to model
-a measured coupled space. The network has source and receiver filters at its input and output which are functions of the source and listener positions. The source-listener filter parameters are learned using a Multi-Layer Perceptron which takes Fourier encoded spatial coordinates as input. The coupled feedback matrix, and input-output gains, on the other hand, determine the echo density profile and colouration of the network, and are position-independent. These are also learnt during training.
+While the network is highly parameterised, it is still tricky to model a measured space by tuning its parameters. In this work, we automatically learn the parameters of the GFDN to model multi-slope reverberation in a measured complex space. The network has learnable source and receiver filters at its input and output which are functions of the source and listener positions. The source-listener filter parameters are learned using a Multi-Layer Perceptron which takes Fourier encoded spatial coordinates as input. The coupled feedback matrix, and input-output gains, on the other hand, determine the echo density profile and colouration of the network, and are position-independent. These are also learnt during training.
 
 A dataset of RIRs measured in a coupled space, along with the corresponding source and receiver positions, can be used to train the Differentiable GFDN. Now, if we want to extrapolate the RIR at a new (unmeasured) position, we can do that with the
 GFDN. More powerfully, we can parameterise the late reverberation in the entire space with this very efficient network which is ideal for real-time rendering. This not only
@@ -37,7 +36,7 @@ To use an open-source dataset:
 
 Several different model configurations can be trained (see [config.py](.src/diff_gfdn/config/config.py)). There are options for:
 - Training the output filters for a single position (with stochastic gradient descent), or for a grid of positions (with deep learning).
-- Switching between output filters and gains
+- Switching between source-receiver filters and gains
 - Switching between absorption filters and gains
 - Switching between different structures of feedback matrices
 
@@ -48,7 +47,7 @@ Several different model configurations can be trained (see [config.py](.src/diff
 <img src="./notes/diffGFDN_colorless_FDN.png" alt="Differentiable GFDN architecture" width="500">
 </div>
 
-- The network is trained with the frequency-sampling method to make it differentiable.
+- The network is trained with the frequency-sampling method to make it differentiable. In this method, the transfer function of the GFDN is calculated at densely spaced points on the unit circle.
 - The delay line lengths, $\mathbf{m}_i$, are co-prime and fixed, and the absorption gains/filters, $\mathbf{\gamma}_i(z)$, are derived from the common decay times of the RIRs [4].
 - We use an MLP to train the source and receiver filters, $\mathbf{g}_i(z), \mathbf{g}_o(z)$, of the DiffGFDN. The inputs into the MLP are $(x,y,z)$ spatial coordinates encoded with Fourier transformations.
 - The outputs of the MLPs are:
@@ -70,7 +69,7 @@ A(z) &=
 where $\mathbf{M_i} \in \mathbb{R}^{N_\text{del} \times N_\text{del}}$ is the unitary mixing matix for each individual group. The unitary matrices are parameterised as,
 ```math
 \begin{align*}
-\mathbf{M_i} = \exp \left(\mathbf{W}_{i_\text{Tr}} - \mathbf{W}_{i_{\text{Tr}}}^T \right),
+\mathbf{M_i} = \exp \left(\mathbf{W}_{i_\text{Tr}} - \mathbf{W}_{i_\text{Tr}}^T \right),
 \end{align*}
 ``` 
 where $\exp$ denotes the matrix exponential, and $\mathbf{W}_{i_\text{Tr}}$ is the upper triangular part of a real-positive matrix $\mathbf{W_i} \in \mathbb{R}^{N_{del} \times N_{del}}$, which is learned during training.

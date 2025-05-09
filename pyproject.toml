@@ -46,6 +46,8 @@ dependencies = [
     "kaleido",
     "pyfar",
     "pandas",
+    "spaudiopy",
+    "sofar",
 ]
 
 [project.scripts]

@@ -52,7 +52,7 @@ def save_subband_rirs(rirs: NDArray, sample_rate: float, common_t60: NDArray,
         }
         # Specify the output pickle file path
         pickle_file_path = Path(
-            f"resources/Georg_3room_FDTD/srirs_band_centre={centre_freqs[band]:.0f}Hz_energy_preserve.pkl"
+            f"resources/Georg_3room_FDTD/srirs_band_centre={centre_freqs[band]:.0f}Hz.pkl"
         ).resolve()
 
         # Write the data to a pickle file
@@ -70,15 +70,17 @@ def calculate_cs_params_custom(
         f_bands: List,
         fs: int,
         batch_size: int = 50,
+        downsample_factor: int = 1,
         use_amp_preserving_filterbank: bool = True) -> Tuple[NDArray, NDArray]:
     """
     Calculate custom CS parameters from the common decay times
     Args:
-        srirs (NDArray): rir matrix of size n_rirs x ir_len
+        srirs (NDArray): rir matrix of size n_rirs x ir_len x n_bands / n_rirs x ir_len
         t_vals (NDArray): common decay times of size n_bands x 1 x n_slopes
         f_bands (List): list of frequencies for filtering
         fs (int): sampling frequency
         batch_size: running estimation for all RIRs at once is difficult, so split in batches
+        downsample_factor (int): by how much to downsample the EDC when calculating amplitudes with LS
     Returns:
         Tuple[NDArray, NDArray]: Amplitudes of shape n_bands x n_slopes x n_rirs
                                  Noise of shape n_bands x 1 x n_rirs
@@ -104,20 +106,27 @@ def calculate_cs_params_custom(
         assert t_vals_exp.shape[0] == num_rirs_per_batch and t_vals_exp.shape[
             -1] == len(f_bands)
 
+        if srirs.ndim == 2:
+            # of shape n_rirs x ir_len x n_bands - filter if RIRs arent already in subbands
+            cur_srirs_filtered = octave_filtering(
+                cur_srirs,
+                fs,
+                f_bands,
+                use_amp_preserving_filterbank=use_amp_preserving_filterbank)
+            logger.info("Done with octave filtering for LS estimation")
+        else:
+            cur_srirs_filtered = cur_srirs
+
         # of shape n_rirs x ir_len x n_bands
-        cur_srirs_filtered = octave_filtering(
-            cur_srirs,
-            fs,
-            f_bands,
-            use_amp_preserving_filterbank=use_amp_preserving_filterbank)
-        logger.info("Done with octave filtering for LS estimation")
 
         # calculate amplitudes and noise floor - this is of shape nrirs x n_slopes+1 x n_bands
-        est_amps = calculate_amplitudes_least_squares(t_vals_exp,
-                                                      fs,
-                                                      cur_srirs_filtered,
-                                                      f_bands,
-                                                      leave_out_ms=1000)
+        est_amps = calculate_amplitudes_least_squares(
+            t_vals_exp,
+            fs,
+            cur_srirs_filtered,
+            f_bands,
+            leave_out_ms=1000,
+            downsample_factor=downsample_factor)
         a_vals[..., batch_idx] = est_amps[:, 1:, :].transpose(-1, 1, 0)
         n_vals[..., batch_idx] = np.expand_dims(est_amps[:, 0, :],
                                                 axis=1).transpose(-1, 1, 0)
@@ -139,7 +148,7 @@ def main():
         source_position = srir_mat['srcPos'][:]
         receiver_position = srir_mat['rcvPos'][:]
         # these are second order ambisonic signals
-        # I am guessing the first channel contains the W component
+        # the first channel contains the W component
         srirs = srir_mat['srirs'][0, ...][:]
 
     # load the common slopes from the other mat files
@@ -147,7 +156,7 @@ def main():
         "resources/Georg_3room_FDTD/Common_Slope_Analysis_Results/")
     filename = 'cs_analysis_results_omni'
     freqs = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
-    use_amp_preserving_filterbank = False
+    use_amp_preserving_filterbank = True
 
     common_t60 = []
     amplitudes_norm = []
@@ -178,7 +187,7 @@ def main():
         'fs': sample_rate,
         'srcPos': source_position,
         'rcvPos': receiver_position,
-        'srirs': srirs.T,
+        'srirs': srirs,
         'band_centre_hz': freqs,
         'common_decay_times': np.asarray(common_t60),
         'amplitudes_norm': np.asarray(amplitudes_norm),
@@ -188,8 +197,7 @@ def main():
     }
 
     # Specify output pickle path
-    pickle_file_path = Path(
-        "resources/Georg_3room_FDTD/srirs_energy_preserve.pkl").resolve()
+    pickle_file_path = Path("resources/Georg_3room_FDTD/srirs.pkl").resolve()
 
     # Write the data to a pickle file
     with open(pickle_file_path, 'wb') as pickle_file:
@@ -197,7 +205,7 @@ def main():
 
     logger.info("Saved pickle file")
 
-    save_subband_rirs(srirs.copy().T, sample_rate, np.asarray(common_t60),
+    save_subband_rirs(srirs.copy(), sample_rate, np.asarray(common_t60),
                       np.asarray(amplitudes_norm),
                       np.asarray(noise_floor_norm), amps_ls, noise_ls, freqs,
                       source_position, receiver_position,

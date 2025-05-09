@@ -22,7 +22,7 @@ from diff_gfdn.utils import get_response
 from run_model import dump_config_to_pickle, load_and_validate_config
 
 # flake8: noqa: E231
-# pylint: disable=W0621, W0632, E0402
+# pylint: disable=W0621, W0632, E0402, C0301
 
 
 def sum_arrays(group):
@@ -37,6 +37,7 @@ def create_config(
     data_path: str,
     freq_range: List,
     config_path: str,
+    train_valid_split: float,
     write_config: bool = True,
     seed_base: int = 23463,
 ) -> DiffGFDNConfig:
@@ -71,7 +72,7 @@ def create_config(
             'max_epochs': 15,
             'batch_size': 32,
             'save_true_irs': True,
-            'train_valid_split': 0.8,
+            'train_valid_split': train_valid_split,
             'num_freq_bins': 131072,
             'use_edc_mask': True,
             'edc_loss_weight': 10,
@@ -79,9 +80,9 @@ def create_config(
             'use_colorless_loss': True,
             'use_asym_spectral_loss': True,
             'train_dir':
-            f'output/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays/',
+            f'output/train_split_test/{train_valid_split:.1f}/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays/',
             'ir_dir':
-            f'audio/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays',
+            f'audio/train_split_test/{train_valid_split:.1f}/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
@@ -89,13 +90,6 @@ def create_config(
                 'use_amp_preserving_filterbank': True,
             },
         },
-        # 'colorless_fdn_config': {
-        #     'use_colorless_prototype': True,
-        #     'batch_size': 4000,
-        #     'max_epochs': 15,
-        #     'lr': 0.01,
-        #     'alpha': 1,
-        # },
         'feedback_loop_config': {
             'coupling_matrix_type': 'scalar_matrix',
         },
@@ -111,7 +105,7 @@ def create_config(
     if write_config:
         logger.info("Writing to config file")
         cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz'\
-        + '_colorless_loss_diff_delays.yml'
+        + '_colorless_loss_diff_delays_more_delay_lines.yml'
         with open(cur_config_path, "w", encoding="utf-8") as file:
             yaml.safe_dump(config_dict, file, default_flow_style=False)
 
@@ -324,11 +318,13 @@ def inferencing(
     logger.info("Done...")
 
 
-def main(freqs_list_train: Optional[List] = None):
+def main(freqs_list_train: Optional[List] = None,
+         split_ratio: Optional[float] = None):
     """
     Main function to run the training and inferencing
     Args:
         freqs_list_train (List): list of frequencies to train on
+        split_ratio (float): training and validation set split ratios
     """
 
     # generate config file
@@ -348,7 +344,10 @@ def main(freqs_list_train: Optional[List] = None):
                 cur_data_path,
                 freq_range=[freqs_list[0], freqs_list[-1]],
                 config_path=config_path,
-                write_config=not training_complete)
+                train_valid_split=split_ratio
+                if split_ratio is not None else 0.8,
+                write_config=not training_complete,
+            )
             config_dicts.append(config_dict)
         logger.info("Done creating config files")
 
@@ -359,18 +358,31 @@ def main(freqs_list_train: Optional[List] = None):
     if training_complete:
         config_dicts = []
         for k in range(len(freqs_list)):
-            cur_config_path = f'{config_path}/treble_data_grid_training_{freqs_list[k]}Hz'\
-            + '_colorless_loss.yml'
-            cur_config_dict = load_and_validate_config(cur_config_path,
-                                                       DiffGFDNConfig)
+            # if no explicit split ratio is provided, read the saved config file
+            if split_ratio is None:
+                cur_config_path = f'{config_path}/treble_data_grid_training_{freqs_list[k]}Hz'\
+                + '_colorless_loss.yml'
+                cur_config_dict = load_and_validate_config(
+                    cur_config_path, DiffGFDNConfig)
+            else:
+                cur_data_path = f'{data_path}/srirs_band_centre={int(freqs_list[k])}Hz.pkl'
+
+                cur_config_dict = create_config(
+                    freqs_list[k],
+                    data_path=cur_data_path,
+                    freq_range=[freqs_list[0], freqs_list[-1]],
+                    config_path=config_path,
+                    train_valid_split=split_ratio,
+                    write_config=False,
+                )
             config_dicts.append(cur_config_dict)
 
         logger.info("Done reading config files")
         save_filename = Path(
-            'output/treble_data_grid_training_final_rirs_colorless_loss_diff_delays.pkl'
+            f'output/treble_data_grid_training_final_rirs_colorless_loss_diff_delays_split={split_ratio:.1f}.pkl'
         ).resolve()
         output_path = Path(
-            "audio/grid_rir_treble_subband_processing_colorless_loss_diff_delays"
+            f"audio/grid_rir_treble_subband_processing_colorless_loss_diff_delays_split={split_ratio:.1f}"
         )
 
         inferencing(freqs_list, config_dicts, save_filename, output_path)
@@ -383,6 +395,10 @@ if __name__ == '__main__':
         nargs="+",  # Accepts multiple values
         type=float,  # Convert to float
         help="List of frequencies for training")
+    parser.add_argument("--split",
+                        type=float,
+                        default=0.8,
+                        help="Training and validation set split ratio")
 
     args = parser.parse_args()
-    main(args.freqs)
+    main(args.freqs, args.split)
