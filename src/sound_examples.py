@@ -112,17 +112,19 @@ class dynamic_rendering_moving_receiver:
 
     def filter_overlap_add(self,
                            use_whole_rir: bool = False,
-                           alpha: float = 0.5) -> NDArray:
+                           alpha: float = 0.5,
+                           fade_len_ms: float = 50.0) -> NDArray:
         """Filter and cross-fade the stimulus with the RIRs associated with the moving listener."""
         output_signal = np.zeros_like(self.extended_stimulus)
-        fade_len_ms = self.update_ms
         fade_len = ms_to_samps(fade_len_ms, self.sample_rate)
-        fade_out = self.get_fade_windows(fade_len,
-                                         fade_out=True,
-                                         uncorr_fade=True)
-        fade_in = self.get_fade_windows(fade_len,
-                                        fade_out=False,
-                                        uncorr_fade=True)
+        fade_out = self.get_fade_windows(
+            fade_len,
+            fade_out=True,
+        )
+        fade_in = self.get_fade_windows(
+            fade_len,
+            fade_out=False,
+        )
         prev_tail = np.zeros(fade_len)
 
         for k in range(self.num_pos):

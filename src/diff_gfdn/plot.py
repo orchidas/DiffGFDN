@@ -25,6 +25,16 @@ from .utils import db, db2lin, ms_to_samps, spectral_flatness
 
 # flake8: noqa:E231
 
+scale = 2
+plt.rcParams.update({
+    'font.size': scale * 8,  # base font size
+    'axes.labelsize': scale * 9,  # x/y label
+    'xtick.labelsize': scale * 8,
+    'ytick.labelsize': scale * 8,
+    'legend.fontsize': scale * 8,
+    'axes.titlesize': scale * 8,  # usually unused in journal figures
+})
+
 
 def plot_t60_filter_response(
         freqs: List,
@@ -141,6 +151,7 @@ def plot_magnitude_response(
             f'Final FDN spectral flatness is {spectral_flatness(db(H_sub_fdn_final[:, i].detach().numpy())):.3f}'
         )
 
+    fig.subplots_adjust(hspace=0.5)
     if save_path is not None:
         fig.savefig(save_path)
 
@@ -434,7 +445,7 @@ def plot_subband_edc(h_true: ArrayLike,
     num_bands = len(band_centre_hz)
     time = np.linspace(0, (len(trunc_true_ir) - 1) / fs, len(trunc_true_ir))
     fig, ax = plt.subplots(num_bands, 1, figsize=(6, 12))
-    fig.subplots_adjust(hspace=0.7)
+    fig.subplots_adjust(hspace=0.9)
     leg = []
 
     num_epochs = len(h_approx)
@@ -475,6 +486,8 @@ def plot_subband_edc(h_true: ArrayLike,
         display.clear_output(
             wait=True)  # Clear the previous output to keep updates in place
         plt.pause(0.1)
+    ax[k].set_xlabel('Time(s)')
+    fig.supylabel('Magnitude (dB)')
 
     # Collect handles and labels from all axes
     handles, labels = [], []
@@ -487,7 +500,7 @@ def plot_subband_edc(h_true: ArrayLike,
                loc="upper right",
                ncol=1,
                frameon=False,
-               bbox_to_anchor=(1.2, 0.5))
+               bbox_to_anchor=(1.25, 0.5))
     fig.suptitle(
         'Truncated EDF at position ' +
         f'{pos_to_investigate[0]: .2f}, {pos_to_investigate[1]: .2f}, {pos_to_investigate[2]: .2f} m'

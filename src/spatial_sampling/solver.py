@@ -398,8 +398,7 @@ class make_plots:
                     f'{self.config_dict.train_dir}/edc_error_in_space_' +
                     f'grid_resolution_m={np.round(grid_resolution_m, 3)}.png').
                 resolve(),
-                title=
-                f'Training grid resolution={np.round(grid_resolution_m, 3)}m')
+                title=f'Grid resolution={np.round(grid_resolution_m, 3)}m')
         else:
             original_edc = db(torch.einsum('bjk, kt -> bjt', self.true_amps,
                                            self.envelopes),
@@ -426,8 +425,6 @@ class make_plots:
                         f'grid_resolution_m={np.round(grid_resolution_m, 3)}.png'
                     ).resolve(),
                     title=
-                    f'Training grid resolution={np.round(grid_resolution_m, 3)}m, '
-                    +
                     f'az = {np.degrees(self.room_data.sph_directions[0, j]):.2f} deg,'
                     +
                     f' pol = {np.degrees(self.room_data.sph_directions[1, j]):.2f} deg'
