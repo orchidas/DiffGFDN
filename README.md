@@ -1,7 +1,7 @@
-# Differentiable Grouped Feedback Delay Networks for late reverberation modelling in complex spaces
+# Differentiable Grouped Feedback Delay Networks for late reverberation modelling in coupled spaces
 
 We proposed the Grouped Feedback Delay Network [1-3] to model multi-slope decay in late reverberation, which is commonly observed in coupled rooms and rooms with non-uniform absorption.
-While the network is highly parameterised, it is still tricky to model a measured space by tuning its parameters. In this work, we automatically learn the parameters of the GFDN to model multi-slope reverberation in a measured complex space. The network has learnable source and receiver filters at its input and output which are functions of the source and listener positions. The source-listener filter parameters are learned using a Multi-Layer Perceptron which takes Fourier encoded spatial coordinates as input. The coupled feedback matrix, and input-output gains, on the other hand, determine the echo density profile and colouration of the network, and are position-independent. These are also learnt during training.
+While the network is highly parameterised, it is still tricky to model a measured space by tuning its parameters. In this work, we automatically learn the parameters of the GFDN to model multi-slope reverberation in a measured complex space. The network has learnable source and receiver filters at its input and output, which are functions of the source and listener positions. The source-listener filter parameters are learned using a Multi-Layer Perceptron which takes Fourier encoded spatial coordinates as input. The coupled feedback matrix, and input-output gains, on the other hand, determine the echo density profile and colouration of the network, and are position-independent. These are also learnt during training.
 
 A dataset of RIRs measured in a coupled space, along with the corresponding source and receiver positions, can be used to train the Differentiable GFDN. Now, if we want to extrapolate the RIR at a new (unmeasured) position, we can do that with the
 GFDN. More powerfully, we can parameterise the late reverberation in the entire space with this very efficient network which is ideal for real-time rendering. This not only
@@ -35,12 +35,17 @@ To use an open-source dataset:
 - To run training with one DiffGFDN for each subband, filter the dataset into octave bands (see `src/convert_mat_to_pkl`), create config files for each band, and run the training for each config file. Alternately, see `python3 src/run_subband_training_treble.py`
 
 Several different model configurations can be trained (see [config.py](.src/diff_gfdn/config/config.py)). There are options for:
-- Training the output filters for a single position (with stochastic gradient descent), or for a grid of positions (with deep learning).
+- Training the output filters for a single position (with stochastic gradient descent), or for a grid of positions (with MLPs).
 - Switching between source-receiver filters and gains
 - Switching between absorption filters and gains
 - Switching between different structures of feedback matrices
 
+## Publications
 
+- <i>Differentiable Grouped Feedback Delay Networks: Learning from measured Room Impulse Responses for spatially dynamic late reverberation rendering</i> - Das et al., submitted to IEEE Transactions on Audio, Speech and Language Processing, IEEE TASLP, 2025.
+
+
+<!--
 ## Model architecture
 
 <div align="center">
@@ -110,3 +115,22 @@ To ensure that the GFDN is colourless, and has sufficient echo density, we also 
 \mathcal{L}_{\text{sparsity}} &= \sum_{i=1}^{N_{group}} \frac{N_{del} \sqrt{N_{del}} - \sum_{m,n}|\mathbf{M}_i(m,n)|}{N_{del}\sqrt{N_{del}} - 1}
 \end{align*}
 ```
+-->
+
+# Directional late reverb modelling in coupled spaces
+
+As part of this work, we also investigated the modelling of position-dependent directional late reverberation. We assume we have a set of <b> Spatial Room Impulse Responses (SRIRs) </b> (encoded in $N_\text{sp}$ order ambisonics) measured at several locations in the space for a fixed source-position. We want to use these to generalise the late reverb tail of the SRIRs at any point in the room. To do this, we train MLPs in octave bands to learn the common slope amplitudes in the spherical harmonic (SH) domain as a function of position. The loss function used is a directional energy decay loss. Once trained, the MLPs can predict the common slope SH amplitudes at any new position in space, and shaped white noise with direction-dependent common slope parameters can predict the directional late reverberation tail at that location. As the user navigates the space, the MLPs update the CS amplitudes and time-varying convolution is performedwith the synthesised late reverberation tail. Since the predicted late-reverb tail is an ambisonics signal, it is trivial to rotate it according to the user's head-orientation, thus enabling 6DoF rendering for AR applications.
+
+The scripts for training this model are in the [src/spatial_sampling](src/spatial_sampling/) folder. To run training on the three coupled room dataset which has $2$nd order ambisonic SRIRs, you can run the script [src/run_spatial_sampling_test.py](src/run_spatial_sampling_test.py)
+
+
+## Publications
+
+- <i>Neural-network based interpolation of late reverberation in coupled spaces using the common slopes model</i> - Das et al., submitted to IEEE Workshop on Application of Signal Processing to Audio and Acoustics, IEEE WASPAA 2025.
+
+## Future work
+
+The DiffGFDN is an omni-directional renderer, whereas for directional rendering, we have proposed a convolution-based renderer, which is much more inefficient. Since we have demonstrated that simple neural networks like MLPs are capable of learning directional late reverberation properties, we wish to work on a directional DiffGFDN in the ambisonics domain for efficient 6DoF late reverb modelling.
+
+
+
