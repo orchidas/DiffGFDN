@@ -277,7 +277,7 @@ class SRIRSOFAWriter:
     https://www.sofaconventions.org/mediawiki/index.php/MultiSpeakerBRIR
 
     Args:
-        num_receivers (int): Number of receivers (microphones) distributed across the room.
+        num_receivers (int): Number microphones (measurements) distributed across the room.
         ambi_order(int): Ambisonics order
         ir_length (int): The length in samples of the IRs
         samplerate (int): The sample rate of the data, defaults to 48000
@@ -294,8 +294,8 @@ class SRIRSOFAWriter:
         self.conv = "SingleRoomSRIR"
         num_channels = (ambi_order + 1)**2
         self.dims = {
-            "R": num_receivers,
-            "M": num_channels,
+            "R": num_channels,
+            "M": num_receivers,
             "N": ir_length,
             "C": 3,  # coordinate dimension (xyz or aed)
             "I": 1,  # for singleton dimensions
@@ -336,44 +336,44 @@ class SRIRSOFAWriter:
                                             dtype=np.float64)
 
     def set_receiver_positions(self,
-                               receiver_positions: NDArray,
+                               receiver_position: ArrayLike,
                                coord_sys: str = 'cartesian'):
         """Set receiver positions"""
-        assert receiver_positions.shape == (
-            self.dims["R"],
-            self.dims["C"]), "Receiver positions should be of size R, 3"
+        if receiver_position.ndim > 1:
+            assert receiver_position.shape[-1] == self.dims["C"]
+        else:
+            assert len(receiver_position) == self.dims["C"]
+
+        # shape should be (1, 3)
         if coord_sys != 'cartesian':
-            receiver_positions = sph2cart(receiver_positions[:, 0],
-                                          receiver_positions[:, 1],
-                                          receiver_positions[:, 2])
-        # shape is RCI
-        self.sofa.ReceiverPosition = receiver_positions[..., None].astype(
-            np.float32)
+            receiver_position = sph2cart(receiver_position[:, 0],
+                                         receiver_position[:, 1],
+                                         receiver_position[:, 2])
+        else:
+            receiver_position = receiver_position.reshape(1, self.dims["C"])
+
+        # should be of shape (R, C)
+        self.sofa.ReceiverPosition = np.tile(
+            receiver_position, (self.dims["R"], 1)).astype(np.float32)
 
         # Set units
         self.sofa.ReceiverPosition_Type = 'cartesian'
         self.sofa.ReceiverPosition_Units = 'meter'
 
-    def set_source_position(self,
-                            source_position: ArrayLike,
-                            coord_sys: str = 'cartesian'):
-        """Set source position"""
-        if source_position.ndim > 1:
-            assert source_position.shape[-1] == self.dims["C"]
-        else:
-            assert len(source_position) == self.dims["C"]
-
-        # shape should be (1, 3)
+    def set_source_positions(self,
+                             source_positions: NDArray,
+                             coord_sys: str = 'cartesian'):
+        """Set source positions"""
+        assert source_positions.shape == (
+            self.dims["M"],
+            self.dims["C"]), "Source positions should be of size M, 3"
         if coord_sys != 'cartesian':
-            source_position = sph2cart(source_position[:, 0],
-                                       source_position[:, 1],
-                                       source_position[:, 2])
-        else:
-            source_position = source_position.reshape(1, self.dims["C"])
+            source_positions = sph2cart(source_positions[:, 0],
+                                        source_positions[:, 1],
+                                        source_positions[:, 2])
 
         # should be of shape (M, C)
-        self.sofa.SourcePosition = np.tile(
-            source_position, (self.dims["M"], 1)).astype(np.float32)
+        self.sofa.SourcePosition = source_positions.astype(np.float32)
 
         self.sofa.SourcePosition_Type = 'cartesian'
         self.sofa.SourcePosition_Units = 'meter'

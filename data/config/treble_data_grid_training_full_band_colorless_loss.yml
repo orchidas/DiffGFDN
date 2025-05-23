@@ -1,6 +1,7 @@
 room_dataset_path: 'resources/Georg_3room_FDTD/srirs.pkl'
 sample_rate: 32000.0
 num_delay_lines: 12
+seed: 235265
 decay_filter_config:
   use_absorption_filters: True
 trainer_config:

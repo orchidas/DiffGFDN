@@ -82,7 +82,7 @@ def create_config(
             'train_dir':
             f'output/train_split_test/{train_valid_split:.1f}/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays/',
             'ir_dir':
-            f'audio/train_split_test/{train_valid_split:.1f}/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays',
+            f'audio/train_split_test/{train_valid_split:.1f}/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
@@ -105,7 +105,7 @@ def create_config(
     if write_config:
         logger.info("Writing to config file")
         cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz'\
-        + '_colorless_loss_diff_delays_more_delay_lines.yml'
+        + '_colorless_loss_diff_delays.yml'
         with open(cur_config_path, "w", encoding="utf-8") as file:
             yaml.safe_dump(config_dict, file, default_flow_style=False)
 

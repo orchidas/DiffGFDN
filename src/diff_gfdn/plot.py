@@ -681,61 +681,70 @@ def plot_edc_error_in_space(
             original_rirs[src_idx, ...]) if len(src_pos) > 1 else original_rirs
 
         rir_len_samps = min(cur_original_rirs.shape[-1],
-                            cur_est_rirs.shape[-1])
+                            cur_est_rirs.shape[-1],
+                            int(2 * room_data.sample_rate))
 
         cur_est_rirs = cur_est_rirs[..., :rir_len_samps]
         cur_original_rirs = cur_original_rirs[..., :rir_len_samps]
 
         # do subband filtering
         if is_in_subbands and freq_to_plot is not None:
+            logger.info("Filtering original RIRs")
             cur_original_rirs_filtered = octave_filtering(
                 cur_original_rirs,
                 room_data.sample_rate,
                 room_data.band_centre_hz,
-                compensate_filter_energy=True,
                 use_amp_preserving_filterbank=use_amp_preserving_filterbank)
+            logger.info("Filtering estimated RIRs")
             cur_est_rirs_filtered = octave_filtering(
                 cur_est_rirs,
                 room_data.sample_rate,
                 room_data.band_centre_hz,
-                compensate_filter_energy=True,
                 use_amp_preserving_filterbank=use_amp_preserving_filterbank)
-            save_name = f'{save_path}_{freq_to_plot / 1000: .0f}kHz\
-            _src=({cur_src_pos[0]:.2f}, {cur_src_pos[1]:.2f}, {cur_src_pos[2]:.2f})'
-
         else:
             cur_original_rirs_filtered = cur_original_rirs[..., np.newaxis]
             cur_est_rirs_filtered = cur_est_rirs[..., np.newaxis]
 
-            save_name = f'{save_path}_src=({cur_src_pos[0]:.2f}, {cur_src_pos[1]:.2f}, {cur_src_pos[2]:.2f})'
-
+        save_name = f'{save_path}_src=({cur_src_pos[0]:.2f}, {cur_src_pos[1]:.2f}, {cur_src_pos[2]:.2f})'
         est_rec_pos = np.asarray(all_pos)
+
         # get error metrics
         error_func, error_mse = get_edc_error(
             cur_original_rirs_filtered.copy(), rec_points,
             cur_est_rirs_filtered.copy(), est_rec_pos, norm_edc)
+
         if is_in_subbands and freq_to_plot is not None:
-            idx = np.argwhere(
-                np.array(room_data.band_centre_hz) == freq_to_plot)[0][0]
+            logger.info("Plotting EDCs...")
             for k in range(len(room_data.band_centre_hz)):
                 logger.info(
                     f'The RMSE in matching EDC at frequency {room_data.band_centre_hz[k]: .0f}Hz'
                     f' is {error_mse[k]: .3f} dB')
-                var_to_plot = db2lin(error_func[..., idx])
+                var_to_plot = db2lin(error_func[..., k])
+                # plot the error in amplitude matching
+                room.plot_edc_error_at_receiver_points(
+                    rec_points,
+                    cur_src_pos,
+                    var_to_plot,
+                    scatter_plot=scatter,
+                    cur_freq_hz=None,
+                    title=title,
+                    save_path=Path(
+                        f'{save_name}_{room_data.band_centre_hz[k]}Hz_edc_error_in_space.png'
+                    ).resolve() if save_path is not None else None)
         else:
             logger.info(f'The RMSE in matching EDC is {error_mse} dB')
             var_to_plot = db2lin(error_func)
 
-        # plot the error in amplitude matching
-        room.plot_edc_error_at_receiver_points(
-            rec_points,
-            cur_src_pos,
-            var_to_plot,
-            scatter_plot=scatter,
-            cur_freq_hz=freq_to_plot,
-            title=title,
-            save_path=Path(f'{save_name}_edc_error_in_space.png').resolve()
-            if save_path is not None else None)
+            # plot the error in amplitude matching
+            room.plot_edc_error_at_receiver_points(
+                rec_points,
+                cur_src_pos,
+                var_to_plot,
+                scatter_plot=scatter,
+                cur_freq_hz=freq_to_plot,
+                title=title,
+                save_path=Path(f'{save_name}_edc_error_in_space.png').resolve(
+                ) if save_path is not None else None)
 
 
 def plot_edr_error_in_space(
