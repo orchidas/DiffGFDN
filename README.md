@@ -10,12 +10,12 @@ To do this, we leverage the <b>Common Slopes (CS)</b> model which hypotehises th
 
 ### Dataset
 
-We use the same three-coupled room dataset which has 2nd order ambisonic SRIRs. To parse the dataset and save the SRIRs and CS parameters in octave bands, run `python3 src/convert_mat_to_pkl_ambi.py`
+We have been using the dataset published [here](https://zenodo.org/records/13338346) which has three coupled rooms simulated with Treble and has 2nd order ambisonic SRIRs at 838 receiver locations for a single source location. This has been saved in the path `resources/Georg_3Room_FDTD/`. To parse the dataset and save the SRIRs and CS parameters in octave bands, run `python3 src/convert_mat_to_pkl_ambi.py`
 
 ### Training
 
 The scripts for training this model are in the [src/spatial_sampling](src/spatial_sampling/) folder. 
-- To run training on the three coupled room dataset, you can run the script [src/run_spatial_sampling_test.py](src/run_spatial_sampling_test.py). The training is done for a particular frequency band, an example of a config file is available at [data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml](data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml). TLDR; to run training, do `python3 src/run_spatial_sampling_test -c <config_path>`
+- To run training on the three coupled room dataset, you can run the script [src/run_spatial_sampling_test.py](src/run_spatial_sampling_test.py). The training is done for a particular frequency band, an example of a config file is available at [data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml](data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml). TLDR; to run training, run `python3 src/run_spatial_sampling_test -c <config_path>`
 - Once trained, you can run the inference with `python3 src/run_spatial_sampling_test -c <config_path> --infer` which will plot the results.
 - To generate synthetic SRIR tails once all octave bands have been trained, you can use functions in the script [src/spatial_sampling/inference.py](src/spatial_sampling/inference.py).
 
@@ -23,15 +23,15 @@ The scripts for training this model are in the [src/spatial_sampling](src/spatia
 ## Differentiable Grouped Feedback Delay Networks for data-driven late reverberation rendering in coupled spaces
 
 We proposed the [Grouped Feedback Delay Network](https://github.com/orchidas/GFDN) to model multi-slope late reverberation, which is commonly observed in coupled rooms and rooms with non-uniform absorption.
-While the network is highly parameterised, it is still tricky to model a measured space by tuning its parameters. In this work, we automatically learn the parameters of the GFDN to model multi-slope reverberation in a complex space from a set of measured Room Impulse Responses. The network has learnable source and receiver filters at its input and output, which are functions of the source and listener positions. The source-listener filter parameters are learned using a Multi-Layer Perceptron which takes Fourier encoded spatial coordinates as input. The coupled feedback matrix, and input-output gains, on the other hand, determine the echo density profile and colouration of the network, and are position-independent. These are also learnable parameters.
+While the network is highly parameterised, it is still tricky to model a measured space by tuning its parameters. In this work, we automatically learn the parameters of the GFDN to model multi-slope reverberation in a complex space from a set of measured Room Impulse Responses. The network has learnable source and receiver filters at its input and output, which are functions of the source and listener positions. The source-listener filter parameters are learned using a Multi-Layer Perceptron which takes Fourier encoded spatial coordinates as input. The coupled feedback matrix, and input-output gains, on the other hand, determine the echo density profile and colouration of the network, and are position-independent. These are also learnable parameters. The delay line lengths are fixed co-prime numbers, and the fixed absorption filters are derived from the common slope model's decay times.
 
 A dataset of RIRs measured in a coupled space, along with the corresponding source and receiver positions, can be used to train the Differentiable GFDN with perceptually motivated loss functions. Now, if we want to extrapolate the RIR at a new (unmeasured) position, we can do that with the
 GFDN. More powerfully, we can parameterise the late reverberation in the entire space with this very efficient network which is ideal for real-time rendering. This not only
 reduces memory requirements of storing measured RIRs, but is also faster than convolution with long reverberation tails.
 
 ### Dataset
-We have been using the dataset published [here](https://zenodo.org/records/13338346) which has three coupled rooms simulated with Treble.
-This has been saved in `resources/Georg_3Room_FDTD/`. The mat files are converted to pickle files (for faster loading) using the script `python3 src/convert_mat_to_pkl.py`
+
+We use omni-directional RIRs from the same three-coupled room dataset. The mat files are converted to pickle files (for faster loading) and filtered in octave bands using the script `python3 src/convert_mat_to_pkl.py`
 
 Additionally, we have tools for generating a synthetic dataset of coupled rooms by shaping noise (see [gdalsanto/slope2noise](https://github.com/gdalsanto/slope2noise/blob/main/config/rir_synthesis_coupled_room.yml)). 
 
