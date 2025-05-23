@@ -1,5 +1,7 @@
 # Data-driven spatially dynamic late reverberation rendering in coupled spaces for Augmented Reality
 
+To setup the repository, follow instructions in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Differentiable Grouped Feedback Delay Networks for late reverberation modelling in coupled spaces
 
 We proposed the Grouped Feedback Delay Network [1-3] to model multi-slope decay in late reverberation, which is commonly observed in coupled rooms and rooms with non-uniform absorption.
@@ -15,7 +17,7 @@ This has been saved in `resources/Georg_3Room_FDTD/`. The mat files are converte
 
 Additionally, we have tools for generating a synthetic dataset of coupled rooms by shaping noise (see [gdalsanto/slope2noise](https://github.com/gdalsanto/slope2noise/blob/main/config/rir_synthesis_coupled_room.yml)). 
 
-To generate your own datasets,
+To generate your own synthetic datasets,
 - Set up the submodules (see [CONTRIBUTING.md](CONTRIBUTING.md)). 
 - Navigate to `submodules/slope2rir` and run `python3 main.py -c <config_path>`. An example of a config file to generate a coupled room dataset is available [here]( submodules/slope2rir/config/rir_synthesis_coupled_room_single_batch.yml).
 
@@ -31,8 +33,6 @@ To use an open-source dataset:
 
 ### Training
 
-- To set up the repo, follow the instructions in [CONTRIBUTING.md](CONTRIBUTING.md). 
-- To run training on a single receiver position, create a config file (example [here](./data/config/single_rir_fit_broadband_two_stage_decay_colorless_prototype.yml)). 
 - To run training of a full-band GFDN a grid of receiver positions, create a different config file (example [here](./data/config/treble_data_grid_training_full_band_colorless_loss.yml)). Then run `python3 src/run_model.py -c <config_file_path>`. 
 - To run training with one DiffGFDN for each subband, filter the dataset into octave bands (see `src/convert_mat_to_pkl`), create config files for each band, and run the training for each config file. Alternately, see `python3 src/run_subband_training_treble.py`
 
@@ -115,13 +115,20 @@ To ensure that the GFDN is colourless, and has sufficient echo density, we also 
 ```
 -->
 
-## Directional late reverb modelling in coupled spaces
+## Convolution-based directional late reverb modelling in coupled spaces
 
 As part of this work, we also investigated the modelling of position-dependent directional late reverberation. We assume we have a set of <b> Spatial Room Impulse Responses (SRIRs) </b> (encoded in $N_\text{sp}$ order ambisonics) measured at several locations in the space for a fixed source-position. We want to use these to generalise the late reverb tail of the SRIRs at any point in the room. 
 
 To do this, we leverage the <b>Common Slopes (CS)</b> model which hypotehises that the energy decay in any coupled space can be modelled as a weighted sum of a handful of decay kernels with unique reverberation times, which are position-invaiant. The weights of the decay kernel are known as the CS amplitudes, and are position and direction-dependent. We train MLPs in octave bands to learn the CS amplitudes in the spherical harmonic (SH) domain as a function of position. The loss function used is a directional energy decay loss. Once trained, the MLPs can predict the CS amplitudes in the SH domain at any new position in space. Shaped white noise with the predicted CS parameters is used to synthesise the directional late reverberation tail. As the user navigates the space, the MLPs update the CS amplitudes and time-varying convolution is performedwith the synthesised late reverberation tail. Since the predicted late-reverb tail is an ambisonics signal, it is trivial to rotate it according to the user's head-orientation, thus enabling 6DoF rendering of late reverberation for AR applications.
 
-The scripts for training this model are in the [src/spatial_sampling](src/spatial_sampling/) folder. To run training on the three coupled room dataset which has $2$nd order ambisonic SRIRs, you can run the script [src/run_spatial_sampling_test.py](src/run_spatial_sampling_test.py)
+
+### Dataset
+
+We use the same three-coupled room dataset which has 2nd order ambisonic SRIRs. To parse the dataset and save the SRIRs and CS parameters in octave bands, run `python3 src/convert_mat_to_pkl_ambi.py`
+
+### Training
+
+The scripts for training this model are in the [src/spatial_sampling](src/spatial_sampling/) folder. To run training on the three coupled room dataset, you can run the script [src/run_spatial_sampling_test.py](src/run_spatial_sampling_test.py). The training is done in frequency band, an example of a config file is available at [data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml](data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml).
 
 
 ## Publications
