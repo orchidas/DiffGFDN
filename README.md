@@ -143,7 +143,7 @@ To ensure that the GFDN is colourless, and has sufficient echo density, we also 
 
 ## Future work
 
-The DiffGFDN is an omni-directional renderer, whereas for directional rendering, we have proposed a convolution-based renderer, which is much more inefficient. Since we have demonstrated that simple neural networks like MLPs are capable of learning directional late reverberation properties, we wish to work on a directional DiffGFDN which operates in the ambisonics domain for efficient 6DoF late reverb modelling.
+The DiffGFDN is an omni-directional renderer, whereas for directional rendering, we have proposed a more inefficient convolution-based renderer. We wish to work on a directional DiffGFDN which will operate in the ambisonics domain for efficient data-driven directional late reverberation rendering for 6DoF movement.
 
 ## Sound examples
 
