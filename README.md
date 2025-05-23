@@ -2,7 +2,25 @@
 
 To setup the repository, follow instructions in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Differentiable Grouped Feedback Delay Networks for late reverberation modelling in coupled spaces
+## Data-driven directional late reverberation modelling in coupled spaces
+
+As part of this work, we investigated the modelling of position-dependent directional late reverberation. We assume we have a set of <b> Spatial Room Impulse Responses (SRIRs) </b> (encoded in $N_\text{sp}$ order ambisonics) measured at several locations in the space for a fixed source-position. We want to use these to generalise the late reverb tail of the SRIRs at any point in the room. 
+
+To do this, we leverage the <b>Common Slopes (CS)</b> model which hypotehises that the energy decay in any coupled space can be modelled as a weighted sum of a handful of decay kernels with unique reverberation times, which are position-invaiant. The weights of the decay kernel are known as the CS amplitudes, and are position and direction-dependent. We train MLPs in octave bands to learn the CS amplitudes in the spherical harmonic (SH) domain as a function of position. The loss function used is a directional energy decay loss. Once trained, the MLPs can predict the CS amplitudes in the SH domain at any new position in space. Shaped white noise with the predicted CS parameters is used to synthesise the directional late reverberation tail. As the user navigates the space, the MLPs update the CS amplitudes and time-varying convolution is performedwith the synthesised late reverberation tail. Since the predicted late-reverb tail is an ambisonics signal, it is trivial to rotate it according to the user's head-orientation, thus enabling 6DoF rendering of late reverberation for AR applications.
+
+### Dataset
+
+We use the same three-coupled room dataset which has 2nd order ambisonic SRIRs. To parse the dataset and save the SRIRs and CS parameters in octave bands, run `python3 src/convert_mat_to_pkl_ambi.py`
+
+### Training
+
+The scripts for training this model are in the [src/spatial_sampling](src/spatial_sampling/) folder. 
+- To run training on the three coupled room dataset, you can run the script [src/run_spatial_sampling_test.py](src/run_spatial_sampling_test.py). The training is done for a particular frequency band, an example of a config file is available at [data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml](data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml). TLDR; to run training, do `python3 src/run_spatial_sampling_test -c <config_path>`
+- Once trained, you can run the inference with `python3 src/run_spatial_sampling_test -c <config_path> --infer` which will plot the results.
+- To generate synthetic SRIR tails once all octave bands have been trained, you can use functions in the script [src/spatial_sampling/inference.py](src/spatial_sampling/inference.py).
+
+
+## Differentiable Grouped Feedback Delay Networks for data-driven late reverberation rendering in coupled spaces
 
 We proposed the [Grouped Feedback Delay Network](https://github.com/orchidas/GFDN) to model multi-slope late reverberation, which is commonly observed in coupled rooms and rooms with non-uniform absorption.
 While the network is highly parameterised, it is still tricky to model a measured space by tuning its parameters. In this work, we automatically learn the parameters of the GFDN to model multi-slope reverberation in a complex space from a set of measured Room Impulse Responses. The network has learnable source and receiver filters at its input and output, which are functions of the source and listener positions. The source-listener filter parameters are learned using a Multi-Layer Perceptron which takes Fourier encoded spatial coordinates as input. The coupled feedback matrix, and input-output gains, on the other hand, determine the echo density profile and colouration of the network, and are position-independent. These are also learnable parameters.
@@ -115,24 +133,6 @@ To ensure that the GFDN is colourless, and has sufficient echo density, we also 
 \end{align*}
 ```
 -->
-
-## Convolution-based directional late reverb modelling in coupled spaces
-
-As part of this work, we also investigated the modelling of position-dependent directional late reverberation. We assume we have a set of <b> Spatial Room Impulse Responses (SRIRs) </b> (encoded in $N_\text{sp}$ order ambisonics) measured at several locations in the space for a fixed source-position. We want to use these to generalise the late reverb tail of the SRIRs at any point in the room. 
-
-To do this, we leverage the <b>Common Slopes (CS)</b> model which hypotehises that the energy decay in any coupled space can be modelled as a weighted sum of a handful of decay kernels with unique reverberation times, which are position-invaiant. The weights of the decay kernel are known as the CS amplitudes, and are position and direction-dependent. We train MLPs in octave bands to learn the CS amplitudes in the spherical harmonic (SH) domain as a function of position. The loss function used is a directional energy decay loss. Once trained, the MLPs can predict the CS amplitudes in the SH domain at any new position in space. Shaped white noise with the predicted CS parameters is used to synthesise the directional late reverberation tail. As the user navigates the space, the MLPs update the CS amplitudes and time-varying convolution is performedwith the synthesised late reverberation tail. Since the predicted late-reverb tail is an ambisonics signal, it is trivial to rotate it according to the user's head-orientation, thus enabling 6DoF rendering of late reverberation for AR applications.
-
-
-### Dataset
-
-We use the same three-coupled room dataset which has 2nd order ambisonic SRIRs. To parse the dataset and save the SRIRs and CS parameters in octave bands, run `python3 src/convert_mat_to_pkl_ambi.py`
-
-### Training
-
-The scripts for training this model are in the [src/spatial_sampling](src/spatial_sampling/) folder. 
-- To run training on the three coupled room dataset, you can run the script [src/run_spatial_sampling_test.py](src/run_spatial_sampling_test.py). The training is done for a particular frequency band, an example of a config file is available at [data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml](data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml). TLDR; to run training, do `python3 src/run_spatial_sampling_test -c <config_path>`
-- Once trained, you can run the inference with `python3 src/run_spatial_sampling_test -c <config_path> --infer` which will plot the results.
-- To generate synthetic SRIR tails once all octave bands have been trained, you can use functions in the script [src/spatial_sampling/inference.py](src/spatial_sampling/inference.py).
 
 
 ## Publications
