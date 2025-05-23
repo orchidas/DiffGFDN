@@ -42,7 +42,7 @@ Several different model configurations can be trained (see [config.py](.src/diff
 
 ## Publications
 
-- <i>Differentiable Grouped Feedback Delay Networks: Learning from measured Room Impulse Responses for spatially dynamic late reverberation rendering</i> - Das et al., submitted to IEEE Transactions on Audio, Speech and Language Processing, IEEE TASLP, 2025.
+- <i>Differentiable Grouped Feedback Delay Networks: Learning from measured Room Impulse Responses for spatially dynamic late reverberation rendering</i> - Das, Dal Santo, Schlecht and Zvetkovic, submitted to IEEE Transactions on Audio, Speech and Language Processing, IEEE TASLP, 2025.
 
 
 <!--
@@ -126,7 +126,7 @@ The scripts for training this model are in the [src/spatial_sampling](src/spatia
 
 ## Publications
 
-- <i>Neural-network based interpolation of late reverberation in coupled spaces using the common slopes model</i> - Das et al., submitted to IEEE Workshop on Application of Signal Processing to Audio and Acoustics, IEEE WASPAA 2025.
+- <i>Neural-network based interpolation of late reverberation in coupled spaces using the common slopes model</i> - Das, Dal Santo, Schlecht and Zvetkovic, submitted to IEEE Workshop on Application of Signal Processing to Audio and Acoustics, IEEE WASPAA 2025.
 
 ## Future work
 
