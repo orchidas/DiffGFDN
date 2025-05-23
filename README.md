@@ -4,10 +4,10 @@ To setup the repository, follow instructions in [CONTRIBUTING.md](CONTRIBUTING.m
 
 ## Differentiable Grouped Feedback Delay Networks for late reverberation modelling in coupled spaces
 
-We proposed the Grouped Feedback Delay Network [1-3] to model multi-slope decay in late reverberation, which is commonly observed in coupled rooms and rooms with non-uniform absorption.
-While the network is highly parameterised, it is still tricky to model a measured space by tuning its parameters. In this work, we automatically learn the parameters of the GFDN to model multi-slope reverberation in a measured complex space. The network has learnable source and receiver filters at its input and output, which are functions of the source and listener positions. The source-listener filter parameters are learned using a Multi-Layer Perceptron which takes Fourier encoded spatial coordinates as input. The coupled feedback matrix, and input-output gains, on the other hand, determine the echo density profile and colouration of the network, and are position-independent. These are also learnt during training.
+We proposed the [Grouped Feedback Delay Network](https://github.com/orchidas/GFDN) to model multi-slope late reverberation, which is commonly observed in coupled rooms and rooms with non-uniform absorption.
+While the network is highly parameterised, it is still tricky to model a measured space by tuning its parameters. In this work, we automatically learn the parameters of the GFDN to model multi-slope reverberation in a complex space from a set of measured Room Impulse Responses. The network has learnable source and receiver filters at its input and output, which are functions of the source and listener positions. The source-listener filter parameters are learned using a Multi-Layer Perceptron which takes Fourier encoded spatial coordinates as input. The coupled feedback matrix, and input-output gains, on the other hand, determine the echo density profile and colouration of the network, and are position-independent. These are also learnable parameters.
 
-A dataset of RIRs measured in a coupled space, along with the corresponding source and receiver positions, can be used to train the Differentiable GFDN. Now, if we want to extrapolate the RIR at a new (unmeasured) position, we can do that with the
+A dataset of RIRs measured in a coupled space, along with the corresponding source and receiver positions, can be used to train the Differentiable GFDN with perceptually motivated loss functions. Now, if we want to extrapolate the RIR at a new (unmeasured) position, we can do that with the
 GFDN. More powerfully, we can parameterise the late reverberation in the entire space with this very efficient network which is ideal for real-time rendering. This not only
 reduces memory requirements of storing measured RIRs, but is also faster than convolution with long reverberation tails.
 
@@ -34,7 +34,8 @@ To use an open-source dataset:
 ### Training
 
 - To run training of a full-band GFDN a grid of receiver positions, create a different config file (example [here](./data/config/treble_data_grid_training_full_band_colorless_loss.yml)). Then run `python3 src/run_model.py -c <config_file_path>`. 
-- To run training with one DiffGFDN for each subband, filter the dataset into octave bands (see `src/convert_mat_to_pkl`), create config files for each band, and run the training for each config file. Alternately, see `python3 src/run_subband_training_treble.py`
+- To run training with one DiffGFDN for each subband, filter the dataset into octave bands (see `src/convert_mat_to_pkl`), create config files for each band, and run the training for each config file. Alternately, run `python3 src/run_subband_training_treble.py --freqs <list_of_octave_frequencies>`
+- To only run inference on the trained parallel subband GFDNs, run `python3 src/run_subband_training_treble.py`.
 
 Several different model configurations can be trained (see [config.py](.src/diff_gfdn/config/config.py)). There are options for:
 - Training the output filters for a single position (with stochastic gradient descent), or for a grid of positions (with MLPs).
@@ -128,7 +129,10 @@ We use the same three-coupled room dataset which has 2nd order ambisonic SRIRs. 
 
 ### Training
 
-The scripts for training this model are in the [src/spatial_sampling](src/spatial_sampling/) folder. To run training on the three coupled room dataset, you can run the script [src/run_spatial_sampling_test.py](src/run_spatial_sampling_test.py). The training is done in frequency band, an example of a config file is available at [data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml](data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml).
+The scripts for training this model are in the [src/spatial_sampling](src/spatial_sampling/) folder. 
+- To run training on the three coupled room dataset, you can run the script [src/run_spatial_sampling_test.py](src/run_spatial_sampling_test.py). The training is done for a particular frequency band, an example of a config file is available at [data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml](data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml). TLDR; to run training, do `python3 src/run_spatial_sampling_test -c <config_path>`
+- Once trained, you can run the inference with `python3 src/run_spatial_sampling_test -c <config_path> --infer` which will plot the results.
+- To generate synthetic SRIR tails once all octave bands have been trained, you can use functions in the script [src/spatial_sampling/inference.py](src/spatial_sampling/inference.py).
 
 
 ## Publications
