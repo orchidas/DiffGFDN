@@ -1,31 +1,31 @@
-# Data-driven spatially dynamic late reverberation rendering in coupled spaces for Augmented Reality
+# Data-driven spatially-dynamic late reverberation rendering in coupled spaces for Augmented Reality
 
-To setup the repository, follow instructions in [CONTRIBUTING.md](CONTRIBUTING.md).
+The goal of this work is to learn spatially-dynamic late reverberation properties in a complex space from a measured set of RIRs / SRIRs, and render dynamic late reverberation as the user moves around the space. Models are trained to learn from a finite set of measurements, and extrapolate late reverberation behaviour at any location in the space. To setup the repository, follow instructions in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Data-driven directional late reverberation modelling in coupled spaces
 
-We investigated the modelling of position-dependent directional late reverberation in coupled spaces. We assume we have a set of <b> Spatial Room Impulse Responses (SRIRs) </b> (encoded in $N_\text{sp}$ order ambisonics) measured at several locations in the space for a fixed source-position. We want to use these to generalise the late reverb tail of the SRIRs at any point in the room. 
+We investigate the modelling of position-dependent directional late reverberation in coupled spaces. We assume we have a set of <b> Spatial Room Impulse Responses (SRIRs) </b> (encoded in $N_\text{sp}$ order ambisonics) measured at several locations in the space for a fixed source-position. We want to use these to generalise the late reverb tail of the SRIRs at any point in the room. 
 
-To do this, we leverage the <b>Common Slopes (CS)</b> model which hypothesises that the energy decay in any coupled space can be modelled as a weighted sum of a handful of decay kernels with unique reverberation times, which are position and direction-invaiant. The weights of the decay kernel, known as the CS amplitudes, and are position and direction-dependent. We train MLPs in octave bands to learn the CS amplitudes in the spherical harmonic (SH) domain as a function of position. The loss function used is a directional energy decay loss. Once trained, the MLPs can predict the CS amplitudes in the SH domain at any new position in space. White noise, shaped in octave bands by the predicted CS parameters, is used to synthesise the directional late reverberation tail. As the user navigates the space, the MLPs update the CS amplitudes and time-varying convolution is performedwith the synthesised late reverberation tail. Since the predicted late-reverb tail is an ambisonics signal, it is trivial to rotate it according to the user's head-orientation, thus enabling 6DoF rendering of late reverberation for AR applications.
+To do this, we leverage the <b>Common Slopes (CS)</b> model which hypothesises that the energy decay in any coupled space can be modelled as a weighted sum of a handful of decay kernels with unique reverberation times, which are position and direction-invaiant. The weights of the decay kernel, known as the CS amplitudes, and are position and direction-dependent. We train MLPs in octave bands to learn the CS amplitudes in the spherical harmonic (SH) domain as a function of position. The loss function used is a directional energy decay loss. Once trained, the MLPs can predict the CS amplitudes in the SH domain at any new position in space. White noise, shaped in octave bands by the predicted CS parameters, is used to synthesise the directional late reverberation tail. As the user navigates the space, the MLPs update the CS amplitudes, a new reverberation tail is synthesissed and time-varying convolution is performed with the synthesised tail. Since the predicted late-reverb tail is an ambisonics signal, it is trivial to rotate it according to the user's head-orientation, enabling 6DoF rendering of late reverberation for AR applications.
 
 ### Dataset
 
-We have been using the dataset published [here](https://zenodo.org/records/13338346) which has three coupled rooms simulated with Treble and has 2nd order ambisonic SRIRs at 838 receiver locations for a single source location. This has been saved in the path `resources/Georg_3Room_FDTD/`. To parse the dataset and save the SRIRs and CS parameters in octave bands, run `python3 src/convert_mat_to_pkl_ambi.py`
+We have been using the dataset published [here](https://zenodo.org/records/13338346) which has three coupled rooms simulated with Treble's hybrid solver and has 2nd order ambisonic SRIRs at 838 receiver locations for a single source location. This has been saved in the path `resources/Georg_3Room_FDTD/`. To parse the dataset and save the SRIRs and CS parameters in octave bands, run `python3 src/convert_mat_to_pkl_ambi.py`
 
 ### Training
 
 The scripts for training this model are in the [src/spatial_sampling](src/spatial_sampling/) folder. 
-- To run training on the three coupled room dataset, you can run the script [src/run_spatial_sampling_test.py](src/run_spatial_sampling_test.py). The training is done for a particular frequency band, an example of a config file is available at [data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml](data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml). TLDR; to run training, run `python3 src/run_spatial_sampling_test -c <config_path>`
-- Once trained, you can run the inference with `python3 src/run_spatial_sampling_test -c <config_path> --infer` which will plot the results.
-- To generate synthetic SRIR tails once all octave bands have been trained, you can use functions in the script [src/spatial_sampling/inference.py](src/spatial_sampling/inference.py).
+- To run training on the three coupled room dataset, you can run the script [src/run_spatial_sampling_test.py](src/run_spatial_sampling_test.py). The MLPs are trained on a particular frequency band, an example of a config file is available at [here](data/config/spatial_sampling/treble_data_grid_training_500Hz_directional_spatial_sampling_test.yml). TLDR; to run training, run `python3 src/run_spatial_sampling_test -c <config_path>`
+- Once trained, you can run inferencing with `python3 src/run_spatial_sampling_test -c <config_path> --infer` which will plot the results.
+- To generate synthetic SRIR tails once all octave bands have been trained, you can use functions in the script [src/spatial_sampling/inference.py](src/spatial_sampling/inference.py). An example of how to use this script to generate binaural sound examples for moving listeners has been provided in [this notebook](notebooks/create_binaural_sound_examples.ipynb).
 
 
 ## Differentiable Grouped Feedback Delay Networks for data-driven late reverberation rendering in coupled spaces
 
 We proposed the [Grouped Feedback Delay Network](https://github.com/orchidas/GFDN) to model multi-slope late reverberation, which is commonly observed in coupled rooms and rooms with non-uniform absorption.
-While the network is highly parameterised, it is still tricky to model a measured space by tuning its parameters. In this work, we automatically learn the parameters of the GFDN to model multi-slope reverberation in a complex space from a set of measured Room Impulse Responses. The network has learnable source and receiver filters at its input and output, which are functions of the source and listener positions. The source-listener filter parameters are learned using a Multi-Layer Perceptron which takes Fourier encoded spatial coordinates as input. The coupled feedback matrix, and input-output gains, on the other hand, determine the echo density profile and colouration of the network, and are position-independent. These are also learnable parameters. The delay line lengths are fixed co-prime numbers, and the fixed absorption filters are derived from the common slope model's decay times.
+While the network is highly parameterised, it is still tricky to model a measured space by tuning its parameters. In this work, we automatically learn the parameters of the GFDN to model multi-slope reverberation in a complex space from a set of measured <b>Room Impulse Responses</b>. The network, known as the <b>Differentiable GFDN (DiffGFDN) </b>, has learnable source and receiver parameters at its input and output, which are functions of the source and listener positions. The source-listener parameters are learned using a Multi-Layer Perceptron which takes Fourier encoded spatial coordinates as input. The learnable coupled feedback matrix, and input-output gains, on the other hand, determine the echo density profile and colouration of the network, and are position-independent. The delay line lengths are fixed co-prime numbers, and fixed absorption filters are derived from the CS model's decay times.
 
-A dataset of RIRs measured in a coupled space, along with the corresponding source and receiver positions, can be used to train the Differentiable GFDN with perceptually motivated loss functions. Now, if we want to extrapolate the RIR at a new (unmeasured) position, we can do that with the
+A dataset of RIRs measured in a coupled space, along with the corresponding source and receiver positions, can be used to train the DiffGFDN with perceptually motivated loss functions. Now, if we want to extrapolate the RIR at a new (unmeasured) position, we can do that with the
 GFDN. More powerfully, we can parameterise the late reverberation in the entire space with this very efficient network which is ideal for real-time rendering. This not only
 reduces memory requirements of storing measured RIRs, but is also faster than convolution with long reverberation tails.
 
@@ -51,9 +51,9 @@ To use an open-source dataset:
 
 ### Training
 
-- To run training of a full-band GFDN a grid of receiver positions, create a different config file (example [here](./data/config/treble_data_grid_training_full_band_colorless_loss.yml)). Then run `python3 src/run_model.py -c <config_file_path>`. 
-- To run training with one DiffGFDN for each subband, filter the dataset into octave bands (see `src/convert_mat_to_pkl`), create config files for each band, and run the training for each config file. Alternately, run `python3 src/run_subband_training_treble.py --freqs <list_of_octave_frequencies>`
-- To only run inference on the trained parallel subband GFDNs, run `python3 src/run_subband_training_treble.py`.
+- To run training of a single full-band GFDN a grid of receiver positions, create a different config file (example [here](./data/config/treble_data_grid_training_full_band_colorless_loss.yml)). Then run `python3 src/run_model.py -c <config_file_path>`. 
+- To run training with one frequency-independent DiffGFDN for each octave band, create config files for each band, and run the training for each config file. Alternately, run `python3 src/run_subband_training_treble.py --freqs <list_of_octave_frequencies>`
+- To only run inference on the trained parallel octave-band GFDNs, run `python3 src/run_subband_training_treble.py`. This will save the synthesised RIRs as a pkl file.
 
 Several different model configurations can be trained (see [config.py](.src/diff_gfdn/config/config.py)). There are options for:
 - Training the output filters for a single position (with stochastic gradient descent), or for a grid of positions (with MLPs).
@@ -143,7 +143,7 @@ To ensure that the GFDN is colourless, and has sufficient echo density, we also 
 
 ## Future work
 
-The DiffGFDN is an omni-directional renderer, whereas for directional rendering, we have proposed a more inefficient convolution-based renderer. We wish to work on a directional DiffGFDN which will operate in the ambisonics domain for efficient data-driven directional late reverberation rendering for 6DoF movement.
+The DiffGFDN is an omni-directional renderer, whereas for directional rendering, we have proposed a more inefficient convolution-based renderer. We wish to work on a directional DiffGFDN which will operate in the ambisonics domain for efficient directional late reverberation rendering for 6DoF movement.
 
 ## Sound examples
 
