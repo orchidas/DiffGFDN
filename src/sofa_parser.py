@@ -292,9 +292,11 @@ class SRIRSOFAWriter:
     ):
         # convention definition is given online
         self.conv = "SingleRoomSRIR"
-        num_channels = (ambi_order + 1)**2
+        self.num_channels = (ambi_order + 1)**2
+        self.num_receivers = num_receivers
+        self.ir_length = ir_length
         self.dims = {
-            "R": num_channels,
+            "R": self.num_channels,
             "M": num_receivers,
             "N": ir_length,
             "C": 3,  # coordinate dimension (xyz or aed)
@@ -335,48 +337,52 @@ class SRIRSOFAWriter:
                                             time.time(),
                                             dtype=np.float64)
 
-    def set_receiver_positions(self,
-                               receiver_position: ArrayLike,
-                               coord_sys: str = 'cartesian'):
-        """Set receiver positions"""
-        if receiver_position.ndim > 1:
-            assert receiver_position.shape[-1] == self.dims["C"]
+    def set_source_positions(self,
+                             source_position: ArrayLike,
+                             coord_sys: str = 'cartesian'):
+        """Set source positions"""
+        if source_position.ndim > 1:
+            assert source_position.shape[-1] == self.dims["C"]
         else:
-            assert len(receiver_position) == self.dims["C"]
+            assert len(source_position) == self.dims["C"]
 
         # shape should be (1, 3)
         if coord_sys != 'cartesian':
-            receiver_position = sph2cart(receiver_position[:, 0],
-                                         receiver_position[:, 1],
-                                         receiver_position[:, 2])
+            source_position = sph2cart(source_position[:, 0],
+                                       source_position[:, 1],
+                                       source_position[:, 2])
         else:
-            receiver_position = receiver_position.reshape(1, self.dims["C"])
+            source_position = source_position.reshape(1, self.dims["C"])
 
         # should be of shape (R, C)
-        self.sofa.ReceiverPosition = np.tile(
-            receiver_position, (self.dims["R"], 1)).astype(np.float32)
+        self.sofa.SourcePosition = np.tile(
+            source_position, (self.dims["M"], 1)).astype(np.float32)
 
         # Set units
-        self.sofa.ReceiverPosition_Type = 'cartesian'
-        self.sofa.ReceiverPosition_Units = 'meter'
+        self.sofa.SourcePosition_Type = 'cartesian'
+        self.sofa.SourcePosition_Units = 'meter'
 
-    def set_source_positions(self,
-                             source_positions: NDArray,
-                             coord_sys: str = 'cartesian'):
-        """Set source positions"""
-        assert source_positions.shape == (
+    def set_receiver_positions(self,
+                               receiver_positions: NDArray,
+                               coord_sys: str = 'cartesian'):
+        """Set receiver positions"""
+        assert receiver_positions.shape == (
             self.dims["M"],
             self.dims["C"]), "Source positions should be of size M, 3"
         if coord_sys != 'cartesian':
-            source_positions = sph2cart(source_positions[:, 0],
-                                        source_positions[:, 1],
-                                        source_positions[:, 2])
+            receiver_positions = sph2cart(receiver_positions[:, 0],
+                                          receiver_positions[:, 1],
+                                          receiver_positions[:, 2])
 
         # should be of shape (M, C)
-        self.sofa.SourcePosition = source_positions.astype(np.float32)
+        self.sofa.ListenerPosition = receiver_positions.astype(np.float32)
+        self.sofa.ListenerPosition_Type = 'cartesian'
+        self.sofa.ListenerPosition_Units = 'meter'
 
-        self.sofa.SourcePosition_Type = 'cartesian'
-        self.sofa.SourcePosition_Units = 'meter'
+        self.sofa.ReceiverPosition = np.zeros(
+            (self.dims["R"], self.dims["C"], self.dims["I"]), dtype=np.float32)
+        self.sofa.ReceiverPosition_Type = 'cartesian'
+        self.sofa.ReceiverPosition_Units = 'meter'
 
     def set_ir_data(self, rir_data: NDArray):
         """
@@ -386,7 +392,29 @@ class SRIRSOFAWriter:
         assert rir_data.shape == (
             self.dims["M"], self.dims["R"], self.dims["N"]
         ), "RIRs should be of shape num_ambi_channels x num_receivers x time_samples"
+        self.rir_data = rir_data
         self.sofa.Data_IR = rir_data.astype(np.float32)  # Shape: [M, R, N]
+
+    def resample_srirs(self, new_sample_rate: float):
+        """
+        Resample the SRIRs to a new sample rate - this is needed when loading in REAPER
+        which is at a sample rate of 48kHz by default
+        """
+        new_ir_length = int(
+            np.round(self.ir_length * (new_sample_rate / self.samplerate)))
+        resampled_rir = np.zeros(
+            (self.num_receivers, self.num_channels, new_ir_length))
+        for chan in range(self.num_channels):
+            resampled_rir[:, chan, :] = resample(self.rir_data[:,
+                                                               chan, :].copy(),
+                                                 orig_sr=self.samplerate,
+                                                 target_sr=new_sample_rate,
+                                                 axis=-1)
+        self.ir_length = new_ir_length
+        self.rir_data = resampled_rir
+        self.sofa.Data_IR = resampled_rir.astype(
+            np.float32)  # Shape: [M, R, N]
+        self.sofa.Data_SamplingRate = np.array([new_sample_rate])
 
     def write_to_file(self, filename: str, compression: int = 4):
         """Write the SOFa object to a file.
