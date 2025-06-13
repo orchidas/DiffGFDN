@@ -294,7 +294,8 @@ class FeedbackLoop(nn.Module):
                 # if colorless_feedback_matrix is None:
                 self.alpha = nn.Parameter(
                     torch.pi * torch.ones(self.num_groups * (self.num_groups - 1) //
-                                2)) / 4
+                                2)  / 4 )
+                # self.alpha = nn.Parameter(np.pi / 4 * torch.ones())
                 # self.register_buffer(
                 #     "alpha",
                 #     (torch.pi * torch.ones(self.num_groups * (self.num_groups - 1) // 2)) / 4
