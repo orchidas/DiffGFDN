@@ -80,7 +80,8 @@ class ND_Unitary(nn.Module):
                     rot_matrix)
             # this is the matrix [[U_n-1, 0], [0, 1]]
             big_matrix = torch.eye(N)
-            big_matrix[:N - 1, :N - 1] = self.forward(alpha[:start_idx], N - 1)
+            cur_alpha = alpha[:start_idx]
+            big_matrix[:N - 1, :N - 1] = self.forward(cur_alpha, N - 1)
             result = torch.mm(rot_matrix, big_matrix)
             # all of the intermediate matrices must be unitary
             # assert is_unitary(result)[0]
@@ -291,13 +292,13 @@ class FeedbackLoop(nn.Module):
                 self.nd_unitary = ND_Unitary()
 
                 # if colorless_feedback_matrix is None:
-                # self.alpha = nn.Parameter(
-                #     torch.pi * torch.ones(self.num_groups * (self.num_groups - 1) //
-                #                 2)) / 4
-                self.register_buffer(
-                    "alpha",
-                    (torch.pi * torch.ones(self.num_groups * (self.num_groups - 1) // 2)) / 4
-                    )                
+                self.alpha = nn.Parameter(
+                    torch.pi * torch.ones(self.num_groups * (self.num_groups - 1) //
+                                2)) / 4
+                # self.register_buffer(
+                #     "alpha",
+                #     (torch.pi * torch.ones(self.num_groups * (self.num_groups - 1) // 2)) / 4
+                #     )                
                 # else:
                 #     # no coupling allowed - this makes alpha a fixed parameter
                 #     self.register_buffer(
