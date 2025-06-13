@@ -291,10 +291,12 @@ class FeedbackLoop(nn.Module):
                 self.nd_unitary = ND_Unitary()
 
                 # if colorless_feedback_matrix is None:
-                self.alpha = nn.Parameter(
-                    torch.pi * torch.ones(self.num_groups * (self.num_groups - 1) //
-                                2)) / 4
-
+                # self.alpha = nn.Parameter(
+                #     torch.pi * torch.ones(self.num_groups * (self.num_groups - 1) //
+                #                 2)) / 4
+                self.register_buffer(
+                    (torch.pi * torch.ones(self.num_groups * (self.num_groups - 1) // 2)) / 4
+                    )                
                 # else:
                 #     # no coupling allowed - this makes alpha a fixed parameter
                 #     self.register_buffer(
