@@ -198,7 +198,7 @@ def get_rirs_from_common_slopes_model(
                 amplitudes[:, n, ...],
                 sample_rate,
                 ir_len_samps,
-                freq_bands,
+                f_bands=freq_bands,
             )
         # convert to ambisonic RIRs
         logger.info("Converting directional RIRs into the SH domain")
@@ -212,7 +212,7 @@ def get_rirs_from_common_slopes_model(
             amplitudes,
             sample_rate,
             ir_len_samps,
-            freq_bands,
+            f_bands=freq_bands,
         )
         return omni_rirs
 

@@ -392,7 +392,7 @@ class make_plots:
                 self.true_points,
                 self.src_pos,
                 db2lin(error_db),
-                scatter_plot=True,
+                scatter_plot=False,
                 cur_freq_hz=None,
                 save_path=Path(
                     f'{self.config_dict.train_dir}/edc_error_in_space_' +

@@ -2,7 +2,8 @@ ir_path: 'audio/synthetic_true/two_coupled_rooms/ir_(1.21, 2.92, 0.83).wav'
 room_dataset_path: 'resources/synthetic_dataset/two_coupled_rooms/bb_wgn_0000.pkl'
 sample_rate: 48000.0
 num_delay_lines: 8
-use_absorption_filters: False
+decay_filter_config:
+  use_absorption_filters: False
 feedback_loop_config:
   coupling_matrix_type: 'scalar_matrix'
 output_filter_config:

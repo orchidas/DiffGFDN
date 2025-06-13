@@ -732,7 +732,9 @@ def plot_edc_error_in_space(
                         f'{save_name}_{room_data.band_centre_hz[k]}Hz_edc_error_in_space.png'
                     ).resolve() if save_path is not None else None)
         else:
-            logger.info(f'The RMSE in matching EDC is {error_mse} dB')
+            logger.info(
+                f'The RMSE in matching EDC is {np.squeeze(np.round(error_mse,3))} dB'
+            )
             var_to_plot = db2lin(error_func)
 
             # plot the error in amplitude matching
