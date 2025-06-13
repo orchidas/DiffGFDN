@@ -295,6 +295,7 @@ class FeedbackLoop(nn.Module):
                 #     torch.pi * torch.ones(self.num_groups * (self.num_groups - 1) //
                 #                 2)) / 4
                 self.register_buffer(
+                    "alpha",
                     (torch.pi * torch.ones(self.num_groups * (self.num_groups - 1) // 2)) / 4
                     )                
                 # else:
