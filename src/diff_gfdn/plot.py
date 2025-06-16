@@ -604,7 +604,7 @@ def plot_edc_error_in_space(
     room_data: RoomDataset,
     all_rirs: Union[NDArray, List],
     all_pos: Union[NDArray, List],
-    freq_to_plot: Optional[float] = 1000.0,
+    freq_to_plot: Optional[float] = None,
     scatter: bool = False,
     save_path: Optional[str] = None,
     pos_sorted: bool = False,
@@ -747,6 +747,8 @@ def plot_edc_error_in_space(
                 title=title,
                 save_path=Path(f'{save_name}_edc_error_in_space.png').resolve(
                 ) if save_path is not None else None)
+
+    return np.squeeze(error_mse)
 
 
 def plot_edr_error_in_space(

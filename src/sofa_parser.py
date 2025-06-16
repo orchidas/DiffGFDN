@@ -6,11 +6,15 @@ from librosa import resample
 from loguru import logger
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+from scipy.fft import irfft, rfft
 import sofar
 import spaudiopy as spa
+from tqdm import tqdm
+
+from diff_gfdn.utils import is_unitary
 
 # flake8: noqa:E722
-# pylint: disable=E0606
+# pylint: disable=E0606, E1126
 
 
 def cart2sph(x: Union[NDArray, float],
@@ -259,15 +263,26 @@ class HRIRSOFAReader:
     def get_spherical_harmonic_representation(self,
                                               ambi_order: int) -> NDArray:
         """Get the spherical harmonic representation of the HRTFs using specified ambisonics order"""
-        # get azimuth and elevation angles from the dataset
+
+        # 1. Compute HRTFs from time-domain HRIRs
+        fft_size = 2**int(np.ceil(np.log2(self.ir_length)))
+        hrtfs = rfft(self.ir_data, n=fft_size,
+                     axis=-1)  # shape: (num_dirs, 2, num_freq_bins)
+
+        # 2. Get SH matrix
         incidence_az = np.deg2rad(self.listener_view[..., 0])
         # zenith angle is different from elevation angle
-        incidence_zen = np.deg2rad(90 - self.listener_view[..., 1])
-        # of shape (num_hrtf_directions, (N_sp + 1)**2)
+        incidence_zen = np.deg2rad(90 -
+                                   self.listener_view[..., 1])  # zenith angle
+        # (num_dirs, num_sh_channels)
         sh_matrix = spa.sph.sh_matrix(ambi_order, incidence_az, incidence_zen)
-        # output is of size num_ambi_channels x num_receivers x num_time_samples
-        sh_ir = np.einsum('jrt, jn -> nrt', self.ir_data, sh_matrix)
-        return sh_ir
+        assert is_unitary(sh_matrix)
+
+        # 3. Least squares fit for each frequency bin
+        sh_hrtfs = np.einsum('nd, drf -> nrf', sh_matrix.T, hrtfs)
+
+        sh_ir = irfft(sh_hrtfs, n=self.ir_length, axis=-1)
+        return sh_ir  # shape: (num_sh_channels, 2, num_time_samples)
 
 
 class SRIRSOFAWriter:
@@ -430,3 +445,58 @@ class SRIRSOFAWriter:
             self.sofa,
             compression=compression,
         )
+
+
+def convert_srir_to_brir(srirs: NDArray, hrtf_reader: HRIRSOFAReader,
+                         head_orientations: ArrayLike) -> NDArray:
+    """
+    Convert SRIRs to BRIRs for specific orientations
+    Args:
+        srirs (NDArray): SRIRs of shape num_pos x num_ambi_channels x num_time_samp
+        sample_rate (float): sample rate of the SRIRs
+        hrtf_reader (HRIRSOFAReader): for parsing SOFA file
+        head_orientations (ArrayLike): head orientations of shape num_ori x  2
+    Returns:
+        BRIRs of shape num_pos x num_ori x num_time_samples x 2
+    """
+    ambi_order = int(np.sqrt(srirs.shape[1] - 1))
+    num_receivers = srirs.shape[0]
+    num_freq_bins = 2**int(np.ceil(np.log2(srirs.shape[-1])))
+
+    # size is num_ambi_channels x num_receivers x num_time_samples
+    hrir_sh = hrtf_reader.get_spherical_harmonic_representation(ambi_order)
+    ambi_rtfs = rfft(srirs, num_freq_bins, axis=-1)
+
+    # these are of shape num_ambi_channels x 2 x num_freq_samples
+    ambi_hrtfs = rfft(hrir_sh, n=num_freq_bins, axis=-1)
+    logger.info("Done calculating FFTs")
+
+    num_orientations = head_orientations.shape[0]
+    brirs = np.zeros((num_receivers, num_orientations, num_freq_bins, 2))
+
+    for rec_pos_idx in tqdm(range(num_receivers)):
+
+        # shape is num_ambi_channels x num_freqs
+        cur_ambi_rtf = ambi_rtfs[rec_pos_idx, ...]
+
+        for ori_idx in range(num_orientations):
+            cur_head_orientation = head_orientations[ori_idx, :]
+
+            #rotate the soundfield in the opposite direction - size num_freq_bins x num_ambi_channels
+            cur_rotation_matrix = spa.sph.sh_rotation_matrix(
+                ambi_order,
+                -cur_head_orientation[0],
+                -cur_head_orientation[1],
+                0,
+                sh_type='real')
+
+            rotated_ambi_rtf = cur_ambi_rtf.T @ cur_rotation_matrix.T
+
+            # get the binaural room transfer function
+            cur_brtf = np.einsum('nrf, fn -> fr', np.conj(ambi_hrtfs),
+                                 rotated_ambi_rtf)
+            # get the BRIR
+            cur_brir = irfft(cur_brtf, n=num_freq_bins, axis=0)
+            brirs[rec_pos_idx, ori_idx, ...] = cur_brir
+
+    return brirs

@@ -28,11 +28,11 @@ from .model import (
 
 def get_ambisonic_rirs(
     rec_pos_list: NDArray,
-    output_pkl_path: str,
     full_band_room_data: SpatialRoomDataset,
     use_trained_model: bool = True,
     config_path: Optional[str] = None,
     grid_resolution_m: Optional[float] = None,
+    output_pkl_path: Optional[str] = None,
 ) -> SpatialRoomDataset:
     """
     Get ambisonic / omni RIRs predicted by the neural net using the
@@ -104,9 +104,10 @@ def get_ambisonic_rirs(
     cs_room_data.update_rirs(est_srirs)
 
     # Save to a file
-    logger.info("Saving to pkl file")
-    with open(output_pkl_path, "wb") as f:
-        pickle.dump(cs_room_data, f)
+    if output_pkl_path is not None:
+        logger.info("Saving to pkl file")
+        with open(output_pkl_path, "wb") as f:
+            pickle.dump(cs_room_data, f)
 
     return cs_room_data
 
