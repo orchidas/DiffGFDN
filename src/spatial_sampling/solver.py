@@ -384,9 +384,9 @@ class make_plots:
             idx_in_valid_set = np.arange(0,
                                          self.room_data.num_rec,
                                          dtype=np.int32)
-            extend = '_valid_set'
-        else:
             extend = ''
+        else:
+            extend = '_valid_set'
 
         # returns idx in est_points that are closest to true_points[idx_in_valid_set]
         ordered_pos_idx = order_position_matrices(
