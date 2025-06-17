@@ -286,6 +286,16 @@ class RoomDataset(ABC):
         """Frequency bins in Hz"""
         return rfftfreq(self.num_freq_bins, d=1.0 / self.sample_rate)
 
+    def find_rec_idx_in_room_dataset(self, rec_pos_list: NDArray) -> List:
+        """Indices of the receivers in the dataset associated with the list of receiver positions"""
+
+        # Compute Euclidean distance between each array in array_list_np and every row in matrix
+        distances = np.linalg.norm(self.receiver_position[:, None, :] -
+                                   rec_pos_list,
+                                   axis=2)
+        indices = np.argmin(distances, axis=0)
+        return indices
+
     def early_late_split(self, win_len_ms: float = 5.0):
         """Split the RIRs into early and late response based on mixing time"""
         mixing_time_samps = ms_to_samps(self.mixing_time_ms, self.sample_rate)
