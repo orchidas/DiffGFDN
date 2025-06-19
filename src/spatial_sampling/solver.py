@@ -118,6 +118,10 @@ class make_plots:
                         'Trained model does not exist!') from exc
 
         # run the model in eval mode
+        pytorch_total_params = sum(p.numel() for p in self.model.parameters()
+                                   if p.requires_grad)
+        logger.debug(
+            f"Total number of learnable parameters is: {pytorch_total_params}")
         self.model.eval()
 
         est_pos = torch.empty((0, 3))
