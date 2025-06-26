@@ -12,8 +12,8 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from diff_gfdn.config.config_loader import load_and_validate_config
 from diff_gfdn.utils import db2lin, ms_to_samps
-from src.run_model import load_and_validate_config
 
 from .config import BeamformerType, DNNType, SpatialSamplingConfig
 from .dataloader import custom_collate_spatial_sampling, get_dataloader, SpatialRoomDataset, SpatialSamplingDataset

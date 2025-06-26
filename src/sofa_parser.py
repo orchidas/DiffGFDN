@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import time
 from typing import Tuple, Union
@@ -12,6 +13,7 @@ import spaudiopy as spa
 from tqdm import tqdm
 
 from diff_gfdn.utils import is_unitary
+from spatial_sampling.dataloader import SpatialRoomDataset
 
 # flake8: noqa:E722
 # pylint: disable=E0606, E1126
@@ -500,3 +502,31 @@ def convert_srir_to_brir(srirs: NDArray, hrtf_reader: HRIRSOFAReader,
             brirs[rec_pos_idx, ori_idx, ...] = cur_brir
 
     return brirs
+
+
+def save_to_sofa(cs_room_data: SpatialRoomDataset,
+                 save_path: str,
+                 new_fs: float = 48000):
+    if not os.path.exists(save_path):
+        if 'late' in save_path.as_posix():
+            cs_room_data.early_late_split()
+            ir_len = cs_room_data.late_rirs.shape[-1]
+        else:
+            ir_len = cs_room_data.rir_length
+
+        sofa_writer = SRIRSOFAWriter(cs_room_data.num_rec,
+                                     cs_room_data.ambi_order, ir_len,
+                                     cs_room_data.sample_rate)
+
+        # source and receiver positions are flipped in SPARTA
+        sofa_writer.set_receiver_positions(cs_room_data.receiver_position)
+        sofa_writer.set_source_positions(cs_room_data.source_position)
+        if 'late' in save_path.as_posix():
+            sofa_writer.set_ir_data(cs_room_data.late_rirs)
+        else:
+            sofa_writer.set_ir_data(cs_room_data.rirs)
+
+        sofa_writer.resample_srirs(new_fs)
+        sofa_writer.write_to_file(save_path)
+    else:
+        logger.info("SOFA file already exists")

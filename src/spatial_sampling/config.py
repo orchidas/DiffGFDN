@@ -68,7 +68,7 @@ class SpatialSamplingConfig(BaseModel):
     # directory to save results
     train_dir: str = "output/spatial-sampling/"
     # DNN configs
-    dnn_config: DNNConfig()
+    dnn_config: DNNConfig = DNNConfig()
     # whether to use directional RIRs or not
     use_directional_rirs: bool = False
 
