@@ -10,8 +10,8 @@ from numpy.typing import ArrayLike, NDArray
 from scipy.fft import rfftfreq
 from scipy.signal import freqz, sos2zpk, sosfilt, sosfreqz
 from scipy.spatial.distance import cdist
-from slope2noise.rooms import RoomGeometry
-from slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering, schroeder_backward_int
+from slope2noise.slope2noise.rooms import RoomGeometry
+from slope2noise.slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering, schroeder_backward_int
 import torch
 from torch import nn
 from tqdm import tqdm
