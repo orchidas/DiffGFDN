@@ -125,7 +125,7 @@ def main(
         for k in range(len(freqs_list_train)):
             logger.info(f"Running training for {freqs_list_train[k]} Hz band")
 
-            config_dict_path = config_path / f'treble_data_grid_training_{int(freqs_list_train[k])}' / 'Hz_spatial_sampling_test.yml'
+            config_dict_path = config_path / f'treble_data_grid_training_{int(freqs_list_train[k])}' + 'Hz_spatial_sampling_test.yml'
             cur_config_dict = load_and_validate_config(config_dict_path,
                                                        SpatialSamplingConfig)
         run_training(cur_config_dict, infer_only)
