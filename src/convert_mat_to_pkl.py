@@ -6,7 +6,7 @@ import h5py
 from loguru import logger
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering
+from slope2noise.slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering
 
 # pylint: disable=W0621, E1120
 # flake8: noqa:E231

@@ -7,8 +7,8 @@ from loguru import logger
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from slope2noise.rooms import RoomGeometry
-from slope2noise.utils import decay_kernel
+from slope2noise.slope2noise.rooms import RoomGeometry
+from slope2noise.slope2noise.utils import decay_kernel
 import spaudiopy as spa
 import torch
 

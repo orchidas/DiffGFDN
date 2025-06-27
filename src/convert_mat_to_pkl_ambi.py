@@ -9,7 +9,7 @@ import joblib
 from loguru import logger
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from slope2noise.utils import octave_filtering
+from slope2noise.slope2noise.utils import octave_filtering
 import spaudiopy as sp
 
 from convert_mat_to_pkl import calculate_cs_params_custom

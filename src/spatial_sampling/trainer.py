@@ -7,7 +7,7 @@ from loguru import logger
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
-from slope2noise.utils import decay_kernel
+from slope2noise.slope2noise.utils import decay_kernel
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset

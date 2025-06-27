@@ -6,7 +6,7 @@ from DecayFitNet.python.toolbox.utils import calc_mse
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering
+from slope2noise.slope2noise.utils import calculate_amplitudes_least_squares, octave_filtering
 import torch
 
 from .filters.geq import octave_bands

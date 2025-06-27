@@ -9,7 +9,7 @@ from numpy.typing import ArrayLike, NDArray
 import pyloudnorm as pyln
 from scipy.fft import irfft, rfft
 from scipy.signal import fftconvolve
-from slope2noise.rooms import RoomGeometry
+from slope2noise.slope2noise.rooms import RoomGeometry
 import spaudiopy as spa
 
 from diff_gfdn.dataloader import RoomDataset
