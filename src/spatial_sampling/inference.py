@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple
 from loguru import logger
 import numpy as np
 from numpy.typing import NDArray
-from slope2noise.generate import shaped_wgn
+from slope2noise.slope2noise.generate import shaped_wgn
 import spaudiopy as sp
 import torch
 from torch.utils.data import DataLoader
