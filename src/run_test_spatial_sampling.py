@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from loguru import logger
 import torch
-
+from pathlib import Path
 from dataclass import NAFDatasetInfer
 from run_model import dump_config_to_pickle, load_and_validate_config
 from sofa_parser import convert_srir_to_brir, HRIRSOFAReader, save_to_sofa
@@ -125,8 +125,7 @@ def main(
         for k in range(len(freqs_list_train)):
             logger.info(f"Running training for {freqs_list_train[k]} Hz band")
 
-            config_dict_path = config_path + f'treble_data_grid_training_{int(freqs_list_train[k])}'\
-                               + 'Hz_spatial_sampling_test.yml'
+            config_dict_path = config_path / f'treble_data_grid_training_{int(freqs_list_train[k])}' / 'Hz_spatial_sampling_test.yml'
             cur_config_dict = load_and_validate_config(config_dict_path,
                                                        SpatialSamplingConfig)
         run_training(cur_config_dict, infer_only)
