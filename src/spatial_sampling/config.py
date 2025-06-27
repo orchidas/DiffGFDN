@@ -40,8 +40,8 @@ class MLPConfig(BaseModel):
 
 
 class DNNConfig(BaseModel):
-    mlp_config: Optional[MLPConfig()] = None
-    cnn_config: Optional[CNNConfig()] = None
+    mlp_config: Optional[MLPConfig] = None
+    cnn_config: Optional[CNNConfig] = None
     num_fourier_features: int = 10
     # beamforming type for converting from SHD to directional amplitudes
     beamformer_type: BeamformerType = BeamformerType.MAX_DI
