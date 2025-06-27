@@ -1,5 +1,4 @@
 import argparse
-from copy import deepcopy
 import os
 from pathlib import Path
 import pickle
@@ -20,6 +19,7 @@ from spatial_sampling.solver import run_training_spatial_sampling
 # flake8: noqa=E251
 
 config_path = Path('data/config/spatial_sampling/').resolve()
+data_path = Path('resources/Georg_3room_FDTD/srirs_spatial.pkl').resolve()
 
 
 def run_training(config_dict: SpatialSamplingConfig, infer_only: bool):
@@ -68,12 +68,8 @@ def run_inference_on_all_bands(
         infer_dataset = pickle.load(f)
     infer_pos_list = infer_dataset.infer_receiver_pos
 
-    data_path = Path('resources/Georg_3room_FDTD/srirs_spatial.pkl').resolve()
-
     # get the original dataset
     room_data = parse_room_data(data_path)
-    pred_room_data = deepcopy(room_data)
-    pred_room_data.update_receiver_pos(infer_pos_list)
     pred_room_data = get_ambisonic_rirs(infer_pos_list,
                                         room_data,
                                         use_trained_model=True,
@@ -103,7 +99,7 @@ def run_inference_on_all_bands(
             pickle.dump(mlp_brir_dataset, f)
     else:
         logger.info("Saving SRIRs to SOFA file")
-        save_to_sofa(deepcopy(pred_room_data), output_path)
+        save_to_sofa(pred_room_data, output_path)
 
 
 def main(
