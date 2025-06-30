@@ -18,9 +18,6 @@ from spatial_sampling.solver import run_training_spatial_sampling
 # pylint: disable=W0621
 # flake8: noqa=E251
 
-config_path = Path('data/config/spatial_sampling/').resolve()
-data_path = Path('resources/Georg_3room_FDTD/srirs_spatial.pkl').resolve()
-
 
 def run_training(config_dict: SpatialSamplingConfig, infer_only: bool):
     """Run training / inference (if inter_only is true) for a single config dict"""
@@ -45,6 +42,8 @@ def run_training(config_dict: SpatialSamplingConfig, infer_only: bool):
 
 def run_inference_on_all_bands(
     output_path: str,
+    data_path: str,
+    config_path: str,
     infer_dataset_path: str,
     grid_resolution_m: float,
     return_brirs: bool = False,
@@ -54,13 +53,20 @@ def run_inference_on_all_bands(
     Once the model is trained for each frequency band, 
     run inference over all bands and save the data.
     Args:
-        output_path: where to save the output file (pkl for BRIR, sofa for SRIR)
+        output_path (str): where to save the output file (pkl for BRIR, sofa for SRIR)
+        data_path (str): path where original full band CS dataset pickle file is saved
+        config_path (str): path to config files
         infer_dataset_path (str): path to inference dataset containing listener positions. 
                                   Data must be of type NAFDatasetInfer
+        grid_resolution_m (float): what is the grid resolution for inferencing?
+        return_brirs (bool): whether to return BRIRs or ambisonic RIRs
+        hrtf_path (str, optional): path to hrtf, if returning BRIRs
     """
     logger.info("Running inferencing for all octave bands...")
     assert infer_dataset_path is not None, "Must provide path to inference dataset \
             containing infererence positions"
+
+    assert data_path is not None, "Must provide path to full band dataset"
 
     assert grid_resolution_m is not None, "Must provide grid resolution for inference"
 
@@ -104,6 +110,7 @@ def run_inference_on_all_bands(
 
 def main(
     config_dict: SpatialSamplingConfig,
+    config_path: str,
     freqs_list_train: Optional[List] = None,
     infer_only: bool = False,
 ):
@@ -112,6 +119,7 @@ def main(
     of the common slope amplitudes. The config file contains a range of train-valid split ratios.
     Args:
         config_dict (SpatialSamplingConfig): if training a single frequency band, the config dictionary
+        config_path (str): path to config files
         freqs_list_train (List): list of frequency bands to train
         infer_only (bool): If true, only inference is done for the specified frequencu bands
                     and plots are made.        
@@ -145,15 +153,29 @@ if __name__ == '__main__':
         help="Set this flag to run inference instead of training")
 
     parser.add_argument(
+        "--config_path",
+        type=str,
+        default=Path('data/config/spatial_sampling/').resolve(),
+        help="Path to config files")
+
+    parser.add_argument(
         "--freqs",
         nargs="+",  # Accepts multiple values
         type=float,  # Convert to float
         default=None,
         help="List of frequencies for training")
+
+    parser.add_argument(
+        "--data_path",
+        type=str,
+        default=Path('resources/Georg_3room_FDTD/srirs_spatial.pkl').resolve(),
+        help="Path to full band dataset (needed for inferencing")
+
     parser.add_argument("--infer_dataset_path",
                         type=str,
                         default=None,
                         help="Path to Inference Dataset")
+
     parser.add_argument("--grid_res",
                         type=float,
                         default=None,
@@ -167,8 +189,9 @@ if __name__ == '__main__':
     parser.add_argument(
         "--hrtf_path",
         type=str,
-        default=
-        'resources/HRTF/48kHz/KEMAR_Knowl_EarSim_SmallEars_FreeFieldComp_48kHz.sofa',
+        default=Path(
+            'resources/HRTF/48kHz/KEMAR_Knowl_EarSim_SmallEars_FreeFieldComp_48kHz.sofa'
+        ).resolve(),
         help="Path to HRTF set")
 
     parser.add_argument("-o",
@@ -187,12 +210,15 @@ if __name__ == '__main__':
     if args.infer_dataset_path is None:
         main(
             config_dict,
+            config_path=args.config_path,
             freqs_list_train=args.freqs,
             infer_only=args.infer,
         )
     else:
         run_inference_on_all_bands(
             output_path=args.output_path,
+            data_path=args.data_path,
+            config_path=args.config_path,
             infer_dataset_path=args.infer_dataset_path,
             grid_resolution_m=args.grid_res,
             return_brirs=args.return_brirs,
