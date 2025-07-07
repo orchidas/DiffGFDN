@@ -133,7 +133,7 @@ def main(
                                + 'Hz_directional_spatial_sampling_test.yml'
             cur_config_dict = load_and_validate_config(config_dict_path,
                                                        SpatialSamplingConfig)
-        run_training(cur_config_dict, infer_only)
+            run_training(cur_config_dict, infer_only)
     else:
         run_training(config_dict, infer_only)
 
