@@ -306,6 +306,7 @@ class SpatialSamplingTrainer:
 
         et = time.time()  # end time
         print('Training time: {:.3f}s'.format(et - st))
+        self.save_training_time(et - st, epoch)
 
     def train_step(self, data):
         """Train each batch"""
@@ -411,3 +412,8 @@ class SpatialSamplingTrainer:
         # save model
         torch.save(self.net.state_dict(),
                    os.path.join(dir_path, 'model_e' + str(e) + '.pt'))
+
+    def save_training_time(self, time: float, epoch: int):
+        """Save the training time to a file"""
+        with open(os.path.join(self.train_dir, 'training_time.txt'), 'w') as f:
+            f.write(f'Training time of {epoch+1} epochs: {time:.3f}s\n')
