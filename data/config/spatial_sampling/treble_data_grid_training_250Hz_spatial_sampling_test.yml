@@ -1,7 +1,7 @@
 room_dataset_path: '/scratch/elec/t412-asp/Georg_3room_FDTD_NAF/srirs_band_centre=250Hz.pkl'
 seed: 23759
 batch_size: 50
-max_epochs: 15
+max_epochs: 25
 train_dir: '/scratch/elec/t412-asp/Georg_3room_FDTD_NAF/output/spatial_sampling/grid_rir_treble_band_centre=250Hz_spatial_sampling_ratio/'
 num_grid_spacing: 10
 dnn_config:
