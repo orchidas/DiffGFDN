@@ -575,6 +575,9 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig,
                       save_plot=True,
                       filename='training_loss_vs_epoch')
 
+            with open(os.path.join(trainer.train_dir, f'training_time_{np.round(grid_resolution_m[k], 3)}.txt'), 'w') as f:
+                f.write(f'Training time of {trainer.tot_epochs} epochs: {trainer.training_time:.3f}s\n')
+
             # save the validation loss
             save_loss(
                 trainer.valid_loss,

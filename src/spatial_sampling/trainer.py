@@ -212,7 +212,7 @@ class SpatialSamplingTrainer:
         self.device = trainer_config.device
         self.grid_spacing_m = grid_spacing_m
         self.max_epochs = trainer_config.max_epochs
-        self.patience = 5
+        self.patience = 10
         self.early_stop = 0
         self.train_dir = trainer_config.train_dir
         self.dataset_ref = dataset_ref
@@ -306,7 +306,8 @@ class SpatialSamplingTrainer:
 
         et = time.time()  # end time
         print('Training time: {:.3f}s'.format(et - st))
-        self.save_training_time(et - st, epoch)
+        self.training_time = et - st
+        self.tot_epochs = epoch + 1
 
     def train_step(self, data):
         """Train each batch"""
@@ -416,4 +417,5 @@ class SpatialSamplingTrainer:
     def save_training_time(self, time: float, epoch: int):
         """Save the training time to a file"""
         with open(os.path.join(self.train_dir, 'training_time.txt'), 'w') as f:
-            f.write(f'Training time of {epoch+1} epochs: {time:.3f}s\n')
+            f.write(f'Training time of {epoch+1} epochs: {time:.3f}s\n')''
+        self.training_time = time
