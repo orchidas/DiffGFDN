@@ -27,7 +27,7 @@ class ColorlessFDNTrainer:
         self.net = net
         self.device = trainer_config.device
         self.max_epochs = colorless_fdn_config.max_epochs
-        self.patience = 5
+        self.patience = 10
         self.early_stop = 0
         self.alpha = colorless_fdn_config.alpha
         self.train_dir = trainer_config.train_dir + "colorless-fdn/"
