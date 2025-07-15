@@ -651,7 +651,8 @@ def plot_edc_error_in_space(
         error_db = np.mean(np.abs(
             db(original_edc, is_squared=True) - db(est_edc, is_squared=True)),
                            axis=-2)
-        error_mse = np.linalg.norm(error_db, axis=0) / original_points.shape[0]
+        error_mse = np.linalg.norm(error_db, axis=0) / np.sqrt(
+            original_points.shape[0])
         return error_db, error_mse
 
     num_rooms = room_data.num_rooms
@@ -811,7 +812,8 @@ def plot_edr_error_in_space(
 
         # take mean error along time and frequency axies - first axis contains location
         error_db = np.abs(original_edr - est_edr).mean(axis=(1, 2))
-        error_mse = np.linalg.norm(error_db) / original_points.shape[0]
+        error_mse = np.linalg.norm(error_db) / np.sqrt(
+            original_points.shape[0])
         return error_db, error_mse
 
     num_rooms = room_data.num_rooms

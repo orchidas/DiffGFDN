@@ -439,10 +439,10 @@ class make_plots:
                         +
                         f'grid_resolution_m={np.round(grid_resolution_m, 3)}' +
                         extend + '.png').resolve(),
-                    title=
-                    f'az = {np.degrees(self.room_data.sph_directions[0, j]):.2f} deg,'
-                    +
-                    f' pol = {np.degrees(self.room_data.sph_directions[1, j]):.2f} deg'
+                    # title=
+                    # f'az = {np.degrees(self.room_data.sph_directions[0, j]):.2f} deg,'
+                    # +
+                    # f' pol = {np.degrees(self.room_data.sph_directions[1, j]):.2f} deg'
                 )
 
 
@@ -625,26 +625,32 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig,
         )
 
         # plot EDC error for validation set only
-        if grid_resolution_m[k] > room_data.grid_spacing_m:
-            valid_rec_idx = []
-            for data in valid_dataset:
-                cur_valid_pos = data['listener_position'].detach().cpu().numpy(
-                )
-                indx = room_data.find_rec_idx_in_room_dataset(cur_valid_pos)
-                valid_rec_idx = np.concatenate((valid_rec_idx, indx))
+        # if grid_resolution_m[k] > room_data.grid_spacing_m:
+        #     valid_rec_idx = []
+        #     for data in valid_dataset:
+        #         cur_valid_pos = data['listener_position'].detach().cpu().numpy(
+        #         )
+        #         indx = room_data.find_rec_idx_in_room_dataset(cur_valid_pos)
+        #         valid_rec_idx = np.concatenate((valid_rec_idx, indx))
 
-            plot_obj.plot_edc_error_in_space(
-                grid_resolution_m[k],
-                est_amps,
-                est_points,
-                valid_rec_idx,
-            )
+        #     plot_obj.plot_edc_error_in_space(
+        #         grid_resolution_m[k],
+        #         est_amps,
+        #         est_points,
+        #         valid_rec_idx,
+        #     )
+        # else:
+        plot_obj.plot_edc_error_in_space(
+            grid_resolution_m[k],
+            est_amps,
+            est_points,
+        )
 
-    ax[0].set_xlabel('Epoch #')
-    ax[0].set_ylabel('Training loss (log)')
-    ax[1].set_xlabel('Epoch #')
-    ax[1].set_ylabel('Validation loss (log)')
-    ax[1].legend(loc='best', bbox_to_anchor=(1.1, 0.5))
-    fig.savefig(os.path.join(config_dict.train_dir,
-                             'loss_vs_grid_resolution.png'),
-                bbox_inches="tight")
+        ax[0].set_xlabel('Epoch #')
+        ax[0].set_ylabel('Training loss (log)')
+        ax[1].set_xlabel('Epoch #')
+        ax[1].set_ylabel('Validation loss (log)')
+        ax[1].legend(loc='best', bbox_to_anchor=(1.1, 0.5))
+        fig.savefig(os.path.join(config_dict.train_dir,
+                                 'loss_vs_grid_resolution.png'),
+                    bbox_inches="tight")

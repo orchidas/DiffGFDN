@@ -171,10 +171,11 @@ if __name__ == '__main__':
         default=Path('resources/Georg_3room_FDTD/srirs_spatial.pkl').resolve(),
         help="Path to full band dataset (needed for inferencing")
 
-    parser.add_argument("--infer_dataset_path",
-                        type=str,
-                        default=None,
-                        help="Path to Inference Dataset")
+    parser.add_argument(
+        "--infer_dataset_path",
+        type=str,
+        default=None,
+        help="Path to inference dataset (of type NAFDatasetInfer)")
 
     parser.add_argument("--grid_res",
                         type=float,
