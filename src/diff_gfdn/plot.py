@@ -604,7 +604,7 @@ def plot_edc_error_in_space(
     room_data: RoomDataset,
     all_rirs: Union[NDArray, List],
     all_pos: Union[NDArray, List],
-    freq_to_plot: Optional[float] = 1000.0,
+    freq_to_plot: Optional[float] = None,
     scatter: bool = False,
     save_path: Optional[str] = None,
     pos_sorted: bool = False,
@@ -651,7 +651,8 @@ def plot_edc_error_in_space(
         error_db = np.mean(np.abs(
             db(original_edc, is_squared=True) - db(est_edc, is_squared=True)),
                            axis=-2)
-        error_mse = np.linalg.norm(error_db, axis=0) / original_points.shape[0]
+        error_mse = np.linalg.norm(error_db, axis=0) / np.sqrt(
+            original_points.shape[0])
         return error_db, error_mse
 
     num_rooms = room_data.num_rooms
@@ -748,6 +749,8 @@ def plot_edc_error_in_space(
                 save_path=Path(f'{save_name}_edc_error_in_space.png').resolve(
                 ) if save_path is not None else None)
 
+    return np.squeeze(error_mse)
+
 
 def plot_edr_error_in_space(
     room_data: RoomDataset,
@@ -809,7 +812,8 @@ def plot_edr_error_in_space(
 
         # take mean error along time and frequency axies - first axis contains location
         error_db = np.abs(original_edr - est_edr).mean(axis=(1, 2))
-        error_mse = np.linalg.norm(error_db) / original_points.shape[0]
+        error_mse = np.linalg.norm(error_db) / np.sqrt(
+            original_points.shape[0])
         return error_db, error_mse
 
     num_rooms = room_data.num_rooms

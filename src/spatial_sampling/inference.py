@@ -10,9 +10,10 @@ from slope2noise.generate import shaped_wgn
 import spaudiopy as sp
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
+from diff_gfdn.config.config_loader import load_and_validate_config
 from diff_gfdn.utils import db2lin, ms_to_samps
-from src.run_model import load_and_validate_config
 
 from .config import BeamformerType, DNNType, SpatialSamplingConfig
 from .dataloader import custom_collate_spatial_sampling, get_dataloader, SpatialRoomDataset, SpatialSamplingDataset
@@ -28,11 +29,11 @@ from .model import (
 
 def get_ambisonic_rirs(
     rec_pos_list: NDArray,
-    output_pkl_path: str,
     full_band_room_data: SpatialRoomDataset,
     use_trained_model: bool = True,
     config_path: Optional[str] = None,
     grid_resolution_m: Optional[float] = None,
+    output_pkl_path: Optional[str] = None,
 ) -> SpatialRoomDataset:
     """
     Get ambisonic / omni RIRs predicted by the neural net using the
@@ -104,9 +105,10 @@ def get_ambisonic_rirs(
     cs_room_data.update_rirs(est_srirs)
 
     # Save to a file
-    logger.info("Saving to pkl file")
-    with open(output_pkl_path, "wb") as f:
-        pickle.dump(cs_room_data, f)
+    if output_pkl_path is not None:
+        logger.info("Saving to pkl file")
+        with open(output_pkl_path, "wb") as f:
+            pickle.dump(cs_room_data, f)
 
     return cs_room_data
 
@@ -173,6 +175,7 @@ def get_rirs_from_common_slopes_model(
     ambi_order: Optional[int] = None,
     des_directions: Optional[NDArray] = None,
     beamformer_type: Optional[BeamformerType] = None,
+    batch_size: int = 100,
 ) -> NDArray:
     """
     Use shaped Gaussian noise to return directional / omni RIRs using the common slopes model
@@ -185,21 +188,39 @@ def get_rirs_from_common_slopes_model(
     """
     num_pos = rec_pos_list.shape[0]
     num_directions = des_directions.shape[-1]
+    run_in_batches = num_pos > batch_size
+    num_batches = int(np.ceil(num_pos / batch_size))
+
     t_vals_expanded = np.repeat(np.array(common_decay_times.T)[np.newaxis,
                                                                ...],
                                 num_pos,
                                 axis=0)
+
+    logger.info(f"Running in batches? {run_in_batches}")
+
     if ambi_order is not None:
         directional_rirs = np.zeros((num_directions, num_pos, ir_len_samps))
         for n in range(num_directions):
             logger.info(f"Getting shaped noise output for direction {n}")
-            _, directional_rirs[n, ...] = shaped_wgn(
-                t_vals_expanded,
-                amplitudes[:, n, ...],
-                sample_rate,
-                ir_len_samps,
-                f_bands=freq_bands,
-            )
+            if run_in_batches:
+                for batch_idx in tqdm(range(num_batches)):
+                    cur_idx = slice(batch_idx * batch_size,
+                                    min((batch_idx + 1) * batch_size, num_pos))
+                    _, directional_rirs[n, cur_idx, :] = shaped_wgn(
+                        t_vals_expanded[cur_idx, ...],
+                        amplitudes[cur_idx, n, ...],
+                        sample_rate,
+                        ir_len_samps,
+                        f_bands=freq_bands,
+                    )
+            else:
+                _, directional_rirs[n, ...] = shaped_wgn(
+                    t_vals_expanded,
+                    amplitudes[:, n, ...],
+                    sample_rate,
+                    ir_len_samps,
+                    f_bands=freq_bands,
+                )
         # convert to ambisonic RIRs
         logger.info("Converting directional RIRs into the SH domain")
         ambi_rirs = convert_directional_rirs_to_ambisonics(

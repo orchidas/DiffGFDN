@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple, Union
 from loguru import logger
 import matplotlib.pyplot as plt
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
 from slope2noise.rooms import RoomGeometry
 from slope2noise.utils import decay_kernel
 import spaudiopy as spa
@@ -361,8 +361,11 @@ class make_plots:
                     + dir_string,
                     db_limits=db_limits)
 
-    def plot_edc_error_in_space(self, grid_resolution_m: float,
-                                est_amps: NDArray, est_points: NDArray):
+    def plot_edc_error_in_space(self,
+                                grid_resolution_m: float,
+                                est_amps: NDArray,
+                                est_points: NDArray,
+                                idx_in_valid_set: Optional[ArrayLike] = None):
         """
         Plot the error between the CS EDC and MLP EDC in space
         Args:
@@ -370,51 +373,63 @@ class make_plots:
             est_amps (NDArray): estimated omni (num_pos, num_groups) / 
                                 directional amplitudes from NN (num_pos, num_directions, num_groups)
             est_points (NDArray): receiver positions at which the amplitudes were estimatied
+            idx_in_valid_set (ArrayLike, optional): the indices of the receiver positions in the valid set,
+                                                    if None, all receiver positions are plotted
         """
         logger.info("Making EDC error plots")
 
         # order the position indices in the estimated data according to the
         # reference dataset
-        ordered_pos_idx = order_position_matrices(self.true_points, est_points)
+        if idx_in_valid_set is None:
+            idx_in_valid_set = np.arange(0,
+                                         self.room_data.num_rec,
+                                         dtype=np.int32)
+            extend = ''
+        else:
+            extend = '_valid_set'
+
+        # returns idx in est_points that are closest to true_points[idx_in_valid_set]
+        ordered_pos_idx = order_position_matrices(
+            self.true_points[idx_in_valid_set], est_points)
 
         if self.true_amps.ndim == 2:
-            original_edc = db(torch.einsum('bk, kt -> bt', self.true_amps,
+            original_edc = db(torch.einsum('bk, kt -> bt',
+                                           self.true_amps[idx_in_valid_set],
                                            self.envelopes),
                               is_squared=True)
-            est_edc = db(torch.einsum('bk, kt -> bt', est_amps,
+            est_edc = db(torch.einsum('bk, kt -> bt',
+                                      est_amps[ordered_pos_idx],
                                       self.envelopes),
                          is_squared=True)
 
-            error_db = torch.mean(torch.abs(original_edc -
-                                            est_edc[ordered_pos_idx, ...]),
-                                  dim=-1)
+            error_db = torch.mean(torch.abs(original_edc - est_edc), dim=-1)
             self.room.plot_edc_error_at_receiver_points(
-                self.true_points,
+                self.true_points[idx_in_valid_set],
                 self.src_pos,
                 db2lin(error_db),
                 scatter_plot=False,
                 cur_freq_hz=None,
                 save_path=Path(
                     f'{self.config_dict.train_dir}/edc_error_in_space_' +
-                    f'grid_resolution_m={np.round(grid_resolution_m, 3)}.png').
-                resolve(),
+                    f'grid_resolution_m={np.round(grid_resolution_m, 3)}' +
+                    extend + '.png').resolve(),
                 title=f'Grid resolution={np.round(grid_resolution_m, 3)}m')
         else:
-            original_edc = db(torch.einsum('bjk, kt -> bjt', self.true_amps,
+            original_edc = db(torch.einsum('bjk, kt -> bjt',
+                                           self.true_amps[idx_in_valid_set],
                                            self.envelopes),
                               is_squared=True)
-            est_edc = db(torch.einsum('bjk, kt -> bjt', est_amps,
+            est_edc = db(torch.einsum('bjk, kt -> bjt',
+                                      est_amps[ordered_pos_idx],
                                       self.envelopes),
                          is_squared=True)
-            error_db = torch.mean(torch.abs(original_edc -
-                                            est_edc[ordered_pos_idx, ...]),
-                                  dim=-1)
+            error_db = torch.mean(torch.abs(original_edc - est_edc), dim=-1)
 
             logger.info(f'Mean EDC error in dB is {error_db.mean():.3f} dB')
 
             for j in range(self.room_data.num_directions):
                 self.room.plot_edc_error_at_receiver_points(
-                    self.true_points,
+                    self.true_points[idx_in_valid_set],
                     self.src_pos,
                     db2lin(error_db[:, j]),
                     scatter_plot=True,
@@ -422,12 +437,12 @@ class make_plots:
                     save_path=Path(
                         f'{self.config_dict.train_dir}/direction={j+1}/edc_error_in_space_'
                         +
-                        f'grid_resolution_m={np.round(grid_resolution_m, 3)}.png'
-                    ).resolve(),
-                    title=
-                    f'az = {np.degrees(self.room_data.sph_directions[0, j]):.2f} deg,'
-                    +
-                    f' pol = {np.degrees(self.room_data.sph_directions[1, j]):.2f} deg'
+                        f'grid_resolution_m={np.round(grid_resolution_m, 3)}' +
+                        extend + '.png').resolve(),
+                    # title=
+                    # f'az = {np.degrees(self.room_data.sph_directions[0, j]):.2f} deg,'
+                    # +
+                    # f' pol = {np.degrees(self.room_data.sph_directions[1, j]):.2f} deg'
                 )
 
 
@@ -521,6 +536,14 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig,
 
     for k in range(config_dict.num_grid_spacing):
 
+        # prepare the training and validation data
+        train_dataset, valid_dataset, dataset_ref = load_dataset(
+            room_data,
+            config_dict.device,
+            grid_resolution_m=np.round(grid_resolution_m[k], 1),
+            network_type=config_dict.network_type,
+            batch_size=config_dict.batch_size)
+
         if not plot_results_only:
             logger.info(
                 f"Training DNN for grid resolution = {np.round(grid_resolution_m[k], 1)} m"
@@ -528,14 +551,6 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig,
 
             # go back to training mode from evaluation mode
             model.train()
-
-            # prepare the training and validation data for DiffGFDN
-            train_dataset, valid_dataset, dataset_ref = load_dataset(
-                room_data,
-                config_dict.device,
-                grid_resolution_m=np.round(grid_resolution_m[k], 1),
-                network_type=config_dict.network_type,
-                batch_size=config_dict.batch_size)
 
             # create the trainer object
             trainer = SpatialSamplingTrainer(
@@ -609,17 +624,33 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig,
             est_points,
         )
 
+        # plot EDC error for validation set only
+        # if grid_resolution_m[k] > room_data.grid_spacing_m:
+        #     valid_rec_idx = []
+        #     for data in valid_dataset:
+        #         cur_valid_pos = data['listener_position'].detach().cpu().numpy(
+        #         )
+        #         indx = room_data.find_rec_idx_in_room_dataset(cur_valid_pos)
+        #         valid_rec_idx = np.concatenate((valid_rec_idx, indx))
+
+        #     plot_obj.plot_edc_error_in_space(
+        #         grid_resolution_m[k],
+        #         est_amps,
+        #         est_points,
+        #         valid_rec_idx,
+        #     )
+        # else:
         plot_obj.plot_edc_error_in_space(
             grid_resolution_m[k],
             est_amps,
             est_points,
         )
 
-    ax[0].set_xlabel('Epoch #')
-    ax[0].set_ylabel('Training loss (log)')
-    ax[1].set_xlabel('Epoch #')
-    ax[1].set_ylabel('Validation loss (log)')
-    ax[1].legend(loc='best', bbox_to_anchor=(1.1, 0.5))
-    fig.savefig(os.path.join(config_dict.train_dir,
-                             'loss_vs_grid_resolution.png'),
-                bbox_inches="tight")
+        ax[0].set_xlabel('Epoch #')
+        ax[0].set_ylabel('Training loss (log)')
+        ax[1].set_xlabel('Epoch #')
+        ax[1].set_ylabel('Validation loss (log)')
+        ax[1].legend(loc='best', bbox_to_anchor=(1.1, 0.5))
+        fig.savefig(os.path.join(config_dict.train_dir,
+                                 'loss_vs_grid_resolution.png'),
+                    bbox_inches="tight")

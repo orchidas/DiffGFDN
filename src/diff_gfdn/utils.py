@@ -263,13 +263,19 @@ def is_paraunitary(A: torch.tensor, max_tol: float = 1e-6) -> bool:
     return max_off_diag_value < max_tol, max_off_diag_value
 
 
-def is_unitary(A: torch.tensor, max_tol: float = 1e-6) -> bool:
+def is_unitary(A: Union[torch.tensor, NDArray], max_tol: float = 1e-6) -> bool:
     """Check if a square matrix A is unitary"""
     N = A.shape[0]
-    Aconj = torch.conj(A.T)
-    T = torch.mm(A, Aconj)
-    T -= torch.eye(N)
-    max_off_diag_value = torch.max(torch.abs(T))
+    if isinstance(A, torch.Tensor):
+        Aconj = torch.conj(A.T)
+        T = torch.mm(A, Aconj)
+        T -= torch.eye(N)
+        max_off_diag_value = torch.max(torch.abs(T))
+    else:
+        Aconj = np.conj(A.T)
+        T = A @ Aconj
+        T -= np.eye(N)
+        max_off_diag_value = np.max(np.abs(T))
     return max_off_diag_value < max_tol, max_off_diag_value
 
 

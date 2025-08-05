@@ -245,7 +245,7 @@ class SpatialSamplingTrainer:
             self.spatial_smoothness_weight = 1e-1
 
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
-                                                         step_size=10,
+                                                         step_size=20,
                                                          gamma=0.1)
 
     def to_device(self):

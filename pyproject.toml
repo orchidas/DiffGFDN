@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["diff_gfdn"]
+include = ["diff_gfdn", "spatial_sampling"]
 # include the name of the folder containing the library
 # eg: include = ["diff_gfdn"]
 

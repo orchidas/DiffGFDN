@@ -78,13 +78,7 @@ class dynamic_rendering_moving_receiver:
     @property
     def rec_idxs(self) -> List:
         """Indices of the receivers in the dataset associated with the list of receiver positions"""
-        # Compute Euclidean distance between each array in array_list_np and every row in matrix
-
-        distances = np.linalg.norm(self.room.receiver_position[:, None, :] -
-                                   self.rec_pos_list,
-                                   axis=2)
-        indices = np.argmin(distances, axis=0)
-        return indices
+        return self.room.find_rec_idx_in_room_dataset(self.rec_pos_list)
 
     @property
     def rirs(self) -> NDArray:

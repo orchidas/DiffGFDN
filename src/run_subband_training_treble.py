@@ -15,11 +15,11 @@ import yaml
 
 from diff_gfdn.colorless_fdn.utils import get_colorless_fdn_params
 from diff_gfdn.config.config import DiffGFDNConfig
+from diff_gfdn.config.config_loader import dump_config_to_pickle, load_and_validate_config
 from diff_gfdn.dataloader import load_dataset, ThreeRoomDataset
 from diff_gfdn.model import DiffGFDNVarReceiverPos
 from diff_gfdn.solver import run_training_var_receiver_pos
 from diff_gfdn.utils import get_response
-from run_model import dump_config_to_pickle, load_and_validate_config
 
 # flake8: noqa: E231
 # pylint: disable=W0621, W0632, E0402, C0301
