@@ -9,6 +9,8 @@ from pydantic import BaseModel, computed_field, ConfigDict, Field, field_validat
 import sympy as sp
 import torch
 
+from spatial_sampling.config import BeamformerType
+
 from ..utils import ms_to_samps
 
 
@@ -78,6 +80,8 @@ class OutputFilterConfig(BaseModel):
     num_neurons_per_layer: int = 2**7
     num_fourier_features: int = 10
     encoding_type: FeatureEncodingType = FeatureEncodingType.SINE
+    # beamforming type for converting from SHD to directional amplitudes
+    beamformer_type: Optional[BeamformerType] = None
 
 
 class DecayFilterConfig(BaseModel):
@@ -192,10 +196,10 @@ class DiffGFDNConfig(BaseModel):
     sample_rate: float = 32000.0
     # training config
     trainer_config: TrainerConfig = TrainerConfig()
-    # number of delay lines
-    num_delay_lines: int = 12
     # delay range in ms - first delay should be after the mixing time
     delay_range_ms: List[float] = [20.0, 50.0]
+    # ambisonics order for directional FDN
+    ambi_order: Optional[int] = None
 
     # config for the feedback loop
     feedback_loop_config: FeedbackLoopConfig = FeedbackLoopConfig()
@@ -206,6 +210,14 @@ class DiffGFDNConfig(BaseModel):
     input_filter_config: Optional[OutputFilterConfig] = OutputFilterConfig()
     # colorless FDN config
     colorless_fdn_config: ColorlessFDNConfig = ColorlessFDNConfig()
+
+    @computed_field
+    @property
+    def num_delay_lines(self) -> int:
+        """Number of delay lines depends on ambisonics order & num_groups."""
+        if self.ambi_order is not None:
+            return (self.ambi_order**2 + 1) * self.num_groups
+        return 12
 
     @computed_field
     @property

@@ -3,9 +3,12 @@ from typing import Dict, List, Optional, Tuple
 
 from loguru import logger
 import numpy as np
+from numpy.typing import NDArray
 from scipy.signal import butter
 import torch
 from torch import nn
+
+from spatial_sampling.model import Directional_Beamforming_Weights_from_MLP
 
 from .absorption_filters import decay_times_to_gain_filters_geq, decay_times_to_gain_per_sample
 from .colorless_fdn.utils import ColorlessFDNResults
@@ -271,6 +274,9 @@ class DiffGFDN(nn.Module):
             den_coeffs=sos_filter_coeffs[:, 3:])
         self.lowpass_filter = SOSFilter(sos_filter_coeffs.shape[0],
                                         device=self.device)
+
+
+#########################################################################
 
 
 class DiffGFDNVarSourceReceiverPos(DiffGFDN):
@@ -834,6 +840,9 @@ class DiffGFDNSinglePos(DiffGFDN):
         Compute H(z) = c(z)^T (D - A(z)Gamma(z))^{-1} b(z) + d(z)
         Args:
             x(dict) : input feature dict
+        Returns:
+                tensor: the frequency response of the GFDN of shape 
+                batch_size x num_freq_pts
         """
         z = x['z_values']
         num_freq_pts = len(z)
@@ -878,10 +887,6 @@ class DiffGFDNSinglePos(DiffGFDN):
 
         H = torch.einsum('ki, ik -> k', Htemp, B)
         H += direct_filter
-
-        # pass through a lowpass filter
-        # lowpass_response = self.lowpass_filter(z, self.lowpass_biquad)
-        # H_lp = H * lowpass_response
 
         if self.use_colorless_loss:
             H_sub_fdn = super().sub_fdn_output(z)
@@ -1053,5 +1058,195 @@ class DiffGFDNSinglePos(DiffGFDN):
 
         except Exception as e:
             logger.warning(e)
+
+        return param_np
+
+
+#################################################################################
+
+
+class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
+
+    def __init__(
+            self,
+            sample_rate: int,
+            num_groups: int,
+            delays: List[int],
+            device: torch.device,
+            feedback_loop_config: FeedbackLoopConfig,
+            output_filter_config: OutputFilterConfig,
+            ambi_order: int,
+            desired_directions: NDArray,
+            use_absorption_filters: bool = False,
+            learn_common_decay_times: Optional[bool] = False,
+            common_decay_times: Optional[List] = None,
+            band_centre_hz: Optional[List] = None,
+            colorless_fdn_params: Optional[List[ColorlessFDNResults]] = None,
+            use_colorless_loss: bool = False):
+        """
+        Differentiable Directional FDN module for a grid of listener locations, where the SH domain output gains
+        are learnt with deep learning.
+        Args:
+            sample_rate (int): sampling rate of the FDN
+            num_groups (int): number of rooms in coupled space
+            delays (list): list of delay line lengths (integer)
+            device: GPU or CPU for training
+            feedback_loop_config (FeedbackLoopConfig): config file for training the feedback loop
+            output_filter_config (OutputFilterConfig): config file for training the output SVF filters
+            ambi_order (int): ambisonics order for encoding output gains, equal to number of delay lines per group
+            desired_directions (NDArray): directions for which SH gains need to be calculated
+            use_absorption_filters (bool): whether to use scalar absorption gains or filters
+            common_decay_times (list): list of common decay times (one for each room)
+            band_centre_hz (optional, list): frequencies where common decay times are measured
+            colorless_fdn_params (ColorlessFDNResults, optional): dataclass containing the optimised
+                        input, output gains and feedback matrix from the lossless prototype
+            use_colorless_loss (bool): whether to use the colorless loss in the DiffGFDN cost function itself. 
+                                      Complementary to colorless_fdn_params, not to be used together
+        """
+        super().__init__(sample_rate, num_groups, delays, device,
+                         feedback_loop_config, use_absorption_filters,
+                         learn_common_decay_times, common_decay_times,
+                         band_centre_hz, colorless_fdn_params,
+                         use_colorless_loss)
+
+        self.ambi_order = ambi_order
+        assert self.num_delay_lines_per_group == (
+            self.ambi_order + 1
+        )**2, "Number of delay lines per group must be equal to the number of ambisonics channels"
+
+        self.input_scalars = torch.ones(self.num_groups, 1)
+        self.desired_directions = desired_directions
+
+        if output_filter_config.use_svfs:
+            logger.info("Not implemented yet!")
+            pass
+
+        logger.info("Using SH-domain gains in output")
+        self.use_svf_in_output = False
+        self.sh_output_scalars = Directional_Beamforming_Weights_from_MLP(
+            self.num_groups,
+            self.ambi_order,
+            output_filter_config.num_fourier_features,
+            output_filter_config.num_hidden_layers,
+            output_filter_config.num_neurons_per_layer,
+            self.desired_directions,
+            output_filter_config.beamformer_type,
+        )
+
+    def forward(self, x: Dict) -> torch.tensor:
+        """
+        Compute H(z) = c(z)^T (D - A(z)Gamma(z))^{-1} b(z) + d(z)
+        Args:
+            x(dict) : input feature dict
+        Returns:
+            tensor: the frequency response of the Directional FDN of shape 
+            batch_size x num_ambi_channels x num_freq_pts
+        """
+        z = x['z_values']
+        self.batch_size = x['listener_position'].shape[0]
+        num_freq_pts = len(z)
+
+        C_init = to_complex(
+            self.output_gains.expand(self.batch_size, self.num_groups,
+                                     self.num_delay_lines_per_group,
+                                     num_freq_pts))
+        # learn from MLP - original size is B x num_groups x num_del_lines_per_group (num_ambi_channels)
+        sh_gains = self.sh_output_scalars(x).reshape(
+            self.batch_size, self.num_groups, self.num_delay_lines_per_group,
+            1)
+
+        # this is of size B x Ng x num_ambi_channels x num_freq_points
+        sh_gains = sh_gains.repeat(1, 1, 1, num_freq_pts)
+        C = to_complex(sh_gains) * C_init
+
+        # this is also of size B x Ndel x num_freq_points
+        B = to_complex(
+            self.input_gains.expand(self.batch_size, self.num_delay_lines,
+                                    num_freq_pts))
+
+        # get the output of the feedback loop, this is of size num_freq_points x Ndel x Ndel
+        P = self.feedback_loop(z)
+        # P @ B of size B x Ndel x num_freq_pts
+        Htemp = torch.einsum('knm, bnk -> bmk', P, B)
+        Htemp = Htemp.reshape(self.batch_size, self.num_groups,
+                              self.num_delay_lines_per_group, num_freq_pts)
+
+        # should be of shape B x num_ambi_channels x num_freq_pts
+        H = (C * Htemp).reshape(self.batch_size,
+                                self.num_delay_lines_per_group, num_freq_pts)
+
+        if self.use_colorless_loss:
+            H_sub_fdn = super().sub_fdn_output(z)
+            return H, H_sub_fdn
+        else:
+            return H
+
+    def get_parameters(self) -> Tuple:
+        """Return the parameters as a tuple"""
+        delays = self.delays
+        b = self.input_gains
+        (M, Phi, _, _,
+         coupled_feedback_matrix) = self.feedback_loop.get_parameters()
+        sh_gains = self.sh_output_scalars.get_parameters()
+        gain_per_sample = self.feedback_loop.delay_line_gains
+        return (delays, gain_per_sample, b, M, Phi, coupled_feedback_matrix,
+                sh_gains)
+
+    @torch.no_grad()
+    def get_param_dict_inference(self, data: Dict) -> Dict:
+        """Get output of MLP during inference"""
+        param_np = {}
+        try:
+            param_out_mlp = self.sh_output_scalars.get_param_dict(data)
+            param_np['output_scalars'] = param_out_mlp['gains']
+        except Exception as e:
+            logger.warning(e)
+        return param_np
+
+    @torch.no_grad()
+    def get_param_dict(self) -> Dict:
+        """Return the parameters as a dict"""
+        param_np = {}
+        param_np['delays'] = self.delays.squeeze().cpu().numpy()
+        try:
+            param_np[
+                'gains_per_sample'] = self.feedback_loop.delay_line_gains.squeeze(
+                ).cpu().numpy()
+        except AttributeError as e:
+            logger.warning(e)
+
+        param_np['input_scalars'] = self.input_scalars.squeeze().cpu().numpy()
+        param_np['input_gains'] = self.input_gains.squeeze().cpu().numpy()
+        param_np['output_gains'] = self.output_gains.squeeze().cpu().numpy()
+
+        try:
+            if self.feedback_loop.coupling_matrix_type in (
+                    CouplingMatrixType.SCALAR, CouplingMatrixType.FILTER):
+                param_np[
+                    'coupled_feedback_matrix'] = self.feedback_loop.get_coupled_feedback_matrix(
+                    ).squeeze().cpu().numpy()
+                param_np[
+                    'individual_mixing_matrix'] = self.feedback_loop.M.squeeze(
+                    ).cpu().numpy()
+                if self.feedback_loop.coupling_matrix_type == CouplingMatrixType.SCALAR:
+                    param_np[
+                        'coupling_matrix'] = self.feedback_loop.nd_unitary(
+                            self.feedback_loop.alpha,
+                            self.num_groups).squeeze().cpu().numpy()
+                else:
+                    unitary_matrix = self.feedback_loop.ortho_param(
+                        self.feedback_loop.unitary_matrix)
+                    unit_vectors = self.feedback_loop.unit_vectors / torch.norm(
+                        self.feedback_loop.unit_vectors, dim=0, keepdim=True)
+                    param_np[
+                        'coupling_matrix'] = self.feedback_loop.fir_paraunitary(
+                            unitary_matrix,
+                            unit_vectors).squeeze().cpu().numpy()
+            else:
+                # any unitary matrix without any specific coupling structure
+                param_np[
+                    'coupled_feedback_matrix'] = self.feedback_loop.coupled_feedback_matrix
+        except Exception:
+            logger.warning('Parameter not initialised yet in FeedbackLoop!')
 
         return param_np

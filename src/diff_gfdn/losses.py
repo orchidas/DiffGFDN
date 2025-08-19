@@ -5,6 +5,7 @@ from loguru import logger
 import numpy as np
 import pyfar as pf
 from scipy.fft import rfftfreq
+from slope2noise.utils import decay_kernel
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -54,6 +55,9 @@ def scaled_shifted_sigmoid_inverse(x: torch.tensor, scale_factor: float,
     """
     return bottom + torch.div((top - bottom),
                               (1 + torch.exp(scale_factor * (x - cutoff))))
+
+
+###################################################################################
 
 
 class reg_loss(nn.Module):
@@ -277,6 +281,101 @@ class edc_loss(nn.Module):
         return loss
 
 
+class spatial_edc_loss_from_rir(nn.Module):
+    """Mean EDC loss between true and learned spatial mappings, calculated directly from the RIRs"""
+
+    def __init__(self,
+                 common_decay_times: List,
+                 edc_len_ms: float,
+                 fs: float,
+                 mixing_time_ms: float = 20.0,
+                 use_mask: bool = False):
+        """
+        Initialise EDC loss
+        Args:
+            common_decay_times (List): of size num_slopes x 1 to form the decay kernel
+            edc_len_ms (float): length of the EDC in ms
+            fs (float): sampling rate in Hz
+            mixing_time_ms (float): mixing time in ms
+            use_mask (bool): whether to randomly mask some time indices
+        """
+        super().__init__()
+        self.mixing_time_samps = ms_to_samps(mixing_time_ms, fs)
+        self.use_mask = use_mask
+        self.edc_len_samps = ms_to_samps(edc_len_ms, fs)
+        num_slopes = common_decay_times.shape[-1]
+        self.envelopes = torch.zeros((num_slopes, self.edc_len_samps))
+        time_axis = np.linspace(0, (self.edc_len_samps - 1) / fs,
+                                self.edc_len_samps)
+
+        for k in range(num_slopes):
+            self.envelopes[k, :] = torch.tensor(
+                decay_kernel(np.expand_dims(common_decay_times[:, k], axis=-1),
+                             time_axis,
+                             fs,
+                             normalize_envelope=True,
+                             add_noise=False)).squeeze()
+
+    def schroeder_backward_integral(self,
+                                    signal: torch.tensor,
+                                    normalize: bool = False):
+        """Schroeder backward integral to calculate energy decay curve"""
+        edc = torch.flip(torch.cumsum(torch.flip(signal**2, dims=[-1]),
+                                      dim=-1),
+                         dims=[-1])
+        if normalize:
+            # Normalize to 1
+            norm_vals, _ = torch.max(edc, dim=-1, keepdims=True)  # per channel
+            edc = torch.div(edc, norm_vals)
+
+        return edc
+
+    def forward(self, H_pred: torch.Tensor, amps_true: torch.Tensor):
+        """
+        Calculate the mean EDC loss over space and time.
+        The decay kernel is of shape num_slopes x time
+        Args:
+            H_pred (torch.Tensor): predicted transfer function of shape 
+                                   batch_size x num_directions x num_freq_pts
+            amps_true (torch.Tensor): true amplitudes of shape batch_size x num_directions x num_slopes
+        """
+        # Directional RIRs
+        # desired shape is batch_size x num_directions x num_time_samples
+        pred_rir = torch.fft.irfft(
+            H_pred,
+            H_pred.shape[-1])[..., self.mixing_time_samps:self.edc_len_samps +
+                              self.mixing_time_samps]
+
+        # predicted EDC from DiffDFDN response
+        edc_pred = self.schroeder_backward_integral(pred_rir)
+
+        # true EDC from common slope amplitudes
+        # sum along num slopes
+        edc_true = db(torch.einsum('bjk, kt -> bjt', amps_true,
+                                   self.envelopes),
+                      is_squared=True)
+
+        # randomly mask some of the indices
+        if self.use_mask:
+            probs = torch.empty(pred_rir.shape[-1]).uniform_(0, 1)
+            masked_index = torch.argwhere(torch.bernoulli(probs))
+        else:
+            masked_index = torch.arange(0,
+                                        pred_rir.shape[-1],
+                                        dtype=torch.int32)
+
+        # according to Gotz
+        loss = torch.mean(
+            torch.abs(
+                db(edc_true[..., masked_index], is_squared=True) -
+                db(edc_pred[..., masked_index], is_squared=True)))
+
+        return loss
+
+
+#########################################################################
+
+
 class edr_loss(nn.Module):
     """Loss function that returns the difference between the EDRs of two RIRs in dB"""
 
@@ -396,6 +495,9 @@ class edr_loss(nn.Module):
         else:
             return torch.div(torch.sum(freq_loss),
                              torch.sum(torch.abs(target_edr)))
+
+
+##################################################################################
 
 
 def get_stft_torch(rir: torch.tensor,

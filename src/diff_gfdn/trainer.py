@@ -15,8 +15,8 @@ from tqdm import trange
 
 from .colorless_fdn.losses import amse_loss, mse_loss, sparsity_loss
 from .config.config import TrainerConfig
-from .losses import edc_loss, edr_loss, reg_loss
-from .model import DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
+from .losses import edc_loss, edr_loss, reg_loss, spatial_edc_loss_from_rir
+from .model import DiffDirectionalFDNVarReceiverPos, DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
 from .utils import get_response, get_str_results, ms_to_samps
 
 # flake8: noqa: E231
@@ -39,6 +39,7 @@ class Trainer:
         self.use_colorless_loss = trainer_config.use_colorless_loss
         self.reduced_pole_radius = trainer_config.reduced_pole_radius
         self.subband_process_config = trainer_config.subband_process_config
+        self.use_directional_fdn = self.net.ambi_order is not None
 
         if self.subband_process_config is not None:
             self.init_subband_filters(trainer_config)
@@ -53,22 +54,35 @@ class Trainer:
         else:
             max_ir_len_ms = self.net.common_decay_times.max() * 1e3
 
-        # energy decay loss criteria
-        self.criterion = [
-            edr_loss(
-                self.net.sample_rate,
-                reduced_pole_radius=self.reduced_pole_radius,
-                use_erb_grouping=trainer_config.use_erb_edr_loss,
-                use_weight_fn=trainer_config.use_frequency_weighting,
-            ),
-            edc_loss(max_ir_len_ms,
-                     self.net.sample_rate,
-                     use_mask=trainer_config.use_edc_mask),
-        ]
-        self.loss_weights = torch.tensor(
-            [trainer_config.edr_loss_weight, trainer_config.edc_loss_weight])
+        # use directional EDC loss for Directional GFDN
+        if self.use_directional_fdn:
+            self.criterion = [
+                spatial_edc_loss_from_rir(self.net.common_decay_times,
+                                          max_ir_len_ms,
+                                          self.net.sample_rate,
+                                          use_mask=trainer_config.use_edc_mask)
+            ]
+            self.loss_weights = torch.tensor([trainer_config.edc_loss_weight])
 
-        if trainer_config.use_reg_loss:
+        # use omni EDC and EDR losses for omni GFDN
+        else:
+            # energy decay loss criteria
+            self.criterion = [
+                edr_loss(
+                    self.net.sample_rate,
+                    reduced_pole_radius=self.reduced_pole_radius,
+                    use_erb_grouping=trainer_config.use_erb_edr_loss,
+                    use_weight_fn=trainer_config.use_frequency_weighting,
+                ),
+                edc_loss(max_ir_len_ms,
+                         self.net.sample_rate,
+                         use_mask=trainer_config.use_edc_mask),
+            ]
+            self.loss_weights = torch.tensor([
+                trainer_config.edr_loss_weight, trainer_config.edc_loss_weight
+            ])
+
+        if not self.use_directional_fdn and self.use_reg_loss:
             logger.info(
                 'Using regularisation loss to reduce time domain aliasing in output filters'
             )
@@ -180,7 +194,7 @@ class Trainer:
             {
                 'params': [
                     param for name, param in self.net.named_parameters()
-                    if 'output_scalars' in name
+                    if 'output_scalars' in name or 'sh_output_scalars' in name
                 ],
                 'lr':
                 trainer_config.io_lr
@@ -193,7 +207,8 @@ class Trainer:
             param for name, param in self.net.named_parameters()
             if not ('feedback_loop.alpha' in name or 'input_gains' in name
                     or 'output_gains' in name or 'output_svf_params' in name
-                    or 'output_scalars' in name or 'input_scalars' in name)
+                    or 'output_scalars' in name or 'sh_output_scalars' in name
+                    or 'input_scalars' in name)
         ]
 
         # Add the other parameters with a learning rate of 0.01
@@ -250,17 +265,26 @@ class Trainer:
         Returns:
             Dict: dictionary of all losses
         """
-        edr_loss_val = self.loss_weights[0] * self.criterion[0](
-            data['target_rir_response'], H)
-        edc_loss_val = self.loss_weights[1] * self.criterion[1](
-            data['target_rir_response'], H)
 
-        all_losses = {
-            'edc_loss': edc_loss_val,
-            'edr_loss': edr_loss_val,
-        }
+        if self.use_directional_fdn:
+            spatial_edc_loss_val = self.loss_weights[0] * self.criterion[0](
+                H, data['target_common_slope_amps'])
+            all_losses = {
+                'edc_loss': spatial_edc_loss_val,
+            }
+        else:
 
-        if self.use_reg_loss:
+            edr_loss_val = self.loss_weights[0] * self.criterion[0](
+                data['target_rir_response'], H)
+            edc_loss_val = self.loss_weights[1] * self.criterion[1](
+                data['target_rir_response'], H)
+
+            all_losses = {
+                'edc_loss': edc_loss_val,
+                'edr_loss': edr_loss_val,
+            }
+
+        if not self.use_directional_fdn and self.use_reg_loss:
             reg_loss_val = self.loss_weights[2] * self.criterion[2](
                 self.net.biquad_cascade)
             all_losses.update({'reg_loss': reg_loss_val})
@@ -286,6 +310,9 @@ class Trainer:
             all_losses.update(colorless_losses)
 
         return all_losses
+
+
+###################################################################################
 
 
 class VarReceiverPosTrainer(Trainer):
@@ -526,6 +553,9 @@ class VarReceiverPosTrainer(Trainer):
         return (H, H_sub_fdn) if self.use_colorless_loss else H
 
 
+###########################################################################
+
+
 class SinglePosTrainer(Trainer):
     """Trainer class for training DiffGFDN on a single measured RIR"""
 
@@ -652,3 +682,232 @@ class SinglePosTrainer(Trainer):
                         int(self.net.sample_rate),
                         bits_per_sample=32,
                         channels_first=False)
+
+
+#########################################################################################
+
+
+class DirectionalFDNVarReceiverPosTrainer(Trainer):
+    """Class for training DiffGFDN for a grid of receiver positions"""
+
+    def __init__(self, net: DiffDirectionalFDNVarReceiverPos,
+                 trainer_config: TrainerConfig):
+        super().__init__(net, trainer_config)
+
+    def train(self, train_dataset: DataLoader):
+        """Train the network"""
+        self.train_loss = []
+        self.individual_train_loss = []
+
+        st = time.time()  # start time
+        # save initial parameters
+        super().save_model(-1)
+
+        for epoch in trange(self.max_epochs, desc='Training'):
+            logger.info(f'Epoch #{epoch}')
+            st_epoch = time.time()
+
+            # training
+            epoch_loss = 0.0
+            all_loss = {}
+
+            for data in train_dataset:
+                # normalise b, c at each training step to ensure the sub-FDNs have
+                # unit energy
+                self.normalize(data)
+
+                cur_loss, cur_all_loss = self.train_step(data)
+                epoch_loss += cur_loss
+
+                if not all_loss:
+                    all_loss = {key: 0.0 for key in cur_all_loss}
+
+                for key, value in cur_all_loss.items():
+                    all_loss[key] += value.item()
+
+            self.scheduler.step()
+            self.train_loss.append(epoch_loss / len(train_dataset))
+            for key, value in all_loss.items():
+                all_loss[key] /= len(train_dataset)
+            self.individual_train_loss.append(all_loss)
+            et_epoch = time.time()
+            super().save_model(epoch)
+            super().print_results(epoch, et_epoch - st_epoch)
+
+            # early stopping
+            if epoch >= 1:
+                if abs(self.train_loss[-2] - self.train_loss[-1]) <= 0.0001:
+                    self.early_stop += 1
+                else:
+                    self.early_stop = 0
+            if self.early_stop == self.patience:
+                break
+
+        et = time.time()  # end time
+        logger.info('Training time: {:.3f}s'.format(et - st))
+
+        # save the trained IRs
+        logger.info("Saving the trained IRs...")
+        for data in train_dataset:
+            src_position = data['source_position']
+            rec_position = data['listener_position']
+            self.save_ir(
+                data,
+                directory=self.ir_dir,
+                src_pos=src_position,
+                rec_pos=rec_position,
+            )
+
+    def train_step(self, data):
+        """Single step of training"""
+        self.optimizer.zero_grad()
+        if self.use_colorless_loss:
+            H_sh, H_sub_fdn = self.net(data)
+            # convert SH domain mag response to directional mag response
+            H_dir = self.convert_ambi_rir_to_directional_rir(H_sh)
+            all_losses = super().calculate_losses(data, H_dir, H_sub_fdn)
+        else:
+            H_sh = self.net(data)
+            # convert SH domain mag response to directional mag response
+            H_dir = self.convert_ambi_rir_to_directional_rir(H_sh)
+            all_losses = super().calculate_losses(data, H_dir)
+
+        loss = sum(all_losses.values())
+        loss.backward(retain_graph=self.net.learn_common_decay_times)
+        self.optimizer.step()
+
+        return loss.item(), all_losses
+
+    @torch.no_grad()
+    def validate(self, valid_dataset: DataLoader):
+        """Validate the training with unseen data and save the resulting IRs"""
+        total_loss = 0
+        self.valid_loss = []
+        self.individual_valid_loss = []
+
+        for data in valid_dataset:
+            rec_position = data['listener_position']
+            src_position = data['source_position']
+            logger.info("Running the network for new batch of positiions")
+            cur_all_losses = {}
+            if self.use_colorless_loss:
+                H_sh, H_sub_fdn = self.save_ir(data,
+                                               directory=self.ir_dir,
+                                               src_pos=src_position,
+                                               rec_pos=rec_position,
+                                               filename_prefix="valid_ir")
+                # convert SH domain mag response to directional mag response
+                H_dir = self.convert_ambi_rir_to_directional_rir(H_sh)
+                cur_all_losses = super().calculate_losses(
+                    data, H_dir, H_sub_fdn)
+
+            else:
+                H_sh = self.save_ir(data,
+                                    directory=self.ir_dir,
+                                    src_pos=src_position,
+                                    rec_pos=rec_position,
+                                    filename_prefix="valid_ir")
+                # convert SH domain mag response to directional mag response
+                H_dir = self.convert_ambi_rir_to_directional_rir(H_sh)
+                cur_all_losses = super().calculate_losses(data, H_dir)
+
+            cur_loss = sum(cur_all_losses.values())
+            total_loss += cur_loss
+
+            self.valid_loss.append(cur_loss)
+            self.individual_valid_loss.append(cur_all_losses)
+            logger.info(
+                f"The validation loss for the current position is {cur_loss:.4f}"
+            )
+
+        net_valid_loss = total_loss / len(valid_dataset)
+        logger.info(f"The net validation loss is {net_valid_loss:.4f}")
+
+    def convert_ambi_rir_to_directional_rir(self, H_sh: torch.Tensor):
+        """
+        Convert SH domain RIRs to directional RIRs
+        Args:
+            H_sh : magnitude response of DiffDFDN of shape batch_size, num_ambi_channels, num_freq_pts
+        Returns:
+            torch.Tensor: magnitude response of DiffDFDN of shape batch_size, num_directions, num_freq_pts
+        """
+        # get SH conversion matrix
+        sh_matrix = self.net.sh_output_scalars.analysis_matrix
+        # normalise MLP weights to have unit energy
+        self.net.sh_output_scalars.normalise_weights()
+        H_dir = torch.einsum('blk, lj -> bjk', H_sh, sh_matrix.T)
+        return H_dir
+
+    def normalize(self, data: Dict):
+        # average energy normalization - this normalises the energy
+        # of each of the sub-FDNs to be unity
+
+        if self.use_colorless_loss:
+            _, H_sub_fdn, _ = get_response(data, self.net)
+            energyH_sub = torch.mean(torch.pow(torch.abs(H_sub_fdn[0]), 2),
+                                     dim=0)
+            for name, prm in self.net.named_parameters():
+                if name in ('input_gains', 'output_gains'):
+                    for k in range(self.net.num_groups):
+                        ind_slice = torch.arange(
+                            k * self.net.num_delay_lines_per_group,
+                            (k + 1) * self.net.num_delay_lines_per_group,
+                            dtype=torch.int32)
+                        prm.data[ind_slice] /= torch.pow(energyH_sub[k], 1 / 4)
+
+    @torch.no_grad()
+    def save_ir(
+        self,
+        input_features: Dict,
+        directory: str,
+        src_pos: torch.tensor,
+        rec_pos: torch.tensor,
+        filename_prefix: str = "ir",
+        norm: bool = True,
+    ) -> torch.tensor:
+        """
+        Save the impulse response generated from the model
+        Args:
+            input_features (Dict): dictionary of input features
+            directory (str): where to save the audio
+            pos_list (torch.tensor): B x 3 position coordinates
+            norm (bool): whether to normalise the RIR
+        Returns:
+            torch.tensor - the frequency response at the given input features
+        """
+        if self.use_colorless_loss:
+            H, H_sub_fdn, h = get_response(input_features, self.net)
+        else:
+            H, h = get_response(input_features, self.net)
+
+        if norm:
+            h = torch.div(h, torch.max(torch.abs(h)))
+
+        num_src = 1 if src_pos.ndim == 1 or torch.all(
+            src_pos == src_pos[0]) else src_pos.shape[0]
+
+        for src_idx in range(num_src):
+            for num_pos in range(rec_pos.shape[0]):
+
+                if num_src == 1:
+                    filename = (
+                        f'{filename_prefix}_({rec_pos[num_pos,0]:.2f}, '
+                        f'{rec_pos[num_pos, 1]:.2f}, {rec_pos[num_pos, 2]:.2f}).wav'
+                    )
+                else:
+                    filename = (
+                        f'{filename_prefix}_src_pos=({src_pos[src_idx,0]:.2f}, '
+                        f'{src_pos[src_idx, 1]:.2f}, {src_pos[src_idx, 2]:.2f})'
+                        f'_rec_pos=({rec_pos[num_pos,0]:.2f}, '
+                        f'{rec_pos[num_pos, 1]:.2f}, {rec_pos[num_pos, 2]:.2f}).wav'
+                    )
+
+                filepath = os.path.join(directory, filename)
+                # for some reason torch audio expects a 2D tensor
+                torchaudio.save(filepath,
+                                torch.stack((h[num_pos, ...], h[num_pos, ...]),
+                                            dim=1).cpu(),
+                                int(self.net.sample_rate),
+                                bits_per_sample=32,
+                                channels_first=False)
+        return (H, H_sub_fdn) if self.use_colorless_loss else H
