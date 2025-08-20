@@ -1115,7 +1115,6 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
         )**2, "Number of delay lines per group must be equal to the number of ambisonics channels"
 
         self.input_scalars = torch.ones(self.num_groups, 1)
-        self.desired_directions = desired_directions
 
         if output_filter_config.use_svfs:
             logger.info("Not implemented yet!")
@@ -1129,8 +1128,8 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
             output_filter_config.num_fourier_features,
             output_filter_config.num_hidden_layers,
             output_filter_config.num_neurons_per_layer,
-            self.desired_directions,
-            output_filter_config.beamformer_type,
+            desired_directions=desired_directions,
+            beamformer_type=output_filter_config.beamformer_type,
         )
 
     def forward(self, x: Dict) -> torch.tensor:
@@ -1146,10 +1145,13 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
         self.batch_size = x['listener_position'].shape[0]
         num_freq_pts = len(z)
 
+        cur_output_gains = self.output_gains.reshape(
+            self.num_groups,
+            self.num_delay_lines_per_group).unsqueeze(0).unsqueeze(-1)
         C_init = to_complex(
-            self.output_gains.expand(self.batch_size, self.num_groups,
-                                     self.num_delay_lines_per_group,
-                                     num_freq_pts))
+            cur_output_gains.expand(self.batch_size, self.num_groups,
+                                    self.num_delay_lines_per_group,
+                                    num_freq_pts))
         # learn from MLP - original size is B x num_groups x num_del_lines_per_group (num_ambi_channels)
         sh_gains = self.sh_output_scalars(x).reshape(
             self.batch_size, self.num_groups, self.num_delay_lines_per_group,
@@ -1172,8 +1174,7 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
                               self.num_delay_lines_per_group, num_freq_pts)
 
         # should be of shape B x num_ambi_channels x num_freq_pts
-        H = (C * Htemp).reshape(self.batch_size,
-                                self.num_delay_lines_per_group, num_freq_pts)
+        H = (C * Htemp).sum(dim=1)
 
         if self.use_colorless_loss:
             H_sub_fdn = super().sub_fdn_output(z)

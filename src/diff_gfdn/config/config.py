@@ -216,7 +216,7 @@ class DiffGFDNConfig(BaseModel):
     def num_delay_lines(self) -> int:
         """Number of delay lines depends on ambisonics order & num_groups."""
         if self.ambi_order is not None:
-            return (self.ambi_order**2 + 1) * self.num_groups
+            return ((self.ambi_order + 1)**2) * self.num_groups
         return 12
 
     @computed_field

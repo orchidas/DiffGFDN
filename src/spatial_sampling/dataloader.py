@@ -6,11 +6,12 @@ from typing import Dict, List, Optional, Tuple, Union
 from loguru import logger
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+from scipy.fft import rfftfreq
 from scipy.interpolate import griddata
 import torch
 from torch.utils.data import DataLoader, Dataset, Sampler, Subset
 
-from diff_gfdn.dataloader import InputFeatures, to_device
+from diff_gfdn.dataloader import InputFeatures, split_dataset, to_device
 from diff_gfdn.utils import ms_to_samps
 
 from .config import DNNType
@@ -100,6 +101,22 @@ class SpatialRoomDataset(ABC):
                      self.receiver_position[:, k].min()) + self._eps)
         return norm_receiver_position
 
+    @property
+    def num_freq_bins(self):
+        """Number of frequency bins in the magnitude response"""
+        max_rt60_samps = self.common_decay_times.max() * self.sample_rate
+        return int(np.power(2, np.ceil(np.log2(max_rt60_samps))))
+
+    @property
+    def freq_bins_rad(self):
+        """Frequency bins in radians"""
+        return rfftfreq(self.num_freq_bins) * 2 * np.pi
+
+    @property
+    def freq_bins_hz(self):
+        """Frequency bins in Hz"""
+        return rfftfreq(self.num_freq_bins, d=1.0 / self.sample_rate)
+
     def update_receiver_pos(self, new_receiver_pos: NDArray):
         """Update receiver positions"""
         self.receiver_position = new_receiver_pos
@@ -177,6 +194,11 @@ class SpatialSamplingDataset(Dataset):
         self.room_start_coords = room_data.room_start_coord
         self.room_dims = room_data.room_dims
 
+        # frequency-domain data
+        freq_bins_rad = torch.tensor(room_data.freq_bins_rad)
+        self.z_values = torch.polar(torch.ones_like(freq_bins_rad),
+                                    freq_bins_rad)
+
         # if we have multiple sources in the dataset
         if self.source_position.dim() > 1:
             # Generate all valid (idx1, idx2) pairs
@@ -199,14 +221,16 @@ class SpatialSamplingDataset(Dataset):
             input_features = InputFeatures(torch.squeeze(self.source_position),
                                            self.listener_positions[idx],
                                            self.norm_listener_position[idx],
-                                           sph_directions=self.sph_directions)
+                                           sph_directions=self.sph_directions,
+                                           z_values=self.z_values)
             target_labels = self.common_slope_amps[idx, ...]
         else:
             idx1, idx2 = self.index_pairs[idx]
             input_features = InputFeatures(self.source_position[idx1],
                                            self.listener_positions[idx2],
                                            self.norm_listener_position[idx2],
-                                           sph_directions=self.sph_directions)
+                                           sph_directions=self.sph_directions,
+                                           z_values=self.z_values)
             target_labels = self.common_slope_amps[idx1, idx2, ...]
 
         return {'input': input_features, 'target': target_labels}
@@ -325,12 +349,19 @@ def custom_collate_spatial_sampling(
     # these are independent of the source/receiver locations
     directions = batch[0]['input'].sph_directions
 
+    # depends on source positions
+    source_positions = torch.stack(
+        [item['input'].source_position for item in batch])
+
     # depends on receiver positions
     listener_positions = torch.stack(
         [item['input'].listener_position for item in batch])
     norm_listener_positions = torch.stack(
         [item['input'].norm_listener_position for item in batch])
     target_amplitudes = torch.stack([item['target'] for item in batch])
+
+    # these are independent of the source/receiver locations
+    z_values = batch[0]['input'].z_values
 
     if network_type == DNNType.CNN:
         mesh_2D_data, mesh_2D_norm_data, target_amplitudes_2D = create_2D_grid_data(
@@ -339,16 +370,20 @@ def custom_collate_spatial_sampling(
         return {
             'listener_position': listener_positions,
             'norm_listener_position': norm_listener_positions,
+            'source_position': source_positions,
             'mesh_2D': mesh_2D_data,
             'mesh_2D_norm': mesh_2D_norm_data,
             'sph_directions': directions,
+            'z_values': z_values,
             'target_common_slope_amps': target_amplitudes_2D,
         }
     else:
         return {
             'listener_position': listener_positions,
             'norm_listener_position': norm_listener_positions,
+            'source_position': source_positions,
             'sph_directions': directions,
+            'z_values': z_values,
             'target_common_slope_amps': target_amplitudes,
         }
 
@@ -640,9 +675,10 @@ def get_dataloader(
 def load_dataset(
         room_data: SpatialRoomDataset,
         device: torch.device,
-        grid_resolution_m: float,
         network_type: str,
         batch_size: int = 32,
+        grid_resolution_m: Optional[float] = None,
+        train_valid_split_ratio: Optional[float] = None,
         shuffle: bool = True,
         drop_last: bool = False) -> Tuple[DataLoader, DataLoader, Dataset]:
     """
@@ -650,9 +686,11 @@ def load_dataset(
     Args:
         room_data (SpatialRoomDataset): object of type SpatialRoomDataset (for training with a grid of measurements) or 
         device (str): cuda (GPU) or cpu
-        grid_resolution (float): what is the resolution of the uniform grid used for measurement?
         network_type (str): is it a CNN or MLP?
         batch_size (int): number of samples in each batch size
+        grid_resolution_m (optional, float): what is the resolution of the uniform grid used for measurement?
+        train_valid_split_ratio(optional, float): if not sampling by grid resolution, 
+                                                  randomly split train and valid datset
         shuffle (bool): whether to randomly shuffle data during training
         drop_last (bool): whether to drop the last batch if it has less elements than batch_size
     Returns:
@@ -667,10 +705,13 @@ def load_dataset(
     sample_square_patches = network_type == DNNType.CNN
 
     # split data into training and validation set
-    train_set, valid_set = split_dataset_by_resolution(dataset,
-                                                       grid_resolution_m)
-    # print('Listener positions in the training set:')
-    # print(room_data.receiver_position[train_set.indices][:, :2])
+    if grid_resolution_m is None:
+        # randomly split data into training and validation set
+        train_set, valid_set = split_dataset(dataset, train_valid_split_ratio)
+    else:
+        # split dataset uniformly by grid resolution
+        train_set, valid_set = split_dataset_by_resolution(
+            dataset, grid_resolution_m)
 
     logger.info(
         f'The length of training dataset is {len(train_set)} and valid ' +

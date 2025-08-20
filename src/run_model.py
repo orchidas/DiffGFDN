@@ -8,7 +8,11 @@ import torch
 
 from diff_gfdn.config.config import DiffGFDNConfig
 from diff_gfdn.config.config_loader import dump_config_to_pickle, load_and_validate_config
-from diff_gfdn.solver import run_training_single_pos, run_training_var_receiver_pos
+from diff_gfdn.solver import (
+    run_training_anisotropic_decay_var_receiver_pos,
+    run_training_single_pos,
+    run_training_var_receiver_pos,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -66,7 +70,12 @@ def main():
     # run the training module either for various source-listener positions
     # or for a single measurement
     if config_dict.ir_path is None:
-        run_training_var_receiver_pos(config_dict)
+        # Omni RIRs
+        if config_dict.ambi_order is None:
+            run_training_var_receiver_pos(config_dict)
+        # Spatial RIRs
+        else:
+            run_training_anisotropic_decay_var_receiver_pos(config_dict)
     else:
         run_training_single_pos(config_dict)
 

@@ -17,7 +17,7 @@ from .colorless_fdn.losses import amse_loss, mse_loss, sparsity_loss
 from .config.config import TrainerConfig
 from .losses import edc_loss, edr_loss, reg_loss, spatial_edc_loss_from_rir
 from .model import DiffDirectionalFDNVarReceiverPos, DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
-from .utils import get_response, get_str_results, ms_to_samps
+from .utils import get_response, get_str_results, ms_to_samps, to_complex
 
 # flake8: noqa: E231
 # pylint: disable=W0632, E0606
@@ -688,7 +688,7 @@ class SinglePosTrainer(Trainer):
 
 
 class DirectionalFDNVarReceiverPosTrainer(Trainer):
-    """Class for training DiffGFDN for a grid of receiver positions"""
+    """Class for training Diff Directional FDN for a grid of receiver positions"""
 
     def __init__(self, net: DiffDirectionalFDNVarReceiverPos,
                  trainer_config: TrainerConfig):
@@ -832,9 +832,10 @@ class DirectionalFDNVarReceiverPosTrainer(Trainer):
             torch.Tensor: magnitude response of DiffDFDN of shape batch_size, num_directions, num_freq_pts
         """
         # get SH conversion matrix
-        sh_matrix = self.net.sh_output_scalars.analysis_matrix
+        sh_matrix = to_complex(self.net.sh_output_scalars.analysis_matrix)
         # normalise MLP weights to have unit energy
         self.net.sh_output_scalars.normalise_weights()
+        # convert to directional response
         H_dir = torch.einsum('blk, lj -> bjk', H_sh, sh_matrix.T)
         return H_dir
 
@@ -905,9 +906,8 @@ class DirectionalFDNVarReceiverPosTrainer(Trainer):
                 filepath = os.path.join(directory, filename)
                 # for some reason torch audio expects a 2D tensor
                 torchaudio.save(filepath,
-                                torch.stack((h[num_pos, ...], h[num_pos, ...]),
-                                            dim=1).cpu(),
+                                h[num_pos, ...].cpu(),
                                 int(self.net.sample_rate),
                                 bits_per_sample=32,
-                                channels_first=False)
+                                channels_first=True)
         return (H, H_sub_fdn) if self.use_colorless_loss else H

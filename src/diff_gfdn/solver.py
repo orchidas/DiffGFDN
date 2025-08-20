@@ -11,6 +11,10 @@ import optuna
 from slope2noise.dataclass import Slope2NoiseUnpickler
 import torch
 
+from spatial_sampling.config import DNNType
+from spatial_sampling.dataloader import load_dataset as load_dataset_spatial
+from spatial_sampling.dataloader import parse_room_data, SpatialRoomDataset
+
 from .colorless_fdn.dataloader import load_colorless_fdn_dataset
 from .colorless_fdn.model import ColorlessFDN
 from .colorless_fdn.trainer import ColorlessFDNTrainer
@@ -18,9 +22,14 @@ from .colorless_fdn.utils import ColorlessFDNResults
 from .config.config import DiffGFDNConfig
 from .dataloader import load_dataset, RIRData, RoomDataset, ThreeRoomDataset
 from .hypertuning import mlp_hyperparameter_tuning, MLPTuningConfig
-from .model import DiffGFDNSinglePos, DiffGFDNVarReceiverPos, DiffGFDNVarSourceReceiverPos
+from .model import (
+    DiffDirectionalFDNVarReceiverPos,
+    DiffGFDNSinglePos,
+    DiffGFDNVarReceiverPos,
+    DiffGFDNVarSourceReceiverPos,
+)
 from .save_results import save_colorless_fdn_parameters, save_diff_gfdn_parameters, save_loss
-from .trainer import SinglePosTrainer, VarReceiverPosTrainer
+from .trainer import DirectionalFDNVarReceiverPosTrainer, SinglePosTrainer, VarReceiverPosTrainer
 from .utils import db
 
 # pylint: disable=W0718
@@ -93,6 +102,23 @@ def data_parser_var_receiver_pos(
             config_dict.room_dataset_path, num_freq_bins)
 
     return room_data
+
+
+def data_parser_anisotropic_decay_var_receiver_pos(
+        config_dict: DiffGFDNConfig) -> SpatialRoomDataset:
+    """
+    Parse the training data for training over a grid of receiver positions (could belong to different rooms)
+    Args:
+        config_dict (DiffGFDNConfig): config dictionary
+    Returns:
+        SpatialRoomDataset: object of data type SpatialRoomDataset with all the room information
+    """
+    if "3room_FDTD" in config_dict.room_dataset_path:
+        # read the coupled room dataset
+        spatial_room_data = parse_room_data(config_dict.room_dataset_path)
+        return spatial_room_data
+    else:
+        logger.error("Other datasets not implemented yet!")
 
 
 def data_parser_single_receiver_pos(
@@ -234,6 +260,9 @@ def run_training_colorless_fdn(
                   filename=f'training_loss_vs_epoch_group={i + 1}')
 
     return params_opt
+
+
+################################################################################
 
 
 def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
@@ -390,11 +419,14 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
                   individual_losses=trainer.individual_valid_loss)
 
 
+#######################################################################################
+
+
 def run_training_single_pos(config_dict: DiffGFDNConfig):
     """
     Run the training for the differentiable GFDN for a single RIR measurement, and save its parameters
     Args:
-        config_dict (DiffGFDNTrainConfig): configuration parameters for training
+        config_dict (DiffGFDNConfig): configuration parameters for training
     """
     logger.info("Training for a single RIR measurement")
 
@@ -484,3 +516,110 @@ def run_training_single_pos(config_dict: DiffGFDNConfig):
               save_plot=True,
               filename='training_loss_vs_epoch',
               individual_losses=trainer.individual_train_loss)
+
+
+######################################################################################
+
+
+def run_training_anisotropic_decay_var_receiver_pos(
+        config_dict: DiffGFDNConfig):
+    """
+    Run the training for the differentiable directional FDN for a grid of different receiver positions, and save
+    its parameters
+    Args:
+        config_dict (DiffGFDNConfig): configuration parameters
+    """
+    # get the data
+    spatial_room_data = data_parser_anisotropic_decay_var_receiver_pos(
+        config_dict)
+
+    # add number of groups to the config dictionary
+    config_dict = config_dict.model_copy(
+        update={"num_groups": spatial_room_data.num_rooms})
+    assert config_dict.num_delay_lines % config_dict.num_groups == 0, "Delay lines must be \
+    divisible by number of groups in network"
+
+    # update ambisonics order
+    config_dict = config_dict.model_copy(
+        update={"ambi_order": spatial_room_data.ambi_order})
+
+    if config_dict.sample_rate != spatial_room_data.sample_rate:
+        logger.warning("Config sample rate does not match data, alterning it")
+        config_dict.sample_rate = spatial_room_data.sample_rate
+
+    # get the training config
+    trainer_config = config_dict.trainer_config
+    # update num_freq_bins in pydantic class
+    trainer_config = trainer_config.model_copy(
+        update={"num_freq_bins": spatial_room_data.num_freq_bins})
+
+    if config_dict.colorless_fdn_config.use_colorless_prototype and trainer_config.use_colorless_loss:
+        raise ValueError(
+            "Cannot use optimised colorless FDN parameters and colorless FDN loss together"
+        )
+
+    # are we using a colorless FDN to get the feedback matrix?
+    if config_dict.colorless_fdn_config.use_colorless_prototype:
+        colorless_fdn_params = run_training_colorless_fdn(
+            config_dict, spatial_room_data.num_freq_bins)
+    else:
+        colorless_fdn_params = None
+
+    # prepare the training and validation data for DiffGFDN
+    train_dataset, valid_dataset, _ = load_dataset_spatial(
+        spatial_room_data,
+        trainer_config.device,
+        network_type=DNNType.MLP,
+        batch_size=trainer_config.batch_size,
+        train_valid_split_ratio=trainer_config.train_valid_split,
+    )
+
+    # initialise the model
+    model = DiffDirectionalFDNVarReceiverPos(
+        spatial_room_data.sample_rate,
+        spatial_room_data.num_rooms,
+        config_dict.delay_length_samps,
+        trainer_config.device,
+        config_dict.feedback_loop_config,
+        config_dict.output_filter_config,
+        ambi_order=config_dict.ambi_order,
+        desired_directions=spatial_room_data.sph_directions,
+        common_decay_times=spatial_room_data.common_decay_times if
+        config_dict.decay_filter_config.initialise_with_opt_values else None,
+        band_centre_hz=spatial_room_data.band_centre_hz,
+        colorless_fdn_params=colorless_fdn_params,
+        use_colorless_loss=trainer_config.use_colorless_loss,
+    )
+
+    # set default device
+    torch.set_default_device(trainer_config.device)
+    # move model to device (cuda or cpu)
+    model = model.to(trainer_config.device)
+    # create the trainer object
+    trainer = DirectionalFDNVarReceiverPosTrainer(model, trainer_config)
+
+    # save initial parameters and ir
+    save_diff_gfdn_parameters(trainer.net, trainer_config.train_dir,
+                              'parameters_init.mat')
+
+    # train the network
+    trainer.train(train_dataset)
+    # save final trained parameters
+    save_diff_gfdn_parameters(trainer.net, trainer_config.train_dir,
+                              'parameters_opt.mat')
+    # save loss evolution
+    save_loss(trainer.train_loss,
+              trainer_config.train_dir,
+              save_plot=True,
+              filename='training_loss_vs_epoch',
+              individual_losses=trainer.individual_train_loss)
+
+    # test the network with the validation set
+    trainer.validate(valid_dataset)
+    # save the validation loss
+    save_loss(trainer.valid_loss,
+              trainer_config.train_dir,
+              save_plot=True,
+              filename='test_loss_vs_position',
+              xaxis_label='Position #',
+              individual_losses=trainer.individual_valid_loss)

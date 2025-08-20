@@ -351,7 +351,8 @@ class spatial_edc_loss_from_rir(nn.Module):
 
         # true EDC from common slope amplitudes
         # sum along num slopes
-        edc_true = db(torch.einsum('bjk, kt -> bjt', amps_true,
+        edc_true = db(torch.einsum('bjk, kt -> bjt',
+                                   amps_true.to(torch.float32),
                                    self.envelopes),
                       is_squared=True)
 

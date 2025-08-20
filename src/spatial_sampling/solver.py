@@ -540,9 +540,10 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig,
         train_dataset, valid_dataset, dataset_ref = load_dataset(
             room_data,
             config_dict.device,
-            grid_resolution_m=np.round(grid_resolution_m[k], 1),
             network_type=config_dict.network_type,
-            batch_size=config_dict.batch_size)
+            batch_size=config_dict.batch_size,
+            grid_resolution_m=np.round(grid_resolution_m[k], 1),
+        )
 
         if not plot_results_only:
             logger.info(
