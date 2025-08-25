@@ -15,7 +15,7 @@ from tqdm import trange
 
 from .colorless_fdn.losses import amse_loss, mse_loss, sparsity_loss
 from .config.config import TrainerConfig
-from .losses import edc_loss, edr_loss, reg_loss, spatial_edc_loss_from_rir
+from .losses import directional_edc_loss, edc_loss, edr_loss, reg_loss
 from .model import DiffDirectionalFDNVarReceiverPos, DiffGFDN, DiffGFDNSinglePos, DiffGFDNVarReceiverPos
 from .utils import get_response, get_str_results, ms_to_samps, to_complex
 
@@ -57,10 +57,10 @@ class Trainer:
         # use directional EDC loss for Directional GFDN
         if self.use_directional_fdn:
             self.criterion = [
-                spatial_edc_loss_from_rir(self.net.common_decay_times,
-                                          max_ir_len_ms,
-                                          self.net.sample_rate,
-                                          use_mask=trainer_config.use_edc_mask)
+                directional_edc_loss(self.net.common_decay_times,
+                                     max_ir_len_ms,
+                                     self.net.sample_rate,
+                                     use_mask=trainer_config.use_edc_mask)
             ]
             self.loss_weights = torch.tensor([trainer_config.edc_loss_weight])
 
@@ -273,7 +273,6 @@ class Trainer:
                 'edc_loss': spatial_edc_loss_val,
             }
         else:
-
             edr_loss_val = self.loss_weights[0] * self.criterion[0](
                 data['target_rir_response'], H)
             edc_loss_val = self.loss_weights[1] * self.criterion[1](
@@ -763,11 +762,23 @@ class DirectionalFDNVarReceiverPosTrainer(Trainer):
         self.optimizer.zero_grad()
         if self.use_colorless_loss:
             H_sh, H_sub_fdn = self.net(data)
+
+            # filter in subbands
+            if self.subband_process_config is not None:
+                # filter H in subbands before calculating loss
+                H_sh = H_sh * self.subband_filter_freq_resp.to(torch.complex64)
+
             # convert SH domain mag response to directional mag response
             H_dir = self.convert_ambi_rir_to_directional_rir(H_sh)
             all_losses = super().calculate_losses(data, H_dir, H_sub_fdn)
         else:
             H_sh = self.net(data)
+
+            # filter in subbands
+            if self.subband_process_config is not None:
+                # filter H in subbands before calculating loss
+                H_sh = H_sh * self.subband_filter_freq_resp.to(torch.complex64)
+
             # convert SH domain mag response to directional mag response
             H_dir = self.convert_ambi_rir_to_directional_rir(H_sh)
             all_losses = super().calculate_losses(data, H_dir)
@@ -796,6 +807,11 @@ class DirectionalFDNVarReceiverPosTrainer(Trainer):
                                                src_pos=src_position,
                                                rec_pos=rec_position,
                                                filename_prefix="valid_ir")
+                if self.subband_process_config is not None:
+                    # filter H in subbands before calculating loss
+                    H_sh = H_sh * self.subband_filter_freq_resp.to(
+                        torch.complex64)
+
                 # convert SH domain mag response to directional mag response
                 H_dir = self.convert_ambi_rir_to_directional_rir(H_sh)
                 cur_all_losses = super().calculate_losses(
@@ -807,6 +823,11 @@ class DirectionalFDNVarReceiverPosTrainer(Trainer):
                                     src_pos=src_position,
                                     rec_pos=rec_position,
                                     filename_prefix="valid_ir")
+                if self.subband_process_config is not None:
+                    # filter H in subbands before calculating loss
+                    H_sh = H_sh * self.subband_filter_freq_resp.to(
+                        torch.complex64)
+
                 # convert SH domain mag response to directional mag response
                 H_dir = self.convert_ambi_rir_to_directional_rir(H_sh)
                 cur_all_losses = super().calculate_losses(data, H_dir)
@@ -833,8 +854,6 @@ class DirectionalFDNVarReceiverPosTrainer(Trainer):
         """
         # get SH conversion matrix
         sh_matrix = to_complex(self.net.sh_output_scalars.analysis_matrix)
-        # normalise MLP weights to have unit energy
-        self.net.sh_output_scalars.normalise_weights()
         # convert to directional response
         H_dir = torch.einsum('blk, lj -> bjk', H_sh, sh_matrix.T)
         return H_dir

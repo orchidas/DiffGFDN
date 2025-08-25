@@ -190,6 +190,8 @@ class DiffGFDNConfig(BaseModel):
     seed: int = 46434
     # path to three room dataset
     room_dataset_path: str = 'resources/Georg_3room_FDTD/srirs.pkl'
+    # number of groups in the GFDN
+    num_groups: int = 3
     # if a single measurement is being used
     ir_path: Optional[str] = None
     # sampling rate of the FDN
@@ -200,6 +202,8 @@ class DiffGFDNConfig(BaseModel):
     delay_range_ms: List[float] = [20.0, 50.0]
     # ambisonics order for directional FDN
     ambi_order: Optional[int] = None
+    # total number of delay lines
+    num_delay_lines: Optional[int] = 12
 
     # config for the feedback loop
     feedback_loop_config: FeedbackLoopConfig = FeedbackLoopConfig()
@@ -211,13 +215,12 @@ class DiffGFDNConfig(BaseModel):
     # colorless FDN config
     colorless_fdn_config: ColorlessFDNConfig = ColorlessFDNConfig()
 
-    @computed_field
-    @property
-    def num_delay_lines(self) -> int:
-        """Number of delay lines depends on ambisonics order & num_groups."""
+    @model_validator(mode="after")
+    def set_num_delay_lines(self):
+        """Set number of delay lines based on ambisonics order"""
         if self.ambi_order is not None:
-            return ((self.ambi_order + 1)**2) * self.num_groups
-        return 12
+            self.num_delay_lines = ((self.ambi_order + 1)**2) * self.num_groups
+        return self
 
     @computed_field
     @property

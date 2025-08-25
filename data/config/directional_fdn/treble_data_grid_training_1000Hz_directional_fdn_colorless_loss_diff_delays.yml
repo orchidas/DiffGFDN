@@ -17,6 +17,7 @@ seed: 23649
 trainer_config:
   batch_size: 32
   edc_loss_weight: 10
+  io_lr: 0.001
   ir_dir: audio/directional_fdn/grid_rir_treble_band_centre=1000Hz_colorless_loss_diff_delays/
   max_epochs: 10
   num_freq_bins: 131072

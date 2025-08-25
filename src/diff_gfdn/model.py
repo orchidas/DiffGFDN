@@ -13,9 +13,10 @@ from spatial_sampling.model import Directional_Beamforming_Weights_from_MLP
 from .absorption_filters import decay_times_to_gain_filters_geq, decay_times_to_gain_per_sample
 from .colorless_fdn.utils import ColorlessFDNResults
 from .config.config import CouplingMatrixType, FeedbackLoopConfig, OutputFilterConfig
+from .dnn import ScaledSigmoid
 from .feedback_loop import FeedbackLoop
 from .filters.geq import eq_freqs
-from .gain_filters import BiquadCascade, Gains_from_MLP, ScaledSigmoid, SOSFilter, SVF, SVF_from_MLP
+from .gain_filters import BiquadCascade, Gains_from_MLP, SOSFilter, SVF, SVF_from_MLP
 from .utils import to_complex
 
 # pylint: disable=W0718, E1136, E1137
@@ -1152,13 +1153,19 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
             cur_output_gains.expand(self.batch_size, self.num_groups,
                                     self.num_delay_lines_per_group,
                                     num_freq_pts))
-        # learn from MLP - original size is B x num_groups x num_del_lines_per_group (num_ambi_channels)
-        sh_gains = self.sh_output_scalars(x).reshape(
-            self.batch_size, self.num_groups, self.num_delay_lines_per_group,
-            1)
+        # learn from MLP
+        sh_gains = self.sh_output_scalars(x)
+
+        # apply scaling to sh_gains to keep them between +1 and -1
+        # sh_gains = torch.tanh(sh_gains)
+
+        # reshape SH gains -  original size is B x num_groups x num_del_lines_per_group (num_ambi_channels)
+        sh_gains = sh_gains.reshape(self.batch_size, self.num_groups,
+                                    self.num_delay_lines_per_group, 1)
 
         # this is of size B x Ng x num_ambi_channels x num_freq_points
         sh_gains = sh_gains.repeat(1, 1, 1, num_freq_pts)
+
         C = to_complex(sh_gains) * C_init
 
         # this is also of size B x Ndel x num_freq_points
@@ -1199,7 +1206,7 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
         param_np = {}
         try:
             param_out_mlp = self.sh_output_scalars.get_param_dict(data)
-            param_np['output_scalars'] = param_out_mlp['gains']
+            param_np['output_scalars'] = param_out_mlp['beamformer_weights']
         except Exception as e:
             logger.warning(e)
         return param_np

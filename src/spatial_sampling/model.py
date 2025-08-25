@@ -75,10 +75,9 @@ class Directional_Beamforming_Weights(nn.Module):
                                             dtype=torch.float32,
                                             device=self.device)
 
-    def normalise_weights(self):
+    def normalise_weights(self, weights: torch.Tensor):
         """Normalise the learned weight matrix for energy preservation"""
-        return self.weights / (torch.norm(self.weights, dim=-1, keepdim=True) +
-                               1e-6)
+        return weights / (torch.norm(weights, dim=-1, keepdim=True) + 1e-6)
 
     def get_directional_amplitudes(self) -> torch.Tensor:
         """
@@ -86,11 +85,7 @@ class Directional_Beamforming_Weights(nn.Module):
         Returns:
             torch.Tensor: output matrix of size batch size x num_directions x num_slopes
         """
-        # normalise weights to have unit energy
-        self.normalise_weights()
-
         # we want the output shape to be num_batches, num_directions, num_slopes
-        # I have cross-checked that the following is correct
         output = torch.einsum('bkn, nj -> bjk', self.weights,
                               self.analysis_matrix.T)
 
@@ -174,6 +169,9 @@ class Directional_Beamforming_Weights_from_MLP(Directional_Beamforming_Weights
         reshape_size = (self.batch_size, self.num_groups,
                         self.num_out_features)
         self.weights = self.weights.reshape(reshape_size)
+
+        # normalise weights to have unit energy
+        self.weights = super().normalise_weights(self.weights)
 
         return self.weights
 

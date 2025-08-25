@@ -708,15 +708,18 @@ def load_dataset(
     if grid_resolution_m is None:
         # randomly split data into training and validation set
         train_set, valid_set = split_dataset(dataset, train_valid_split_ratio)
+        logger.info(
+            'Randomly splitting training and validation sets.' +
+            f'The length of training dataset is {len(train_set)} and valid ' +
+            f'dataset is {len(valid_set)}')
     else:
         # split dataset uniformly by grid resolution
         train_set, valid_set = split_dataset_by_resolution(
             dataset, grid_resolution_m)
-
-    logger.info(
-        f'The length of training dataset is {len(train_set)} and valid ' +
-        f'dataset is {len(valid_set)} for grid spacing of {grid_resolution_m}m'
-    )
+        logger.info(
+            f'The length of training dataset is {len(train_set)} and valid ' +
+            f'dataset is {len(valid_set)} for grid spacing of {grid_resolution_m} m'
+        )
 
     # dataloaders
     train_loader = get_dataloader(

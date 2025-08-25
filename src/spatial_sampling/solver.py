@@ -58,9 +58,9 @@ class make_plots:
         self.train_dataset, _, _ = load_dataset(
             room_data,
             config_dict.device,
-            grid_resolution_m=room_data.grid_spacing_m,
             network_type=config_dict.network_type,
             batch_size=config_dict.batch_size,
+            grid_resolution_m=room_data.grid_spacing_m,
             shuffle=False,
         )
 
@@ -626,26 +626,26 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig,
         )
 
         # plot EDC error for validation set only
-        # if grid_resolution_m[k] > room_data.grid_spacing_m:
-        #     valid_rec_idx = []
-        #     for data in valid_dataset:
-        #         cur_valid_pos = data['listener_position'].detach().cpu().numpy(
-        #         )
-        #         indx = room_data.find_rec_idx_in_room_dataset(cur_valid_pos)
-        #         valid_rec_idx = np.concatenate((valid_rec_idx, indx))
+        if grid_resolution_m[k] > room_data.grid_spacing_m:
+            valid_rec_idx = []
+            for data in valid_dataset:
+                cur_valid_pos = data['listener_position'].detach().cpu().numpy(
+                )
+                indx = room_data.find_rec_idx_in_room_dataset(cur_valid_pos)
+                valid_rec_idx = np.concatenate((valid_rec_idx, indx))
 
-        #     plot_obj.plot_edc_error_in_space(
-        #         grid_resolution_m[k],
-        #         est_amps,
-        #         est_points,
-        #         valid_rec_idx,
-        #     )
-        # else:
-        plot_obj.plot_edc_error_in_space(
-            grid_resolution_m[k],
-            est_amps,
-            est_points,
-        )
+            plot_obj.plot_edc_error_in_space(
+                grid_resolution_m[k],
+                est_amps,
+                est_points,
+                valid_rec_idx,
+            )
+        else:
+            plot_obj.plot_edc_error_in_space(
+                grid_resolution_m[k],
+                est_amps,
+                est_points,
+            )
 
         ax[0].set_xlabel('Epoch #')
         ax[0].set_ylabel('Training loss (log)')

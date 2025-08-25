@@ -281,8 +281,8 @@ class edc_loss(nn.Module):
         return loss
 
 
-class spatial_edc_loss_from_rir(nn.Module):
-    """Mean EDC loss between true and learned spatial mappings, calculated directly from the RIRs"""
+class directional_edc_loss(nn.Module):
+    """Mean EDC loss between true and learned directional mappings, calculated directly from the RIRs"""
 
     def __init__(self,
                  common_decay_times: List,
@@ -341,20 +341,16 @@ class spatial_edc_loss_from_rir(nn.Module):
         """
         # Directional RIRs
         # desired shape is batch_size x num_directions x num_time_samples
-        pred_rir = torch.fft.irfft(
-            H_pred,
-            H_pred.shape[-1])[..., self.mixing_time_samps:self.edc_len_samps +
-                              self.mixing_time_samps]
+        pred_rir = torch.fft.irfft(H_pred,
+                                   H_pred.shape[-1])[..., :self.edc_len_samps]
 
         # predicted EDC from DiffDFDN response
         edc_pred = self.schroeder_backward_integral(pred_rir)
 
         # true EDC from common slope amplitudes
         # sum along num slopes
-        edc_true = db(torch.einsum('bjk, kt -> bjt',
-                                   amps_true.to(torch.float32),
-                                   self.envelopes),
-                      is_squared=True)
+        edc_true = torch.einsum('bjk, kt -> bjt', amps_true.to(torch.float32),
+                                self.envelopes)
 
         # randomly mask some of the indices
         if self.use_mask:
