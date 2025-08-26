@@ -106,6 +106,8 @@ class TrainerConfig(BaseModel):
     device: str = 'cpu'
     # split between traning and validation
     train_valid_split: float = 0.8
+    # grid resolution if training on a uniform grid
+    grid_resolution_m: Optional[float] = None
     # maximum epochs for training
     max_epochs: int = 5
     # learning rate for Adam optimiser
@@ -224,6 +226,19 @@ class DiffGFDNConfig(BaseModel):
         if self.ambi_order is not None:
             self.num_delay_lines = ((self.ambi_order + 1)**2) * self.num_groups
         return self
+
+    # validator for the 'reduced_pole_radius' field
+    @model_validator(mode='after')
+    @classmethod
+    def set_train_valid_ratio(cls, model):
+        """Set training and validation set ratio"""
+        if model.trainer_config.grid_resolution_m is not None:
+            if model.ambi_order is None:
+                raise AttributeError(
+                    "Only use grid resolution for directional reverberation training!"
+                )
+            model.trainer_config.train_valid_split = None
+        return model
 
     @computed_field
     @property

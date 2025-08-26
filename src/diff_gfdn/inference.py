@@ -1,12 +1,15 @@
 from copy import deepcopy
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 from loguru import logger
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+import pandas as pd
 import pyfar as pf
+from scipy.signal import fftconvolve
 from slope2noise.rooms import RoomGeometry
 from slope2noise.utils import decay_kernel, schroeder_backward_int
 import torch
@@ -14,16 +17,17 @@ from torch import nn
 from tqdm import tqdm
 
 from spatial_sampling.config import DNNType
-from spatial_sampling.dataloader import SpatialRoomDataset
 from spatial_sampling.dataloader import load_dataset as load_spatial_dataset
+from spatial_sampling.dataloader import parse_room_data, SpatialRoomDataset
 
 from .config.config import DiffGFDNConfig, SubbandProcessingConfig
 from .dataloader import load_dataset, RoomDataset
+from .model import DiffDirectionalFDNVarReceiverPos
 from .plot import order_position_matrices, plot_edr
-from .utils import db, db2lin, get_response, ms_to_samps
+from .utils import db, db2lin, get_colorless_fdn_params, get_response, ms_to_samps
 
 # flake8: noqa:E231
-# pylint: disable=W0632
+# pylint: disable=W0632, E0606
 
 
 @dataclass
@@ -268,14 +272,18 @@ class InferDiffGFDN:
 class InferDiffDirectionalFDN:
     """Class for making plots for the Differentiable Directional FDN"""
 
-    def __init__(self, room_data: SpatialRoomDataset,
-                 config_dict: DiffGFDNConfig, model: nn.Module):
+    def __init__(self,
+                 room_data: SpatialRoomDataset,
+                 config_dict: DiffGFDNConfig,
+                 model: nn.Module,
+                 apply_filter_norm: bool = False):
         """
         Initialise parameters for the class
         Args:
             room_data (SpatialRoomDataset): object of SpatialRoomDataset dataclass
             config_dict (DiffGFDNConfig): config file, read as dictionary
             model (DiffDirectionalFDNVarReceiverPos): the NN model to be tested
+            apply_filter_norm (bool): whether to apply the normalising factor for subband filtering
         """
         self.room_data = deepcopy(room_data)
         self.model = deepcopy(model)
@@ -286,6 +294,7 @@ class InferDiffDirectionalFDN:
                                  np.array(room_data.room_start_coord),
                                  aperture_coords=room_data.aperture_coords)
         self.num_ambi_channels = (room_data.ambi_order + 1)**2
+        self.apply_filter_norm = apply_filter_norm
 
         # prepare the training and validation data
         self.train_dataset, _, _ = load_spatial_dataset(
@@ -328,10 +337,11 @@ class InferDiffDirectionalFDN:
         ]
 
         # get normalising factor to compensate for subband filtering
-        if self.config_dict.trainer_config.subband_process_config is not None:
-            self.subband_filter_norm_factor = InferDiffGFDN.get_norm_factor(
-                self.config_dict.trainer_config.subband_process_config,
-                self.room_data.sample_rate)
+        if self.apply_filter_norm:
+            if self.config_dict.trainer_config.subband_process_config is not None:
+                self.subband_filter_norm_factor = InferDiffGFDN.get_norm_factor(
+                    self.config_dict.trainer_config.subband_process_config,
+                    self.room_data.sample_rate)
         self._init_decay_kernel()
 
     def _init_decay_kernel(self):
@@ -368,7 +378,10 @@ class InferDiffDirectionalFDN:
         h_dir = torch.einsum('blk, lj -> bjk', h_sh, sh_matrix.T)
         return h_dir
 
-    def get_model_output(self, num_epochs: int) -> Tuple[NDArray, NDArray]:
+    def get_model_output(
+            self,
+            num_epochs: int,
+            return_directional_rirs: bool = True) -> Tuple[NDArray, NDArray]:
         """
         Get the estimated common slope amplitudes.
         Returns the positions and the directional RIRs at those positions
@@ -432,14 +445,18 @@ class InferDiffDirectionalFDN:
                     _, cur_ambi_rir = get_response(data, self.model)
                 est_pos = torch.vstack((est_pos, position))
                 est_ambi_rirs = torch.vstack((est_ambi_rirs, cur_ambi_rir))
+
+            if self.apply_filter_norm:
                 # compensate for subband filtering
-                est_ambi_rirs_comp = est_ambi_rirs * self.subband_filter_norm_factor
+                est_ambi_rirs *= self.subband_filter_norm_factor
 
             # convert from ambisonics to directional RIRs
-            est_dir_rirs = self.convert_ambi_rir_to_directional_rir(
-                est_ambi_rirs_comp)
-
-        return est_pos, est_dir_rirs
+            if return_directional_rirs:
+                est_dir_rirs = self.convert_ambi_rir_to_directional_rir(
+                    est_ambi_rirs)
+                return est_pos, est_dir_rirs
+            else:
+                return est_pos, est_ambi_rirs
 
     def plot_edc_error_in_space(self,
                                 est_dir_rirs: NDArray,
@@ -487,6 +504,9 @@ class InferDiffDirectionalFDN:
             dim=-1)
 
         logger.info(f'Mean EDC error in dB is {error_db.mean():.3f} dB')
+        to_append = f'grid_resolution={self.config_dict.trainer_config.grid_resolution_m}m' \
+                    if self.config_dict.trainer_config.grid_resolution_m is not None else \
+                    f'split_ratio={np.round(self.config_dict.trainer_config.train_valid_split, 1)}'
 
         for j in range(self.room_data.num_directions):
             save_dir = Path(
@@ -500,9 +520,8 @@ class InferDiffDirectionalFDN:
                 db2lin(error_db[:, j]),
                 scatter_plot=True,
                 cur_freq_hz=None,
-                save_path=f'{save_dir}/edc_error_in_space_' +
-                f'split_ratio={np.round(self.config_dict.trainer_config.train_valid_split, 1)}'
-                + extend + f'_epoch={epoch_num}.png',
+                save_path=f'{save_dir}/edc_error_in_space_' + to_append +
+                extend + f'_epoch={epoch_num}.png',
                 title=
                 f'az = {np.degrees(self.room_data.sph_directions[0, j]):.2f} deg,'
                 +
@@ -510,3 +529,161 @@ class InferDiffDirectionalFDN:
             )
 
         return original_edc, est_edc
+
+
+#######################################################################################
+
+
+def sum_arrays(group):
+    """Sum subband SRIRs to get a broadband SRIR"""
+    filtered = np.stack(group['filtered_time_samples'].values, axis=0)
+    summed_filtered = np.sum(filtered, axis=0)
+    # shape: (num_channels, num_time_samples)
+    print(summed_filtered.shape)
+    return summed_filtered
+
+
+def infer_all_octave_bands_directional_fdn(
+        freqs_list: List, config_dicts: List[DiffGFDNConfig],
+        save_filename: str,
+        fullband_room_dataset_path: Path) -> SpatialRoomDataset:
+    """
+    Run inference on all trained DiffDirectionalFDNs operating in all octave bands and save it in a dataframe
+    Args:
+        freqs_list (List): list of all frequencies
+        config_dicts (List): list of all config files
+        save_filename (str): path where dataframe is to be saved
+        fullband_room_dataset_path (Path): path to fullband room dataset
+    Returns:
+        SpatialRoomDataset: room data with synthesised RIRs 
+    """
+
+    # prepare the reconstructing filterbank
+    subband_filters, _ = pf.dsp.filter.reconstructing_fractional_octave_bands(
+        None,
+        num_fractions=config_dicts[0].trainer_config.subband_process_config.
+        num_fraction_octaves,
+        frequency_range=(freqs_list[0], freqs_list[-1]),
+        sampling_rate=config_dicts[0].sample_rate,
+    )
+
+    if not os.path.exists(save_filename):
+        synth_subband_rirs = pd.DataFrame(columns=[
+            'frequency', 'position', 'time_samples', 'filtered_time_samples'
+        ])
+
+        # loop through all subband frequencies
+        for k in range(len(freqs_list)):
+            logger.info(
+                f'Running inferencing for subband = {freqs_list[k]} Hz')
+
+            config_dict = config_dicts[k]
+            trainer_config = config_dict.trainer_config
+
+            if "3room_FDTD" in config_dict.room_dataset_path:
+                room_data = parse_room_data(
+                    Path(config_dict.room_dataset_path).resolve())
+            else:
+                logger.error("Other room data not supported currently")
+
+            config_dict = config_dict.model_copy(
+                update={"num_groups": room_data.num_rooms})
+            assert config_dict.num_delay_lines % config_dict.num_groups == 0, "Delay lines must be \
+                divisible by number of groups in network"
+
+            # update ambisonics order
+            config_dict = config_dict.model_copy(
+                update={"ambi_order": room_data.ambi_order})
+
+            if config_dict.sample_rate != room_data.sample_rate:
+                logger.warning(
+                    "Config sample rate does not match data, alterning it")
+                config_dict.sample_rate = room_data.sample_rate
+
+            # get the training config
+            trainer_config = config_dict.trainer_config
+            # update num_freq_bins in pydantic class
+            trainer_config = trainer_config.model_copy(
+                update={"num_freq_bins": room_data.num_freq_bins})
+
+            # are we using a colorless FDN to get the feedback matrix?
+            if config_dict.colorless_fdn_config.use_colorless_prototype:
+                colorless_fdn_params = get_colorless_fdn_params(config_dict)
+            else:
+                colorless_fdn_params = None
+
+            # initialise the model
+            model = DiffDirectionalFDNVarReceiverPos(
+                room_data.sample_rate,
+                room_data.num_rooms,
+                config_dict.delay_length_samps,
+                trainer_config.device,
+                config_dict.feedback_loop_config,
+                config_dict.output_filter_config,
+                ambi_order=config_dict.ambi_order,
+                desired_directions=room_data.sph_directions,
+                common_decay_times=room_data.common_decay_times
+                if config_dict.decay_filter_config.initialise_with_opt_values
+                else None,
+                band_centre_hz=room_data.band_centre_hz,
+                colorless_fdn_params=colorless_fdn_params,
+                use_colorless_loss=trainer_config.use_colorless_loss,
+            )
+
+            # create the inference object
+            cur_infer_fdn = InferDiffDirectionalFDN(room_data,
+                                                    config_dict,
+                                                    model,
+                                                    apply_filter_norm=False)
+
+            # get the ambisonics RIRs for the current frequency band
+            position, est_ambi_rirs = cur_infer_fdn.get_model_output(
+                trainer_config.max_epochs, return_directional_rirs=False)
+
+            # loop over all positions for a particular frequency band and add it to a dataframe
+            for num_pos in range(position.shape[0]):
+                cur_rir = est_ambi_rirs[num_pos, ...].detach().cpu().numpy()
+
+                # filter the current SRIR
+                cur_rir_filtered = fftconvolve(
+                    cur_rir,
+                    subband_filters.coefficients[k, :][None, :],
+                    mode='full')
+
+                # position should be saved as tuple because numpy array is unhashable
+                new_row = pd.DataFrame({
+                    'frequency': [freqs_list[k]],
+                    'position': [(position[num_pos,
+                                           0], position[num_pos,
+                                                        1], position[num_pos,
+                                                                     2])],
+                    'filtered_time_samples': [cur_rir_filtered],
+                    'time_samples': [cur_rir],
+                })
+                synth_subband_rirs = pd.concat([synth_subband_rirs, new_row],
+                                               ignore_index=True)
+
+            synth_subband_rirs.to_pickle(save_filename)
+    else:
+        logger.info('Reading saved pickle file')
+        synth_subband_rirs = pd.read_pickle(save_filename)
+
+    # Save the synthesised RIRs
+    logger.info('Returning synthesised SRIRs as SpatialRoomDataset object')
+
+    # get the fullband dataset as SpatialRoomDataset object
+    fullband_room_data = parse_room_data(fullband_room_dataset_path.resolve())
+    dfdn_room_data = deepcopy(fullband_room_data)
+
+    # get all receiver positions - shape is (num_positions, 3)
+    rec_pos_list = np.vstack(synth_subband_rirs['position'].unique())
+
+    # Group by position and sum the filtered_time_samples over each frequency band
+    # returns Series where each value is (num_channels, num_time_samples)
+    synth_rirs = synth_subband_rirs.groupby('position').apply(sum_arrays)
+    # Now stack them into a single array: (num_positions, num_channels, num_time_samples)
+    est_rirs = np.stack(synth_rirs.values, axis=0)
+
+    dfdn_room_data.update_receiver_pos(rec_pos_list)
+    dfdn_room_data.update_rirs(est_rirs)
+    return dfdn_room_data

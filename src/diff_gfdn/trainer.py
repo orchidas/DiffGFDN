@@ -381,6 +381,7 @@ class VarReceiverPosTrainer(Trainer):
             for key, value in all_loss.items():
                 all_loss[key] /= len(train_dataset)
             self.individual_train_loss.append(all_loss)
+
             et_epoch = time.time()
             super().save_model(epoch)
             super().print_results(epoch, et_epoch - st_epoch)

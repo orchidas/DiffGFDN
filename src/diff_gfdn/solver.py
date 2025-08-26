@@ -571,6 +571,7 @@ def run_training_anisotropic_decay_var_receiver_pos(
         trainer_config.device,
         network_type=DNNType.MLP,
         batch_size=trainer_config.batch_size,
+        grid_resolution_m=trainer_config.grid_resolution_m,
         train_valid_split_ratio=trainer_config.train_valid_split,
     )
 

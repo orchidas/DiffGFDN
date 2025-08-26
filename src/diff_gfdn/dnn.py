@@ -364,11 +364,10 @@ class MLP(nn.Module):
         layers.append(nn.ReLU())  # Activation function
 
         # Add N hidden layers with L neurons each
-        for num_layer in range(num_hidden_layers):
+        for _ in range(num_hidden_layers):
             layers.append(nn.Linear(num_neurons, num_neurons))
-            # add layer normalisation every 3rd layer
-            if num_layer % 3 == 0:
-                layers.append(nn.LayerNorm(num_neurons))
+            # add layer normalisation
+            layers.append(nn.LayerNorm(num_neurons))
             layers.append(nn.ReLU())  # Activation function
 
         # Last hidden layer -> Output layer
