@@ -264,6 +264,70 @@ class ConvNet(nn.Module):
         return out.view(H, W, self.num_groups, self.out_channels)
 
 
+class ResidualBlock(nn.Module):
+    """ResNet style skip connections"""
+
+    def __init__(self, num_neurons: int):
+        super().__init__()
+        self.linear = nn.Linear(num_neurons, num_neurons)
+        self.norm = nn.LayerNorm(num_neurons)
+        self.activation = nn.ReLU()
+
+    def forward(self, x: torch.Tensor):
+        residual = x
+        out = self.linear(x)
+        out = self.norm(out)
+        out = self.activation(out)
+        return out + residual
+
+
+class MLP_SkipConnections(nn.Module):
+    """MLP with ResNet style skip connections"""
+
+    def __init__(self, num_pos_features: int, num_hidden_layers: int,
+                 num_neurons: int, num_groups: int,
+                 num_biquads_in_cascade: int, num_params: int):
+        super().__init__()
+
+        input_size = num_pos_features
+        self.num_biquads = num_biquads_in_cascade
+        self.num_groups = num_groups
+        self.num_params = num_params
+        output_size = self.num_groups * self.num_params * self.num_biquads
+
+        # Input projection
+        self.input_layer = nn.Sequential(nn.Linear(input_size, num_neurons),
+                                         nn.LayerNorm(num_neurons), nn.ReLU())
+
+        # Residual hidden layers
+        self.hidden_layers = nn.ModuleList(
+            [ResidualBlock(num_neurons) for _ in range(num_hidden_layers)])
+
+        # Output projection
+        self.output_layer = nn.Linear(num_neurons, output_size)
+
+        self._initialise_weights()
+
+    def _initialise_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                init.kaiming_uniform_(m.weight, nonlinearity='relu')
+                if m.bias is not None:
+                    init.constant_(m.bias, 0)
+
+    def forward(self, x: torch.Tensor):
+        batch_size = x.shape[0]
+        x = self.input_layer(x)
+
+        for layer in self.hidden_layers:
+            x = layer(x)
+
+        x = self.output_layer(x)
+        x = x.view(batch_size, self.num_groups, self.num_biquads,
+                   self.num_params)
+        return x
+
+
 class MLP(nn.Module):
 
     def __init__(self, num_pos_features: int, num_hidden_layers: int,
@@ -300,9 +364,11 @@ class MLP(nn.Module):
         layers.append(nn.ReLU())  # Activation function
 
         # Add N hidden layers with L neurons each
-        for _ in range(num_hidden_layers):
+        for num_layer in range(num_hidden_layers):
             layers.append(nn.Linear(num_neurons, num_neurons))
-            layers.append(nn.LayerNorm(num_neurons))
+            # add layer normalisation every 3rd layer
+            if num_layer % 3 == 0:
+                layers.append(nn.LayerNorm(num_neurons))
             layers.append(nn.ReLU())  # Activation function
 
         # Last hidden layer -> Output layer

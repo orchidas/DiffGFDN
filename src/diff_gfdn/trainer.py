@@ -310,6 +310,23 @@ class Trainer:
 
         return all_losses
 
+    def normalize(self, data: Dict):
+        # average energy normalization - this normalises the energy
+        # of each of the sub-FDNs to be unity
+
+        if self.use_colorless_loss:
+            _, H_sub_fdn, _ = get_response(data, self.net)
+            energyH_sub = torch.mean(torch.pow(torch.abs(H_sub_fdn[0]), 2),
+                                     dim=0)
+            for name, prm in self.net.named_parameters():
+                if name in ('input_gains', 'output_gains'):
+                    for k in range(self.net.num_groups):
+                        ind_slice = torch.arange(
+                            k * self.net.num_delay_lines_per_group,
+                            (k + 1) * self.net.num_delay_lines_per_group,
+                            dtype=torch.int32)
+                        prm.data[ind_slice] /= torch.pow(energyH_sub[k], 1 / 4)
+
 
 ###################################################################################
 
@@ -348,7 +365,7 @@ class VarReceiverPosTrainer(Trainer):
                 # normalise b, c at each training step to ensure the sub-FDNs have
                 # unit energy
                 if not self.net.use_svf_in_output:
-                    self.normalize(data)
+                    super().normalize(data)
 
                 cur_loss, cur_all_loss = self.train_step(data)
                 epoch_loss += cur_loss
@@ -470,23 +487,6 @@ class VarReceiverPosTrainer(Trainer):
 
         net_valid_loss = total_loss / len(valid_dataset)
         logger.info(f"The net validation loss is {net_valid_loss:.4f}")
-
-    def normalize(self, data: Dict):
-        # average energy normalization - this normalises the energy
-        # of each of the sub-FDNs to be unity
-
-        if self.use_colorless_loss:
-            _, H_sub_fdn, _ = get_response(data, self.net)
-            energyH_sub = torch.mean(torch.pow(torch.abs(H_sub_fdn[0]), 2),
-                                     dim=0)
-            for name, prm in self.net.named_parameters():
-                if name in ('input_gains', 'output_gains'):
-                    for k in range(self.net.num_groups):
-                        ind_slice = torch.arange(
-                            k * self.net.num_delay_lines_per_group,
-                            (k + 1) * self.net.num_delay_lines_per_group,
-                            dtype=torch.int32)
-                        prm.data[ind_slice] /= torch.pow(energyH_sub[k], 1 / 4)
 
     @torch.no_grad()
     def save_ir(
@@ -636,19 +636,8 @@ class SinglePosTrainer(Trainer):
         # average energy normalization - this normalises the energy
         # of the initial FDN to the target impulse response
 
-        if self.use_colorless_loss:
-            H, H_sub_fdn, _ = get_response(data, self.net)
-            energyH_sub = torch.mean(torch.pow(torch.abs(H_sub_fdn[0]), 2),
-                                     dim=0)
-            for name, prm in self.net.named_parameters():
-                if name in ('input_gains', 'output_gains'):
-                    for k in range(self.net.num_groups):
-                        ind_slice = torch.arange(
-                            k * self.net.num_delay_lines_per_group,
-                            (k + 1) * self.net.num_delay_lines_per_group,
-                            dtype=torch.int32)
-                        prm.data[ind_slice] /= torch.pow(energyH_sub[k], 1 / 4)
-        else:
+        super().normalize(data)
+        if not self.use_colorless_loss:
             H, _ = get_response(data, self.net)
         energyH = torch.mean(torch.pow(torch.abs(H), 2))
         energyH_target = torch.mean(
@@ -713,7 +702,7 @@ class DirectionalFDNVarReceiverPosTrainer(Trainer):
             for data in train_dataset:
                 # normalise b, c at each training step to ensure the sub-FDNs have
                 # unit energy
-                self.normalize(data)
+                super().normalize(data)
 
                 cur_loss, cur_all_loss = self.train_step(data)
                 epoch_loss += cur_loss
@@ -857,23 +846,6 @@ class DirectionalFDNVarReceiverPosTrainer(Trainer):
         # convert to directional response
         H_dir = torch.einsum('blk, lj -> bjk', H_sh, sh_matrix.T)
         return H_dir
-
-    def normalize(self, data: Dict):
-        # average energy normalization - this normalises the energy
-        # of each of the sub-FDNs to be unity
-
-        if self.use_colorless_loss:
-            _, H_sub_fdn, _ = get_response(data, self.net)
-            energyH_sub = torch.mean(torch.pow(torch.abs(H_sub_fdn[0]), 2),
-                                     dim=0)
-            for name, prm in self.net.named_parameters():
-                if name in ('input_gains', 'output_gains'):
-                    for k in range(self.net.num_groups):
-                        ind_slice = torch.arange(
-                            k * self.net.num_delay_lines_per_group,
-                            (k + 1) * self.net.num_delay_lines_per_group,
-                            dtype=torch.int32)
-                        prm.data[ind_slice] /= torch.pow(energyH_sub[k], 1 / 4)
 
     @torch.no_grad()
     def save_ir(

@@ -7,7 +7,7 @@ import spaudiopy as sp
 import torch
 from torch import nn
 
-from diff_gfdn.dnn import ConvNet, MLP, ScaledSigmoid, Sigmoid, SinusoidalEncoding
+from diff_gfdn.dnn import ConvNet, MLP, MLP_SkipConnections, ScaledSigmoid, Sigmoid, SinusoidalEncoding
 
 from .config import BeamformerType
 
@@ -127,6 +127,7 @@ class Directional_Beamforming_Weights_from_MLP(Directional_Beamforming_Weights
         desired_directions: NDArray,
         device: Optional[torch.device] = 'cpu',
         beamformer_type: Optional[BeamformerType] = None,
+        use_skip_connections: Optional[bool] = False,
     ):
         """
         Train the MLP to get directional beamformer weights for the amplitudes of each slope, as a function
@@ -138,6 +139,7 @@ class Directional_Beamforming_Weights_from_MLP(Directional_Beamforming_Weights
                 num_fourier_features (int): how much will the spatial locations expand as a feature
                 num_hidden_layers (int): Number of hidden layers.
                 num_neurons (int): Number of neurons in each hidden layer.
+                use_skip_connections (bool): whether to use ResNet style skip connections
 
         """
         super().__init__(num_groups, ambi_order, num_fourier_features,
@@ -148,12 +150,21 @@ class Directional_Beamforming_Weights_from_MLP(Directional_Beamforming_Weights
         num_input_features = 3 * num_fourier_features * 2
         self.encoder = SinusoidalEncoding(num_fourier_features)
 
-        self.mlp = MLP(num_input_features,
-                       num_hidden_layers,
-                       num_neurons,
-                       self.num_groups,
-                       num_biquads_in_cascade=1,
-                       num_params=self.num_out_features)
+        if use_skip_connections:
+            logger.info("Using ResNet style skip connections")
+            self.mlp = MLP_SkipConnections(num_input_features,
+                                           num_hidden_layers,
+                                           num_neurons,
+                                           self.num_groups,
+                                           num_biquads_in_cascade=1,
+                                           num_params=self.num_out_features)
+        else:
+            self.mlp = MLP(num_input_features,
+                           num_hidden_layers,
+                           num_neurons,
+                           self.num_groups,
+                           num_biquads_in_cascade=1,
+                           num_params=self.num_out_features)
 
     def forward(self, x: Dict) -> torch.tensor:
         """Run the input features through the MLP. Output is of size batch_size x num_slopes x (N_sp+1)**2"""

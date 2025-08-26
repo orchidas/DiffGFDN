@@ -79,9 +79,12 @@ class OutputFilterConfig(BaseModel):
     num_hidden_layers: int = 3
     num_neurons_per_layer: int = 2**7
     num_fourier_features: int = 10
+    # sinusoidal encoding
     encoding_type: FeatureEncodingType = FeatureEncodingType.SINE
     # beamforming type for converting from SHD to directional amplitudes
     beamformer_type: Optional[BeamformerType] = None
+    # whether to use skip connections in MLP
+    use_skip_connections: bool = False
 
 
 class DecayFilterConfig(BaseModel):

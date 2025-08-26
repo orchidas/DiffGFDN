@@ -481,7 +481,10 @@ class InferDiffDirectionalFDN:
                                        self.envelopes),
                           is_squared=True)
 
-        error_db = torch.mean(torch.abs(original_edc - est_edc), dim=-1)
+        error_db = torch.mean(
+            torch.abs(original_edc[..., self.mixing_time_samps:] -
+                      est_edc[..., self.mixing_time_samps:]),
+            dim=-1)
 
         logger.info(f'Mean EDC error in dB is {error_db.mean():.3f} dB')
 

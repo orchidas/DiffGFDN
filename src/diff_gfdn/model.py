@@ -4,7 +4,6 @@ from typing import Dict, List, Optional, Tuple
 from loguru import logger
 import numpy as np
 from numpy.typing import NDArray
-from scipy.signal import butter
 import torch
 from torch import nn
 
@@ -92,9 +91,6 @@ class DiffGFDN(nn.Module):
         self._init_absorption(band_centre_hz)
         # initialise feedback loop
         self._init_feedback(feedback_loop_config, colorless_fdn_params)
-
-        # add a lowpass filter at the end to remove high frequency artifacts
-        self.design_lowpass_filter()
 
     def _init_io_gains(self, colorless_fdn_params: Optional[List] = None):
         """Initialise input/output gains"""
@@ -253,28 +249,48 @@ class DiffGFDN(nn.Module):
 
         return (Hout, Hout_per_del)
 
-    def design_lowpass_filter(
-        self,
-        filter_order: int = 16,
-    ):
-        """
-        Add a lowpass filter in the end to prevent spurius high frequency artifacts
-        Args:
-            filter_order (int): IIR filter order
-            cutoff_hz (float): cutoff frequency of the lowpass (12k by default)
-        """
-        cutoff_hz = self.sample_rate / 2 - 1e3
-        sos_filter_coeffs = torch.tensor(
-            butter(filter_order,
-                   cutoff_hz / (self.sample_rate / 2.0),
-                   btype='lowpass',
-                   output='sos'))
-        self.lowpass_biquad = BiquadCascade(
-            num_sos=sos_filter_coeffs.shape[0],
-            num_coeffs=sos_filter_coeffs[:, :3],
-            den_coeffs=sos_filter_coeffs[:, 3:])
-        self.lowpass_filter = SOSFilter(sos_filter_coeffs.shape[0],
-                                        device=self.device)
+    @torch.no_grad()
+    def get_param_dict(self) -> Dict:
+        """Return the parameters as a dict"""
+        param_np = {}
+        param_np['delays'] = self.delays.squeeze().cpu().numpy()
+        param_np[
+            'gains_per_sample'] = self.feedback_loop.delay_line_gains.squeeze(
+            ).cpu().numpy()
+        param_np['input_gains'] = self.input_gains.squeeze().cpu().numpy()
+        param_np['output_gains'] = self.output_gains.squeeze().cpu().numpy()
+
+        try:
+            if self.feedback_loop.coupling_matrix_type in (
+                    CouplingMatrixType.SCALAR, CouplingMatrixType.FILTER):
+                param_np[
+                    'coupled_feedback_matrix'] = self.feedback_loop.get_coupled_feedback_matrix(
+                    ).squeeze().cpu().numpy()
+                param_np[
+                    'individual_mixing_matrix'] = self.feedback_loop.M.squeeze(
+                    ).cpu().numpy()
+                if self.feedback_loop.coupling_matrix_type == CouplingMatrixType.SCALAR:
+                    param_np[
+                        'coupling_matrix'] = self.feedback_loop.nd_unitary(
+                            self.feedback_loop.alpha,
+                            self.num_groups).squeeze().cpu().numpy()
+                else:
+                    unitary_matrix = self.feedback_loop.ortho_param(
+                        self.feedback_loop.unitary_matrix)
+                    unit_vectors = self.feedback_loop.unit_vectors / torch.norm(
+                        self.feedback_loop.unit_vectors, dim=0, keepdim=True)
+                    param_np[
+                        'coupling_matrix'] = self.feedback_loop.fir_paraunitary(
+                            unitary_matrix,
+                            unit_vectors).squeeze().cpu().numpy()
+            else:
+                # any unitary matrix without any specific coupling structure
+                param_np[
+                    'coupled_feedback_matrix'] = self.feedback_loop.coupled_feedback_matrix
+        except Exception:
+            logger.warning('Parameter not initialised yet in FeedbackLoop!')
+
+        return param_np
 
 
 #########################################################################
@@ -423,11 +439,6 @@ class DiffGFDNVarSourceReceiverPos(DiffGFDN):
         # C.T @ P @ B + d(z)
         H = torch.einsum('bmk, bmk -> bk', Htemp, B) + direct_filter
 
-        # pass through a lowpass filter
-        # if self.use_svf_in_output or self.use_svf_in_input:
-        #     lowpass_response = self.lowpass_filter(z, self.lowpass_biquad)
-        #     H_lp = H * lowpass_response
-
         if self.use_colorless_loss:
             H_sub_fdn = super().sub_fdn_output(z)
             return H, H_sub_fdn
@@ -476,45 +487,10 @@ class DiffGFDNVarSourceReceiverPos(DiffGFDN):
     @torch.no_grad()
     def get_param_dict(self) -> Dict:
         """Return the parameters as a dict"""
-        param_np = {}
-        param_np['delays'] = self.delays.squeeze().cpu().numpy()
-        param_np[
-            'gains_per_sample'] = self.feedback_loop.delay_line_gains.squeeze(
-            ).cpu().numpy()
-        param_np['input_gains'] = self.input_gains.squeeze().cpu().numpy()
-        param_np['output_gains'] = self.output_gains.squeeze().cpu().numpy()
+        return super().get_param_dict()
 
-        try:
-            if self.feedback_loop.coupling_matrix_type in (
-                    CouplingMatrixType.SCALAR, CouplingMatrixType.FILTER):
-                param_np[
-                    'coupled_feedback_matrix'] = self.feedback_loop.get_coupled_feedback_matrix(
-                    ).squeeze().cpu().numpy()
-                param_np[
-                    'individual_mixing_matrix'] = self.feedback_loop.M.squeeze(
-                    ).cpu().numpy()
-                if self.feedback_loop.coupling_matrix_type == CouplingMatrixType.SCALAR:
-                    param_np[
-                        'coupling_matrix'] = self.feedback_loop.nd_unitary(
-                            self.feedback_loop.alpha,
-                            self.num_groups).squeeze().cpu().numpy()
-                else:
-                    unitary_matrix = self.feedback_loop.ortho_param(
-                        self.feedback_loop.unitary_matrix)
-                    unit_vectors = self.feedback_loop.unit_vectors / torch.norm(
-                        self.feedback_loop.unit_vectors, dim=0, keepdim=True)
-                    param_np[
-                        'coupling_matrix'] = self.feedback_loop.fir_paraunitary(
-                            unitary_matrix,
-                            unit_vectors).squeeze().cpu().numpy()
-            else:
-                # any unitary matrix without any specific coupling structure
-                param_np[
-                    'coupled_feedback_matrix'] = self.feedback_loop.coupled_feedback_matrix
-        except Exception:
-            logger.warning('Parameter not initialised yet in FeedbackLoop!')
 
-        return param_np
+###############################################################################
 
 
 class DiffGFDNVarReceiverPos(DiffGFDN):
@@ -636,10 +612,6 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
         direct_filter = x['target_early_response']
         H = torch.einsum('bmk, bmk -> bk', Htemp, B) + direct_filter
 
-        # pass through a lowpass filter
-        # lowpass_response = self.lowpass_filter(z, self.lowpass_biquad)
-        # H_lp = H * lowpass_response
-
         if self.use_colorless_loss:
             H_sub_fdn = super().sub_fdn_output(z)
             return H, H_sub_fdn
@@ -678,50 +650,12 @@ class DiffGFDNVarReceiverPos(DiffGFDN):
     @torch.no_grad()
     def get_param_dict(self) -> Dict:
         """Return the parameters as a dict"""
-        param_np = {}
-        param_np['delays'] = self.delays.squeeze().cpu().numpy()
-        try:
-            param_np[
-                'gains_per_sample'] = self.feedback_loop.delay_line_gains.squeeze(
-                ).cpu().numpy()
-        except AttributeError as e:
-            logger.warning(e)
-
+        param_np = super().get_param_dict()
         param_np['input_scalars'] = self.input_scalars.squeeze().cpu().numpy()
-        param_np['input_gains'] = self.input_gains.squeeze().cpu().numpy()
-        param_np['output_gains'] = self.output_gains.squeeze().cpu().numpy()
-
-        try:
-            if self.feedback_loop.coupling_matrix_type in (
-                    CouplingMatrixType.SCALAR, CouplingMatrixType.FILTER):
-                param_np[
-                    'coupled_feedback_matrix'] = self.feedback_loop.get_coupled_feedback_matrix(
-                    ).squeeze().cpu().numpy()
-                param_np[
-                    'individual_mixing_matrix'] = self.feedback_loop.M.squeeze(
-                    ).cpu().numpy()
-                if self.feedback_loop.coupling_matrix_type == CouplingMatrixType.SCALAR:
-                    param_np[
-                        'coupling_matrix'] = self.feedback_loop.nd_unitary(
-                            self.feedback_loop.alpha,
-                            self.num_groups).squeeze().cpu().numpy()
-                else:
-                    unitary_matrix = self.feedback_loop.ortho_param(
-                        self.feedback_loop.unitary_matrix)
-                    unit_vectors = self.feedback_loop.unit_vectors / torch.norm(
-                        self.feedback_loop.unit_vectors, dim=0, keepdim=True)
-                    param_np[
-                        'coupling_matrix'] = self.feedback_loop.fir_paraunitary(
-                            unitary_matrix,
-                            unit_vectors).squeeze().cpu().numpy()
-            else:
-                # any unitary matrix without any specific coupling structure
-                param_np[
-                    'coupled_feedback_matrix'] = self.feedback_loop.coupled_feedback_matrix
-        except Exception:
-            logger.warning('Parameter not initialised yet in FeedbackLoop!')
-
         return param_np
+
+
+##############################################################################
 
 
 class DiffGFDNSinglePos(DiffGFDN):
@@ -973,41 +907,7 @@ class DiffGFDNSinglePos(DiffGFDN):
     @torch.no_grad()
     def get_param_dict(self) -> Dict:
         """Return the parameters as a dict"""
-        param_np = {}
-        param_np['delays'] = self.delays.squeeze().cpu().numpy()
-        param_np['input_gains'] = self.input_gains.squeeze().cpu().numpy()
-        param_np['output_gains'] = self.output_gains.squeeze().cpu().numpy()
-
-        try:
-            if self.feedback_loop.coupling_matrix_type in (
-                    CouplingMatrixType.SCALAR, CouplingMatrixType.FILTER):
-                param_np[
-                    'coupled_feedback_matrix'] = self.feedback_loop.get_coupled_feedback_matrix(
-                    ).squeeze().cpu().numpy()
-                param_np[
-                    'individual_mixing_matrix'] = self.feedback_loop.M.squeeze(
-                    ).cpu().numpy()
-                if self.feedback_loop.coupling_matrix_type == CouplingMatrixType.SCALAR:
-                    param_np[
-                        'coupling_matrix'] = self.feedback_loop.nd_unitary(
-                            self.feedback_loop.alpha,
-                            self.num_groups).squeeze().cpu().numpy()
-                else:
-                    unitary_matrix = self.feedback_loop.ortho_param(
-                        self.feedback_loop.unitary_matrix)
-                    unit_vectors = self.feedback_loop.unit_vectors / torch.norm(
-                        self.feedback_loop.unit_vectors, dim=0, keepdim=True)
-                    param_np[
-                        'coupling_matrix'] = self.feedback_loop.fir_paraunitary(
-                            unitary_matrix,
-                            unit_vectors).squeeze().cpu().numpy()
-            else:
-                # any unitary matrix without any specific coupling structure
-                param_np[
-                    'coupled_feedback_matrix'] = self.feedback_loop.coupled_feedback_matrix
-        except Exception:
-            logger.warning('Parameter not initialised yet in FeedbackLoop!')
-
+        param_np = super().get_param_dict()
         # get absorption filters
         if self.use_absorption_filters:
             param_np['absorption_filters'] = [
@@ -1131,6 +1031,7 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
             output_filter_config.num_neurons_per_layer,
             desired_directions=desired_directions,
             beamformer_type=output_filter_config.beamformer_type,
+            use_skip_connections=output_filter_config.use_skip_connections,
         )
 
     def forward(self, x: Dict) -> torch.tensor:
@@ -1214,47 +1115,6 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
     @torch.no_grad()
     def get_param_dict(self) -> Dict:
         """Return the parameters as a dict"""
-        param_np = {}
-        param_np['delays'] = self.delays.squeeze().cpu().numpy()
-        try:
-            param_np[
-                'gains_per_sample'] = self.feedback_loop.delay_line_gains.squeeze(
-                ).cpu().numpy()
-        except AttributeError as e:
-            logger.warning(e)
-
+        param_np = super().get_param_dict()
         param_np['input_scalars'] = self.input_scalars.squeeze().cpu().numpy()
-        param_np['input_gains'] = self.input_gains.squeeze().cpu().numpy()
-        param_np['output_gains'] = self.output_gains.squeeze().cpu().numpy()
-
-        try:
-            if self.feedback_loop.coupling_matrix_type in (
-                    CouplingMatrixType.SCALAR, CouplingMatrixType.FILTER):
-                param_np[
-                    'coupled_feedback_matrix'] = self.feedback_loop.get_coupled_feedback_matrix(
-                    ).squeeze().cpu().numpy()
-                param_np[
-                    'individual_mixing_matrix'] = self.feedback_loop.M.squeeze(
-                    ).cpu().numpy()
-                if self.feedback_loop.coupling_matrix_type == CouplingMatrixType.SCALAR:
-                    param_np[
-                        'coupling_matrix'] = self.feedback_loop.nd_unitary(
-                            self.feedback_loop.alpha,
-                            self.num_groups).squeeze().cpu().numpy()
-                else:
-                    unitary_matrix = self.feedback_loop.ortho_param(
-                        self.feedback_loop.unitary_matrix)
-                    unit_vectors = self.feedback_loop.unit_vectors / torch.norm(
-                        self.feedback_loop.unit_vectors, dim=0, keepdim=True)
-                    param_np[
-                        'coupling_matrix'] = self.feedback_loop.fir_paraunitary(
-                            unitary_matrix,
-                            unit_vectors).squeeze().cpu().numpy()
-            else:
-                # any unitary matrix without any specific coupling structure
-                param_np[
-                    'coupled_feedback_matrix'] = self.feedback_loop.coupled_feedback_matrix
-        except Exception:
-            logger.warning('Parameter not initialised yet in FeedbackLoop!')
-
         return param_np
