@@ -758,7 +758,7 @@ class DirectionalFDNVarReceiverPosTrainer(Trainer):
                 # filter H in subbands before calculating loss
                 H_sh = H_sh * self.subband_filter_freq_resp.to(torch.complex64)
 
-            # convert SH domain mag response to directional mag response
+            # convert SH domain frequency response to directional frequency response
             H_dir = self.convert_ambi_rir_to_directional_rir(H_sh)
             all_losses = super().calculate_losses(data, H_dir, H_sub_fdn)
         else:
@@ -769,7 +769,7 @@ class DirectionalFDNVarReceiverPosTrainer(Trainer):
                 # filter H in subbands before calculating loss
                 H_sh = H_sh * self.subband_filter_freq_resp.to(torch.complex64)
 
-            # convert SH domain mag response to directional mag response
+            # convert SH domain frequency response to directional frequency response
             H_dir = self.convert_ambi_rir_to_directional_rir(H_sh)
             all_losses = super().calculate_losses(data, H_dir)
 

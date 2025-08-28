@@ -341,8 +341,9 @@ class directional_edc_loss(nn.Module):
         """
         # Directional RIRs
         # desired shape is batch_size x num_directions x num_time_samples
-        pred_rir = torch.fft.irfft(H_pred,
-                                   H_pred.shape[-1])[..., :self.edc_len_samps]
+        pred_rir = torch.fft.irfft(H_pred)[
+            ...,
+            self.mixing_time_samps:self.edc_len_samps + self.mixing_time_samps]
 
         # predicted EDC from DiffDFDN response
         edc_pred = self.schroeder_backward_integral(pred_rir)

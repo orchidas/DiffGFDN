@@ -20,11 +20,12 @@ from spatial_sampling.config import DNNType
 from spatial_sampling.dataloader import load_dataset as load_spatial_dataset
 from spatial_sampling.dataloader import parse_room_data, SpatialRoomDataset
 
+from .colorless_fdn.utils import get_colorless_fdn_params
 from .config.config import DiffGFDNConfig, SubbandProcessingConfig
 from .dataloader import load_dataset, RoomDataset
 from .model import DiffDirectionalFDNVarReceiverPos
 from .plot import order_position_matrices, plot_edr
-from .utils import db, db2lin, get_colorless_fdn_params, get_response, ms_to_samps
+from .utils import db, db2lin, get_response, ms_to_samps
 
 # flake8: noqa:E231
 # pylint: disable=W0632, E0606
