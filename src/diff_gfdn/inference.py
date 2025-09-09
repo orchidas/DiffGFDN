@@ -1,3 +1,4 @@
+from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
 import os
@@ -18,7 +19,8 @@ from tqdm import tqdm
 
 from spatial_sampling.config import DNNType
 from spatial_sampling.dataloader import load_dataset as load_spatial_dataset
-from spatial_sampling.dataloader import parse_room_data, SpatialRoomDataset
+from spatial_sampling.dataloader import parse_three_room_data, SpatialRoomDataset
+from spatial_sampling.inference import convert_directional_rirs_to_ambisonics
 
 from .colorless_fdn.utils import get_colorless_fdn_params
 from .config.config import DiffGFDNConfig, SubbandProcessingConfig
@@ -343,6 +345,7 @@ class InferDiffDirectionalFDN:
 
         # get normalising factor to compensate for subband filtering
         if self.apply_filter_norm:
+            logger.info("Applying filter gain normalisation")
             if self.config_dict.trainer_config.subband_process_config is not None:
                 self.subband_filter_norm_factor = InferDiffGFDN.get_norm_factor(
                     self.config_dict.trainer_config.subband_process_config,
@@ -535,7 +538,7 @@ class InferDiffDirectionalFDN:
                 f' pol = {np.degrees(self.room_data.sph_directions[1, j]):.2f} deg'
             )
 
-        return original_edc, est_edc
+        return original_edc.detach().cpu().numpy(), est_edc
 
 
 #######################################################################################
@@ -543,18 +546,18 @@ class InferDiffDirectionalFDN:
 
 def sum_arrays(group):
     "Sum rows sharing the same position coordinates"
-    arrs = group["filtered_time_samples"].to_numpy()
-    out = np.zeros_like(arrs[0])
-    for a in arrs:
-        out += a
+    all_rirs = group["filtered_time_samples"].to_numpy()
+    out = np.zeros_like(all_rirs[0])
+    for rir in all_rirs:
+        out += rir
     return out
 
 
 def infer_all_octave_bands_directional_fdn(
     freqs_list: List,
     config_dicts: List[DiffGFDNConfig],
-    save_filename: str,
-    fullband_room_dataset_path: Path,
+    save_dir: str,
+    fullband_room_data: SpatialRoomDataset,
     rec_pos_list: NDArray,
 ) -> SpatialRoomDataset:
     """
@@ -563,7 +566,7 @@ def infer_all_octave_bands_directional_fdn(
         freqs_list (List): list of all frequencies
         config_dicts (List): list of all config files
         save_dir (str): path where file is to be saved
-        fullband_room_dataset_path (Path): path to fullband room dataset
+        fullband_room_dataset_path (SpatialRoomDataset): dataset of ground truth fullband RIRs
         rec_pos_list (NDArray): receiver positions over which to carry out inference
     Returns:
         SpatialRoomDataset: room data with synthesised RIRs 
@@ -578,26 +581,37 @@ def infer_all_octave_bands_directional_fdn(
         sampling_rate=config_dicts[0].sample_rate,
     )
 
-    if not os.path.exists(save_filename):
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
 
-        # loop through all subband frequencies
-        synth_subband_rirs = pd.DataFrame(columns=[
-            'frequency', 'position', 'time_samples', 'filtered_time_samples'
-        ])
+    if freqs_list != [63, 125, 250, 500, 1000, 2000, 4000, 8000]:
 
         for k in range(len(freqs_list)):
+            band_filename = f"{save_dir}/synth_band_{freqs_list[k]}Hz.pkl"
+            if os.path.exists(band_filename):
+                logger.info(f"Skipping {freqs_list[k]} Hz (already computed)")
+                continue
             logger.info(
                 f'Running inferencing for subband = {freqs_list[k]} Hz')
+
+            # loop through all subband frequencies
+            df_band = pd.DataFrame(columns=[
+                'frequency', 'position', 'time_samples',
+                'filtered_time_samples'
+            ])
 
             config_dict = config_dicts[k]
             trainer_config = config_dict.trainer_config
 
             if "3room_FDTD" in config_dict.room_dataset_path:
-                room_data = parse_room_data(
+                room_data = parse_three_room_data(
                     Path(config_dict.room_dataset_path).resolve())
             else:
                 logger.error("Other room data not supported currently")
 
+            # update the receiver positions in room dataset so that
+            # the dataloader reads the updated positions in rec_pos_list
+            # for inference
             room_data.update_receiver_pos(rec_pos_list)
 
             config_dict = config_dict.model_copy(
@@ -649,26 +663,23 @@ def infer_all_octave_bands_directional_fdn(
                 room_data,
                 config_dict,
                 model,
-                apply_filter_norm=False,
+                apply_filter_norm=True,
                 edc_len_ms=2000,
             )
 
             # get the ambisonics RIRs for the current frequency band
-            position, est_ambi_rirs = cur_infer_fdn.get_model_output(
-                trainer_config.max_epochs, return_directional_rirs=False)
-            mixing_time_samps = ms_to_samps(room_data.mixing_time_ms,
-                                            room_data.sample_rate)
+            position, est_dir_rirs = cur_infer_fdn.get_model_output(
+                trainer_config.max_epochs, return_directional_rirs=True)
 
             # loop over all positions for a particular frequency band and add it to a dataframe
             for num_pos in range(position.shape[0]):
-                cur_rir = est_ambi_rirs[
-                    num_pos, :, mixing_time_samps:].detach().cpu().numpy()
+                cur_rir = est_dir_rirs[num_pos, ...].detach().cpu().numpy()
 
                 # filter the current SRIR
                 cur_rir_filtered = fftconvolve(
                     cur_rir,
                     subband_filters.coefficients[k, :][None, :],
-                    mode='full')
+                    mode='same')
 
                 # position should be saved as tuple because numpy array is unhashable
                 new_row = pd.DataFrame({
@@ -680,40 +691,58 @@ def infer_all_octave_bands_directional_fdn(
                     'filtered_time_samples': [cur_rir_filtered],
                     'time_samples': [cur_rir],
                 })
-                synth_subband_rirs = pd.concat([synth_subband_rirs, new_row],
-                                               ignore_index=True)
+                df_band = pd.concat([df_band, new_row], ignore_index=True)
+
+            df_band.to_pickle(band_filename)
+            logger.info(f"Saved RIRs for band {freqs_list[k]} Hz")
             del model
             del room_data
             del cur_infer_fdn
-
-        synth_subband_rirs.to_pickle(save_filename)
-        logger.info("Saved pickle file")
+        return
 
     else:
-        logger.info("Reading pickle file")
-        synth_subband_rirs = pd.read_pickle(save_filename)
+        # inference for all bands is complete, read the band wise dataframes
+        # Dictionary: pos_key -> summed filtered_time_samples
+        pos_to_rir = defaultdict(lambda: 0)
+        pos_to_pos = {}
 
-    # Save the synthesised RIRs
-    logger.info('Returning synthesised SRIRs as SpatialRoomDataset object')
+        for k, freq in enumerate(freqs_list):
+            band_filename = f"{save_dir}/synth_band_{freq}Hz.pkl"
+            df_band = pd.read_pickle(band_filename)
 
-    # get the fullband dataset as SpatialRoomDataset object
-    fullband_room_data = parse_room_data(fullband_room_dataset_path.resolve())
-    dfdn_room_data = deepcopy(fullband_room_data)
+            # round positions and create pos_key
+            df_band["pos_key"] = df_band["position"].apply(lambda pos: tuple(
+                np.round(np.asarray(pos, dtype=np.float64), 3)))
 
-    # round positions so they match exactly
-    synth_subband_rirs["pos_key"] = synth_subband_rirs["position"].apply(
-        lambda pos: tuple(np.round(np.asarray(pos, dtype=np.float64), 3)
-                          )  # adjust decimals
-    )
-    # Group by position and sum the filtered_time_samples over each frequency band
-    # returns Series where each value is (num_channels, num_time_samples)
-    synth_rirs = synth_subband_rirs.groupby('pos_key',
-                                            sort=False).apply(sum_arrays)
-    print(synth_rirs.shape)
-    # Now stack them into a single array: (num_positions, num_channels, num_time_samples)
-    est_rirs = np.stack(synth_rirs.values, axis=0)
-    print(est_rirs.shape)
+            # accumulate into dictionary instead of building giant DataFrame
+            for _, row in df_band.iterrows():
+                pos_key = row["pos_key"]
+                rir = row["filtered_time_samples"].astype(np.float32)
 
-    dfdn_room_data.update_receiver_pos(rec_pos_list)
-    dfdn_room_data.update_rirs(est_rirs)
-    return dfdn_room_data
+                if isinstance(pos_to_rir[pos_key], int):  # first time
+                    pos_to_rir[pos_key] = rir
+                    pos_to_pos[pos_key] = np.array(row["position"],
+                                                   dtype=np.float64)
+                else:
+                    # add in-place to avoid new allocations
+                    pos_to_rir[pos_key] += rir
+
+        # Now stack results into arrays
+        synth_rirs = list(pos_to_rir.values())
+        est_dir_rirs = np.stack(
+            synth_rirs, axis=0)  # (num_positions, num_channels, num_samples)
+
+        # convert to ambisonics
+        est_srirs = convert_directional_rirs_to_ambisonics(
+            fullband_room_data.ambi_order, fullband_room_data.sph_directions,
+            config_dicts[0].output_filter_config.beamformer_type,
+            est_dir_rirs.transpose(1, 0, -1))
+
+        # get receiver positions
+        new_rec_pos_list = np.vstack(list(pos_to_pos.values()))
+
+        # update dataset
+        dfdn_room_data = deepcopy(fullband_room_data)
+        dfdn_room_data.update_receiver_pos(new_rec_pos_list)
+        dfdn_room_data.update_rirs(est_srirs)
+        return dfdn_room_data

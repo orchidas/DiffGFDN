@@ -750,7 +750,7 @@ def load_dataset(
         return train_loader, None, dataset
 
 
-def parse_room_data(filepath: str):
+def parse_three_room_data(filepath: str):
     """Read the three coupled room dataset at filepath and return a SpatialRoomDataset object"""
     assert str(filepath).endswith('.pkl'), "provide the path to the .pkl file"
     # read contents from pkl file

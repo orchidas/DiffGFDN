@@ -578,7 +578,10 @@ def plot_subband_amplitudes(h_true: Union[ArrayLike, torch.Tensor],
 
 
 def order_position_matrices(pos1: NDArray, pos2: NDArray) -> ArrayLike:
-    """Arrange 3D coordinates in pos1 and pos2 so that they are in the same order"""
+    """
+    Arrange 3D coordinates in pos1 and pos2 so that they are in the same order.
+    For each point in pos1 find the closest points in pos2.
+    """
     # Step 1: Compute pairwise distances
     distances = cdist(pos1, pos2)
 
