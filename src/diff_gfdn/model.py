@@ -1055,7 +1055,7 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
                                     self.num_delay_lines_per_group,
                                     num_freq_pts))
         # learn from MLP
-        sh_gains = self.sh_output_scalars(x)
+        sh_gains = self.sh_output_scalars(x, normalise_weights=True)
 
         # apply scaling to sh_gains to keep them between +1 and -1
         # sh_gains = torch.tanh(sh_gains)

@@ -304,12 +304,12 @@ class InferDiffDirectionalFDN:
         self.apply_filter_norm = apply_filter_norm
 
         # prepare the training and validation data
-        self.train_dataset, _, _ = load_spatial_dataset(
+        self.train_dataset, self.valid_dataset, _ = load_spatial_dataset(
             room_data,
             config_dict.trainer_config.device,
             network_type=DNNType.MLP,
             batch_size=config_dict.trainer_config.batch_size,
-            train_valid_split_ratio=1.0,
+            grid_resolution_m=config_dict.trainer_config.grid_resolution_m,
             shuffle=False,
         )
 
@@ -436,7 +436,7 @@ class InferDiffDirectionalFDN:
                 param_dict['coupling_matrix'])
             npos = 0
 
-            for data in tqdm(self.train_dataset):
+            for data in tqdm(self.valid_dataset):
                 position = data['listener_position']
 
                 # get parameter dictionary used in inferencing
@@ -508,10 +508,7 @@ class InferDiffDirectionalFDN:
                                        self.envelopes),
                           is_squared=True)
 
-        error_db = torch.mean(
-            torch.abs(original_edc[..., self.mixing_time_samps:] -
-                      est_edc[..., self.mixing_time_samps:]),
-            dim=-1)
+        error_db = torch.mean(torch.abs(original_edc - est_edc), dim=-1)
 
         logger.info(f'Mean EDC error in dB is {error_db.mean():.3f} dB')
         to_append = f'grid_resolution={self.config_dict.trainer_config.grid_resolution_m}m' \
@@ -532,10 +529,10 @@ class InferDiffDirectionalFDN:
                 cur_freq_hz=None,
                 save_path=f'{save_dir}/edc_error_in_space_' + to_append +
                 extend + f'_epoch={epoch_num}.png',
-                title=
-                f'az = {np.degrees(self.room_data.sph_directions[0, j]):.2f} deg,'
-                +
-                f' pol = {np.degrees(self.room_data.sph_directions[1, j]):.2f} deg'
+                # title=
+                # f'az = {np.degrees(self.room_data.sph_directions[0, j]):.2f} deg,'
+                # +
+                # f' pol = {np.degrees(self.room_data.sph_directions[1, j]):.2f} deg'
             )
 
         return original_edc.detach().cpu().numpy(), est_edc
@@ -581,10 +578,10 @@ def infer_all_octave_bands_directional_fdn(
         sampling_rate=config_dicts[0].sample_rate,
     )
 
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-
-    if freqs_list != [63, 125, 250, 500, 1000, 2000, 4000, 8000]:
+    if freqs_list != [63, 125, 250, 500, 1000, 2000, 4000, 8000
+                      ] or not os.path.exists(save_dir):
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
 
         for k in range(len(freqs_list)):
             band_filename = f"{save_dir}/synth_band_{freqs_list[k]}Hz.pkl"

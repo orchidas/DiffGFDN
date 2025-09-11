@@ -166,7 +166,9 @@ class Directional_Beamforming_Weights_from_MLP(Directional_Beamforming_Weights
                            num_biquads_in_cascade=1,
                            num_params=self.num_out_features)
 
-    def forward(self, x: Dict) -> torch.tensor:
+    def forward(self,
+                x: Dict,
+                normalise_weights: bool = False) -> torch.tensor:
         """Run the input features through the MLP. Output is of size batch_size x num_slopes x (N_sp+1)**2"""
         position = x['norm_listener_position']
         self.batch_size = position.shape[0]
@@ -182,7 +184,8 @@ class Directional_Beamforming_Weights_from_MLP(Directional_Beamforming_Weights
         self.weights = self.weights.reshape(reshape_size)
 
         # normalise weights to have unit energy
-        self.weights = super().normalise_weights(self.weights)
+        if normalise_weights:
+            self.weights = super().normalise_weights(self.weights)
 
         return self.weights
 
