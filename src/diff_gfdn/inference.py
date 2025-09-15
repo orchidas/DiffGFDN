@@ -457,7 +457,7 @@ class InferDiffDirectionalFDN:
                 est_ambi_rirs = torch.vstack((est_ambi_rirs, cur_ambi_rir))
 
             if self.apply_filter_norm:
-                # compensate for subband filtering
+                # needed for subband filtering
                 est_ambi_rirs *= self.subband_filter_norm_factor
 
             # convert from ambisonics to directional RIRs
