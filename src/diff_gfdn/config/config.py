@@ -220,13 +220,6 @@ class DiffGFDNConfig(BaseModel):
     # colorless FDN config
     colorless_fdn_config: ColorlessFDNConfig = ColorlessFDNConfig()
 
-    @model_validator(mode="after")
-    def set_num_delay_lines(self):
-        """Set number of delay lines based on ambisonics order"""
-        if self.ambi_order is not None:
-            self.num_delay_lines = ((self.ambi_order + 1)**2) * self.num_groups
-        return self
-
     # validator for the 'reduced_pole_radius' field
     @model_validator(mode='after')
     @classmethod

@@ -12,7 +12,7 @@ from spatial_sampling.model import Directional_Beamforming_Weights_from_MLP
 from .absorption_filters import decay_times_to_gain_filters_geq, decay_times_to_gain_per_sample
 from .colorless_fdn.utils import ColorlessFDNResults
 from .config.config import CouplingMatrixType, FeedbackLoopConfig, OutputFilterConfig
-from .dnn import ScaledSigmoid
+from .dnn import ScaledSigmoid, Sigmoid
 from .feedback_loop import FeedbackLoop
 from .filters.geq import eq_freqs
 from .gain_filters import BiquadCascade, Gains_from_MLP, SOSFilter, SVF, SVF_from_MLP
@@ -1011,9 +1011,9 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
                          use_colorless_loss)
 
         self.ambi_order = ambi_order
-        assert self.num_delay_lines_per_group == (
+        assert self.num_delay_lines_per_group >= (
             self.ambi_order + 1
-        )**2, "Number of delay lines per group must be equal to the number of ambisonics channels"
+        )**2, "Number of delay lines per group must be equal to or greater than the number of ambisonics channels"
 
         self.input_scalars = torch.ones(self.num_groups, 1)
 
@@ -1023,7 +1023,7 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
 
         logger.info("Using SH-domain gains in output")
         self.use_svf_in_output = False
-        self.sh_output_scalars = Directional_Beamforming_Weights_from_MLP(
+        self.dir_output_scalars = Directional_Beamforming_Weights_from_MLP(
             self.num_groups,
             self.ambi_order,
             output_filter_config.num_fourier_features,
@@ -1033,6 +1033,7 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
             beamformer_type=output_filter_config.beamformer_type,
             use_skip_connections=output_filter_config.use_skip_connections,
         )
+        self.scaling = Sigmoid()
 
     def forward(self, x: Dict) -> torch.tensor:
         """
@@ -1055,16 +1056,17 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
                                     self.num_delay_lines_per_group,
                                     num_freq_pts))
         # learn from MLP
-        sh_gains = self.sh_output_scalars(x, normalise_weights=True)
+        dir_gains = self.dir_output_scalars(x)
+        dir_gains = self.scaling(dir_gains)
 
         # reshape SH gains -  original size is B x num_groups x num_del_lines_per_group (num_ambi_channels)
-        sh_gains = sh_gains.reshape(self.batch_size, self.num_groups,
-                                    self.num_delay_lines_per_group, 1)
+        dir_gains = dir_gains.reshape(self.batch_size, self.num_groups,
+                                      self.num_delay_lines_per_group, 1)
 
         # this is of size B x Ng x num_ambi_channels x num_freq_points
-        sh_gains = sh_gains.repeat(1, 1, 1, num_freq_pts)
+        dir_gains = dir_gains.repeat(1, 1, 1, num_freq_pts)
 
-        C = to_complex(sh_gains) * C_init
+        C = to_complex(dir_gains) * C_init
 
         # this is also of size B x Ndel x num_freq_points
         B = to_complex(
@@ -1093,17 +1095,17 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
         b = self.input_gains
         (M, Phi, _, _,
          coupled_feedback_matrix) = self.feedback_loop.get_parameters()
-        sh_gains = self.sh_output_scalars.get_parameters()
+        dir_gains = self.dir_output_scalars.get_parameters()
         gain_per_sample = self.feedback_loop.delay_line_gains
         return (delays, gain_per_sample, b, M, Phi, coupled_feedback_matrix,
-                sh_gains)
+                dir_gains)
 
     @torch.no_grad()
     def get_param_dict_inference(self, data: Dict) -> Dict:
         """Get output of MLP during inference"""
         param_np = {}
         try:
-            param_out_mlp = self.sh_output_scalars.get_param_dict(data)
+            param_out_mlp = self.dir_output_scalars.get_param_dict(data)
             param_np['output_scalars'] = param_out_mlp['beamformer_weights']
         except Exception as e:
             logger.warning(e)

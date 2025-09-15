@@ -40,7 +40,7 @@ class Directional_Beamforming_Weights(nn.Module):
         self.device = device
         self.ambi_order = ambi_order
         self.num_fourier_features = num_fourier_features
-        self.num_out_features = (ambi_order + 1)**2
+        self.num_out_features = desired_directions.shape[-1]
         self.initialise_beamformer(beamformer_type, desired_directions)
         # constraints on directional amplitudes - ensures they are between 0 and 1
         # useful for directional beamforming
@@ -109,8 +109,8 @@ class Directional_Beamforming_Weights(nn.Module):
         self.forward(x)
         param_np = {}
         param_np['beamformer_weights'] = self.weights.squeeze().cpu().numpy()
-        param_np['directional_weights'] = self.get_directional_amplitudes(
-        ).squeeze().cpu().numpy()
+        # param_np['directional_weights'] = self.get_directional_amplitudes(
+        # ).squeeze().cpu().numpy()
         return param_np
 
 

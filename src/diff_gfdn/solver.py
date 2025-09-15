@@ -537,12 +537,19 @@ def run_training_anisotropic_decay_var_receiver_pos(
     # add number of groups to the config dictionary
     config_dict = config_dict.model_copy(
         update={"num_groups": spatial_room_data.num_rooms})
-    assert config_dict.num_delay_lines % config_dict.num_groups == 0, "Delay lines must be \
-    divisible by number of groups in network"
 
     # update ambisonics order
     config_dict = config_dict.model_copy(
         update={"ambi_order": spatial_room_data.ambi_order})
+
+    # update number of delay lines per group
+    config_dict = config_dict.model_copy(
+        update={
+            "num_delay_lines":
+            spatial_room_data.num_directions * config_dict.num_groups
+        })
+    assert config_dict.num_delay_lines % config_dict.num_groups == 0, "Delay lines must be \
+    divisible by number of groups in network"
 
     if config_dict.sample_rate != spatial_room_data.sample_rate:
         logger.warning("Config sample rate does not match data, alterning it")

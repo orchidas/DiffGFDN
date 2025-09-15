@@ -42,7 +42,7 @@ class DiffGFDNParams:
     coupling_matrix: List
     output_scalars: Optional[List] = None
     output_biquad_coeffs: Optional[List] = None
-    output_sh_gains: Optional[List] = None
+    output_dir_gains: Optional[List] = None
 
 
 class InferDiffGFDN:
@@ -300,7 +300,7 @@ class InferDiffDirectionalFDN:
                                  np.array(room_data.room_dims),
                                  np.array(room_data.room_start_coord),
                                  aperture_coords=room_data.aperture_coords)
-        self.num_ambi_channels = (room_data.ambi_order + 1)**2
+        self.num_directions = room_data.num_directions
         self.apply_filter_norm = apply_filter_norm
 
         # prepare the training and validation data
@@ -325,7 +325,7 @@ class InferDiffDirectionalFDN:
         output_gains = []
         input_gains = []
         input_scalars = []
-        output_sh_gains = []
+        output_dir_gains = []
         coupled_feedback_matrix = []
         coupling_matrix = []
 
@@ -335,11 +335,11 @@ class InferDiffDirectionalFDN:
             input_scalars,
             coupled_feedback_matrix,
             coupling_matrix,
-            output_sh_gains=output_sh_gains)
+            output_dir_gains=output_dir_gains)
 
-        self.all_output_sh_gains = [
+        self.all_output_dir_gains = [
             np.empty((self.room_data.num_rec, self.room_data.num_rooms,
-                      (self.room_data.ambi_order + 1)**2))
+                      self.room_data.num_directions))
             for i in range(-1, self.config_dict.trainer_config.max_epochs)
         ]
 
@@ -373,25 +373,10 @@ class InferDiffDirectionalFDN:
 
         self.envelopes = torch.tensor(self.envelopes, dtype=torch.float32)
 
-    def convert_ambi_rir_to_directional_rir(self, h_sh: torch.Tensor):
-        """
-        Convert SH domain RIRs to directional RIRs
-        Args:
-            H_sh : impulse response DiffDFDN in SH domain of shape num_pos, num_ambi_channels, num_freq_pts
-        Returns:
-            torch.Tensor: directional impulse response of DiffDFDN of shape 
-                          num_pos, num_directions, num_freq_pts
-        """
-        # get SH conversion matrix
-        sh_matrix = self.model.sh_output_scalars.analysis_matrix
-        # convert to directional response
-        h_dir = torch.einsum('blk, lj -> bjk', h_sh, sh_matrix.T)
-        return h_dir
-
     def get_model_output(
-            self,
-            num_epochs: int,
-            return_directional_rirs: bool = True) -> Tuple[NDArray, NDArray]:
+        self,
+        num_epochs: int,
+    ) -> Tuple[NDArray, NDArray]:
         """
         Get the estimated common slope amplitudes.
         Returns the positions and the directional RIRs at those positions
@@ -420,8 +405,8 @@ class InferDiffDirectionalFDN:
         self.model.eval()
 
         est_pos = torch.empty((0, 3))
-        est_ambi_rirs = torch.empty(
-            (0, self.num_ambi_channels, self.room_data.num_freq_bins))
+        est_dir_rirs = torch.empty(
+            (0, self.num_directions, self.room_data.num_freq_bins))
         with torch.no_grad():
             param_dict = self.model.get_param_dict()
             self.all_learned_params.input_gains.append(
@@ -443,30 +428,24 @@ class InferDiffDirectionalFDN:
                 inf_param_dict = self.model.get_param_dict_inference(data)
                 for num_pos in range(position.shape[0]):
                     if 'output_scalars' in inf_param_dict.keys():
-                        self.all_output_sh_gains[num_epochs][
+                        self.all_output_dir_gains[num_epochs][
                             npos, :] = deepcopy(
                                 inf_param_dict['output_scalars'][num_pos])
                     npos += 1
 
                 # get RIRs
                 if self.config_dict.trainer_config.use_colorless_loss:
-                    _, _, cur_ambi_rir = get_response(data, self.model)
+                    _, _, cur_dir_rir = get_response(data, self.model)
                 else:
-                    _, cur_ambi_rir = get_response(data, self.model)
+                    _, cur_dir_rir = get_response(data, self.model)
                 est_pos = torch.vstack((est_pos, position))
-                est_ambi_rirs = torch.vstack((est_ambi_rirs, cur_ambi_rir))
+                est_dir_rirs = torch.vstack((est_dir_rirs, cur_dir_rir))
 
             if self.apply_filter_norm:
                 # needed for subband filtering
-                est_ambi_rirs *= self.subband_filter_norm_factor
+                est_dir_rirs *= self.subband_filter_norm_factor
 
-            # convert from ambisonics to directional RIRs
-            if return_directional_rirs:
-                est_dir_rirs = self.convert_ambi_rir_to_directional_rir(
-                    est_ambi_rirs)
-                return est_pos, est_dir_rirs[..., :self.edc_len_samps]
-            else:
-                return est_pos, est_ambi_rirs[..., :self.edc_len_samps]
+            return est_pos, est_dir_rirs[..., :self.edc_len_samps]
 
     def plot_edc_error_in_space(self,
                                 est_dir_rirs: NDArray,
@@ -611,8 +590,17 @@ def infer_all_octave_bands_directional_fdn(
             # for inference
             room_data.update_receiver_pos(rec_pos_list)
 
+            # update number of groups
             config_dict = config_dict.model_copy(
                 update={"num_groups": room_data.num_rooms})
+
+            # update number of delay lines per group
+            config_dict = config_dict.model_copy(
+                update={
+                    "num_delay_lines":
+                    room_data.num_directions * config_dict.num_groups
+                })
+
             assert config_dict.num_delay_lines % config_dict.num_groups == 0, "Delay lines must be \
                 divisible by number of groups in network"
 
@@ -666,7 +654,7 @@ def infer_all_octave_bands_directional_fdn(
 
             # get the ambisonics RIRs for the current frequency band
             position, est_dir_rirs = cur_infer_fdn.get_model_output(
-                trainer_config.max_epochs, return_directional_rirs=True)
+                trainer_config.max_epochs)
 
             # loop over all positions for a particular frequency band and add it to a dataframe
             for num_pos in range(position.shape[0]):
