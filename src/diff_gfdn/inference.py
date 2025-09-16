@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from loguru import logger
+import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 import pandas as pd
@@ -13,6 +14,7 @@ import pyfar as pf
 from scipy.signal import fftconvolve
 from slope2noise.rooms import RoomGeometry
 from slope2noise.utils import decay_kernel, schroeder_backward_int
+import spaudiopy as spa
 import torch
 from torch import nn
 from tqdm import tqdm
@@ -467,6 +469,116 @@ class InferDiffDirectionalFDN:
                 return est_pos, est_dir_rirs[..., :self.edc_len_samps]
             else:
                 return est_pos, est_ambi_rirs[..., :self.edc_len_samps]
+
+    def plot_beamformer_output(self,
+                               est_amps: NDArray,
+                               filename: str,
+                               pos_to_investigate: List,
+                               contour_plot: bool = True,
+                               db_limits: Optional[Tuple] = None) -> Tuple:
+        """
+        Plot beamformer output as function of elevation and azimuth angles
+        est_amps (NDArray): amplitudes estimated by the DNN
+        filename (str): filename for saving
+        pos_to_investigate (List): the position at which to plot the directional
+                                    distribution of amplitudes
+        contour_plot (bool): whether to plot spherical or contour plot
+        db_limits (optional, tuple): the limits of the colorbar
+        """
+        # Create grid of elevation and azimuth angles
+        num_azi = 20
+        num_el = 20
+        azimuths = np.linspace(0, 2 * np.pi, num_azi)
+        elevations = np.linspace(-np.pi / 2, np.pi / 2, num_el)
+        polars = np.pi / 2 - elevations
+
+        azimuth_grid, polar_grid = np.meshgrid(azimuths, polars)
+        elevation_grid = np.pi / 2 - polar_grid
+        x = np.cos(elevation_grid) * np.sin(azimuth_grid)
+        y = np.cos(elevation_grid) * np.cos(azimuth_grid)
+        z = np.sin(elevation_grid)
+
+        # Plotting beamforming weights as a spherical surface
+        fig, ax = plt.subplots(
+            self.room_data.num_rooms,
+            1,
+            # subplot_kw={'projection': '3d'},
+            figsize=(6, 3 * self.room_data.num_rooms))
+
+        # spherical harmonic interpolation
+        sph_matrix_orig = spa.sph.sh_matrix(
+            self.room_data.ambi_order,
+            self.room_data.sph_directions[0, :],
+            self.room_data.sph_directions[1, :],
+            sh_type='real')
+
+        sph_matrix_dense = spa.sph.sh_matrix(self.room_data.ambi_order,
+                                             azimuth_grid.ravel(),
+                                             polar_grid.ravel(),
+                                             sh_type='real')
+
+        # project on original spherical harmonic matrix
+        weights = np.einsum('bjk, jn -> bkn', est_amps, sph_matrix_orig)
+        # retrieve the amplitudes by projecting on denser spherical grid
+        amps_interp = np.einsum('bkn, nd -> bdk', weights, sph_matrix_dense.T)
+
+        # find receiver position idx
+        rec_pos_idx = ((self.room_data.receiver_position -
+                        pos_to_investigate)**2).sum(axis=1).argmin()
+        logger.info(
+            f"Plotting contours at position {np.round(self.room_data.receiver_position[rec_pos_idx, :], 2)}"
+        )
+
+        amps_interp_at_pos = amps_interp[rec_pos_idx, ...]
+        amps_interp_at_pos_db = db(amps_interp_at_pos, is_squared=True)
+        num_row, num_col = azimuth_grid.shape
+
+        if db_limits is None:
+            db_limits = np.zeros((2, self.room_data.num_rooms))
+            db_limits[0, :] = np.min(amps_interp_at_pos_db, axis=0)
+            db_limits[1, :] = np.max(amps_interp_at_pos_db, axis=0)
+
+        for k in range(self.room_data.num_rooms):
+            amps_interp_at_pos_db_2D = amps_interp_at_pos_db[:, k].reshape(
+                num_row, num_col)
+
+            # Plot the ellipsoid surface with beamforming weights as color values
+            if contour_plot:
+                surf = ax[k].contourf(np.degrees(azimuth_grid),
+                                      np.degrees(polar_grid),
+                                      amps_interp_at_pos_db_2D,
+                                      vmin=db_limits[0, k],
+                                      vmax=db_limits[1, k],
+                                      cmap='plasma')
+                ax[k].set_xlabel('Azimuth angles')
+                ax[k].set_ylabel('Polar angles')
+            else:
+                surf = ax[k].plot_surface(
+                    x,
+                    y,
+                    z,
+                    facecolors=plt.cm.viridis(amps_interp_at_pos_db_2D /
+                                              amps_interp_at_pos_db_2D.max()),
+                    rstride=1,
+                    cstride=1,
+                    linewidth=0,
+                    antialiased=False,
+                    alpha=0.5,
+                )
+                ax[k].set_xlabel('X')
+                ax[k].set_ylabel('Y')
+                ax[k].set_zlabel('Z)')
+
+            # Add a colorbar
+            cbar = fig.colorbar(surf, ax=ax[k], shrink=0.8, aspect=5)
+            cbar.set_label('dB')
+            ax[k].set_title(f'Group = {k+1}')
+
+        fig.subplots_adjust(hspace=0.6)
+        fig.savefig(
+            Path(f'{self.config_dict.trainer_config.train_dir}/{filename}').
+            resolve())
+        return db_limits
 
     def plot_edc_error_in_space(self,
                                 est_dir_rirs: NDArray,
