@@ -19,7 +19,7 @@ trainer_config:
   batch_size: 32
   edc_loss_weight: 10
   io_lr: 0.001
-  ir_dir: audio/directional_fdn/grid_rir_treble_band_centre=250Hz_colorless_loss_diff_delays_skip_con/grid_resolution=0.6m/
+  ir_dir: audio/directional_fdn/grid_rir_treble_band_centre=250Hz_colorless_loss_diff_delays_dir_gains/grid_resolution=0.6m/
   max_epochs: 15
   num_freq_bins: 131072
   save_true_irs: true
@@ -31,7 +31,7 @@ trainer_config:
     - 8000
     num_fraction_octaves: 1
     use_amp_preserving_filterbank: true
-  train_dir: output/directional_fdn/grid_rir_treble_band_centre=250Hz_colorless_loss_diff_delays_skip_con/grid_resolution=0.6m/
+  train_dir: output/directional_fdn/grid_rir_treble_band_centre=250Hz_colorless_loss_diff_delays_dir_gains/grid_resolution=0.6m/
   grid_resolution_m: 0.6
   use_asym_spectral_loss: true
   use_colorless_loss: true

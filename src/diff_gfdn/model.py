@@ -12,7 +12,7 @@ from spatial_sampling.model import Directional_Beamforming_Weights_from_MLP
 from .absorption_filters import decay_times_to_gain_filters_geq, decay_times_to_gain_per_sample
 from .colorless_fdn.utils import ColorlessFDNResults
 from .config.config import CouplingMatrixType, FeedbackLoopConfig, OutputFilterConfig
-from .dnn import ScaledSigmoid, Sigmoid
+from .dnn import ScaledSigmoid
 from .feedback_loop import FeedbackLoop
 from .filters.geq import eq_freqs
 from .gain_filters import BiquadCascade, Gains_from_MLP, SOSFilter, SVF, SVF_from_MLP
@@ -1033,7 +1033,6 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
             beamformer_type=output_filter_config.beamformer_type,
             use_skip_connections=output_filter_config.use_skip_connections,
         )
-        self.scaling = Sigmoid()
 
     def forward(self, x: Dict) -> torch.tensor:
         """
@@ -1056,8 +1055,7 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
                                     self.num_delay_lines_per_group,
                                     num_freq_pts))
         # learn from MLP
-        dir_gains = self.dir_output_scalars(x)
-        dir_gains = self.scaling(dir_gains)
+        dir_gains = self.dir_output_scalars(x, normalise_weights=True)
 
         # reshape SH gains -  original size is B x num_groups x num_del_lines_per_group (num_ambi_channels)
         dir_gains = dir_gains.reshape(self.batch_size, self.num_groups,
