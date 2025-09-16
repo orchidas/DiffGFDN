@@ -11,7 +11,7 @@ from diff_gfdn.dnn import ConvNet, MLP, MLP_SkipConnections, ScaledSigmoid, Sigm
 
 from .config import BeamformerType
 
-# pylint: disable=E0606
+# pylint: disable=E0606, E1123
 
 
 class Directional_Beamforming_Weights(nn.Module):
@@ -106,7 +106,7 @@ class Directional_Beamforming_Weights(nn.Module):
     @torch.no_grad()
     def get_param_dict(self, x: Dict) -> Dict:
         """Return the parameters as a dict"""
-        self.forward(x)
+        self.forward(x, normalise_weights=True)
         param_np = {}
         param_np['beamformer_weights'] = self.weights.squeeze().cpu().numpy()
         param_np['directional_weights'] = self.get_directional_amplitudes(
