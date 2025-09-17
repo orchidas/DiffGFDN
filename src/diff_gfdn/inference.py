@@ -306,12 +306,12 @@ class InferDiffDirectionalFDN:
         self.apply_filter_norm = apply_filter_norm
 
         # prepare the training and validation data
-        self.train_dataset, self.valid_dataset, _ = load_spatial_dataset(
+        self.train_dataset, _, _ = load_spatial_dataset(
             room_data,
             config_dict.trainer_config.device,
             network_type=DNNType.MLP,
             batch_size=config_dict.trainer_config.batch_size,
-            grid_resolution_m=config_dict.trainer_config.grid_resolution_m,
+            train_valid_split_ratio=1.0,
             shuffle=False,
         )
 
@@ -438,7 +438,7 @@ class InferDiffDirectionalFDN:
                 param_dict['coupling_matrix'])
             npos = 0
 
-            for data in tqdm(self.valid_dataset):
+            for data in tqdm(self.train_dataset):
                 position = data['listener_position']
 
                 # get parameter dictionary used in inferencing
