@@ -4,13 +4,13 @@ The goal of this work is to learn spatially-dynamic late reverberation propertie
 
 ## Data-driven late reverberation interpolation in coupled spaces using the Common Slopes model
 
-We investigate the modelling of position-dependent directional late reverberation in coupled spaces. We assume we have a set of <b> Spatial Room Impulse Responses (SRIRs) </b> (encoded in $N_\text{sp}$ order ambisonics) measured at several locations in the space for a fixed source-position. We want to use these to generalise the late reverb tail of the SRIRs at any point in the room. 
+We investigate the modelling of position-dependent directional late reverberation in coupled spaces. We assume we have a set of <b> Spatial Room Impulse Responses (SRIRs) </b> (encoded in ambisonics) measured at several locations in the space.
 
-To do this, we leverage the <b>Common Slopes (CS)</b> model which hypothesises that the energy decay in any coupled space can be modelled as a weighted sum of decay kernels with unique reverberation times, which are position and direction-invariant. We train MLPs in octave bands to learn the weights of the decay kernel, known as the CS amplitudes in the spherical harmonics domain. Once trained, the MLPs can predict the CS amplitudes in the SH domain at any new position in space. White noise, shaped in octave bands by the predicted CS parameters, is used to synthesise the late reverberation tail. As the user navigates the space, the MLPs update the CS amplitudes, a new reverberation tail is synthesised and time-varying convolution is performed on the input signal and the synthesised late tail.
+To generalise the late reverberation at any point in the space, we leverage the <b>Common Slopes (CS)</b> model. We train MLPs in octave bands to learn the weights of the decay kernels, known as the CS amplitudes, in the spherical harmonics domain. White noise, shaped in octave bands by the predicted CS parameters, is used to synthesise the direction-dependent late reverberation tail. As the user navigates, the MLPs update the CS amplitudes, a new reverberation tail is synthesised and time-varying convolution is performed on the input signal and the synthesised late tail.
 
 ### Dataset
 
-We have been using the dataset published [here](https://zenodo.org/records/13338346) which has three coupled rooms simulated with Treble's hybrid solver and has 2nd order ambisonic SRIRs at 838 receiver locations for a single source location. This has been saved in the path `resources/Georg_3Room_FDTD/`. To parse the dataset and save the SRIRs and CS parameters in octave bands, run `python3 src/convert_mat_to_pkl_ambi.py`
+We have been using the dataset published [here](https://zenodo.org/records/13338346) which has three coupled rooms simulated with Treble's hybrid solver and has 2nd order ambisonic SRIRs at 838 receiver locations for a single source location. This has been saved in the path `resources/Georg_3Room_FDTD/`. To parse the dataset and save the SRIRs and CS parameters in octave bands, run `python3 src/convert_mat_to_pkl_ambi.py`.
 
 ### Training
 
@@ -55,8 +55,8 @@ To use an open-source dataset:
 	- To run training with one frequency-independent omni-directional DiffGFDN for each octave band, create config files for each band, and run the training for each config file. Alternately, run `python3 src/run_subband_training_treble.py --freqs <list_of_octave_frequencies>`
 	- To only run inference on the trained parallel octave-band GFDNs, run `python3 src/run_subband_training_treble.py`. This will save the synthesised RIRs as a pkl file.
 - Directional DiffGFDN
-	- To run training on a single frequency band, create a config file (example [here](./data/config/directional_fdn/treble_data_grid_training_1000Hz_directional_fdn_grid_res=0.6m.yml))
-	- After traning all frequency bands, inference can be run using `infer_all_octave_bands_directional_fdn` in `diff_gfdn.inference.py`.
+	- To run training on a single frequency band, create a config file (example [here](./data/config/directional_fdn/treble_data_grid_training_1000Hz_directional_fdn_grid_res=0.6m.yml)).
+	- After traning all frequency bands, inference can be run using `infer_all_octave_bands_directional_fdn` in [src/diff_gfdn.inference.py](src/diff_gfdn/inference.py).
 
 
 ## Publications
