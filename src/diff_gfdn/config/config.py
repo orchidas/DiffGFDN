@@ -9,6 +9,8 @@ from pydantic import BaseModel, computed_field, ConfigDict, Field, field_validat
 import sympy as sp
 import torch
 
+from spatial_sampling.config import BeamformerType
+
 from ..utils import ms_to_samps
 
 
@@ -77,7 +79,12 @@ class OutputFilterConfig(BaseModel):
     num_hidden_layers: int = 3
     num_neurons_per_layer: int = 2**7
     num_fourier_features: int = 10
+    # sinusoidal encoding
     encoding_type: FeatureEncodingType = FeatureEncodingType.SINE
+    # beamforming type for converting from SHD to directional amplitudes
+    beamformer_type: Optional[BeamformerType] = None
+    # whether to use skip connections in MLP
+    use_skip_connections: bool = False
 
 
 class DecayFilterConfig(BaseModel):
@@ -99,6 +106,8 @@ class TrainerConfig(BaseModel):
     device: str = 'cpu'
     # split between traning and validation
     train_valid_split: float = 0.8
+    # grid resolution if training on a uniform grid
+    grid_resolution_m: Optional[float] = None
     # maximum epochs for training
     max_epochs: int = 5
     # learning rate for Adam optimiser
@@ -186,16 +195,20 @@ class DiffGFDNConfig(BaseModel):
     seed: int = 46434
     # path to three room dataset
     room_dataset_path: str = 'resources/Georg_3room_FDTD/srirs.pkl'
+    # number of groups in the GFDN
+    num_groups: int = 3
     # if a single measurement is being used
     ir_path: Optional[str] = None
     # sampling rate of the FDN
     sample_rate: float = 32000.0
     # training config
     trainer_config: TrainerConfig = TrainerConfig()
-    # number of delay lines
-    num_delay_lines: int = 12
     # delay range in ms - first delay should be after the mixing time
     delay_range_ms: List[float] = [20.0, 50.0]
+    # ambisonics order for directional FDN
+    ambi_order: Optional[int] = None
+    # total number of delay lines
+    num_delay_lines: Optional[int] = 12
 
     # config for the feedback loop
     feedback_loop_config: FeedbackLoopConfig = FeedbackLoopConfig()
@@ -206,6 +219,26 @@ class DiffGFDNConfig(BaseModel):
     input_filter_config: Optional[OutputFilterConfig] = OutputFilterConfig()
     # colorless FDN config
     colorless_fdn_config: ColorlessFDNConfig = ColorlessFDNConfig()
+
+    @model_validator(mode="after")
+    def set_num_delay_lines(self):
+        """Set number of delay lines based on ambisonics order"""
+        if self.ambi_order is not None:
+            self.num_delay_lines = ((self.ambi_order + 1)**2) * self.num_groups
+        return self
+
+    # validator for the 'reduced_pole_radius' field
+    @model_validator(mode='after')
+    @classmethod
+    def set_train_valid_ratio(cls, model):
+        """Set training and validation set ratio"""
+        if model.trainer_config.grid_resolution_m is not None:
+            if model.ambi_order is None:
+                raise AttributeError(
+                    "Only use grid resolution for directional reverberation training!"
+                )
+            model.trainer_config.train_valid_split = None
+        return model
 
     @computed_field
     @property

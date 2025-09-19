@@ -10,6 +10,7 @@ import pyloudnorm as pyln
 from scipy.fft import irfft, rfft
 from scipy.signal import fftconvolve
 from slope2noise.rooms import RoomGeometry
+from slope2noise.utils import calculate_energy_envelope
 import spaudiopy as spa
 
 from diff_gfdn.dataloader import RoomDataset
@@ -19,6 +20,61 @@ from spatial_sampling.dataloader import SpatialRoomDataset
 
 # pylint: disable=R1707, E1126, E0203
 # flake8: noqa:E231
+
+
+def add_direct_and_early_path(ref_room_data: SpatialRoomDataset,
+                              cur_room_data: SpatialRoomDataset,
+                              win_len_ms: float = 5) -> NDArray:
+    """Add direct and early reflections to the late tail to generate a full SRIR set"""
+    rec_pos_list = cur_room_data.receiver_position
+    distances = np.linalg.norm(ref_room_data.receiver_position[:, None, :] -
+                               rec_pos_list,
+                               axis=2)
+    closest_idxs_in_ref = np.argmin(distances, axis=0)
+
+    mixing_time_samps = ms_to_samps(ref_room_data.mixing_time_ms,
+                                    ref_room_data.sample_rate)
+    win_len_samps = ms_to_samps(2 * win_len_ms, ref_room_data.sample_rate)
+    window = np.broadcast_to(np.hanning(win_len_samps),
+                             cur_room_data.rirs.shape[:-1] + (win_len_samps, ))
+
+    # create fade in and fade out windows to avoid discontinuities
+    fade_in_win = window[..., :win_len_samps // 2]
+    fade_out_win = window[..., win_len_samps // 2:]
+
+    # get early reflections
+    early_reflections = np.zeros_like(cur_room_data.rirs)
+    early_reflections[..., :mixing_time_samps +
+                      win_len_samps // 2] = ref_room_data.rirs[
+                          closest_idxs_in_ref, :, :mixing_time_samps +
+                          win_len_samps // 2]
+
+    # get late reverb
+    late_rir = np.zeros_like(cur_room_data.rirs)
+    late_rir[..., mixing_time_samps:] = cur_room_data.rirs[...,
+                                                           mixing_time_samps:]
+
+    # avoid gain mismatch between early and late parts
+    early_energy = calculate_energy_envelope(
+        early_reflections[..., :mixing_time_samps], cur_room_data.sample_rate,
+        20)
+    late_energy = calculate_energy_envelope(late_rir[..., mixing_time_samps:],
+                                            cur_room_data.sample_rate, 20)
+    gain_at_mixing_time = early_energy[..., -1] / late_energy[..., 0]
+    gain_at_mixing_time = np.expand_dims(gain_at_mixing_time, axis=-1)
+    late_rir *= np.repeat(gain_at_mixing_time,
+                          repeats=late_rir.shape[-1],
+                          axis=-1)
+
+    # apply fading windows
+    early_reflections[..., mixing_time_samps:mixing_time_samps +
+                      win_len_samps // 2] *= fade_out_win
+    late_rir[..., mixing_time_samps:mixing_time_samps +
+             win_len_samps // 2] *= fade_in_win
+
+    # get full rir
+    full_rirs = early_reflections + late_rir
+    return full_rirs
 
 
 class dynamic_rendering_moving_receiver:

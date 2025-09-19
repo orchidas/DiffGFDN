@@ -7,11 +7,11 @@ import spaudiopy as sp
 import torch
 from torch import nn
 
-from diff_gfdn.dnn import ConvNet, MLP, ScaledSigmoid, Sigmoid, SinusoidalEncoding
+from diff_gfdn.dnn import ConvNet, MLP, MLP_SkipConnections, ScaledSigmoid, Sigmoid, SinusoidalEncoding
 
 from .config import BeamformerType
 
-# pylint: disable=E0606
+# pylint: disable=E0606, E1123
 
 
 class Directional_Beamforming_Weights(nn.Module):
@@ -75,10 +75,9 @@ class Directional_Beamforming_Weights(nn.Module):
                                             dtype=torch.float32,
                                             device=self.device)
 
-    def normalise_weights(self):
+    def normalise_weights(self, weights: torch.Tensor):
         """Normalise the learned weight matrix for energy preservation"""
-        return self.weights / (torch.norm(self.weights, dim=-1, keepdim=True) +
-                               1e-6)
+        return weights / (torch.norm(weights, dim=-1, keepdim=True) + 1e-6)
 
     def get_directional_amplitudes(self) -> torch.Tensor:
         """
@@ -86,11 +85,7 @@ class Directional_Beamforming_Weights(nn.Module):
         Returns:
             torch.Tensor: output matrix of size batch size x num_directions x num_slopes
         """
-        # normalise weights to have unit energy
-        self.normalise_weights()
-
         # we want the output shape to be num_batches, num_directions, num_slopes
-        # I have cross-checked that the following is correct
         output = torch.einsum('bkn, nj -> bjk', self.weights,
                               self.analysis_matrix.T)
 
@@ -111,7 +106,7 @@ class Directional_Beamforming_Weights(nn.Module):
     @torch.no_grad()
     def get_param_dict(self, x: Dict) -> Dict:
         """Return the parameters as a dict"""
-        self.forward(x)
+        self.forward(x, normalise_weights=True)
         param_np = {}
         param_np['beamformer_weights'] = self.weights.squeeze().cpu().numpy()
         param_np['directional_weights'] = self.get_directional_amplitudes(
@@ -132,6 +127,7 @@ class Directional_Beamforming_Weights_from_MLP(Directional_Beamforming_Weights
         desired_directions: NDArray,
         device: Optional[torch.device] = 'cpu',
         beamformer_type: Optional[BeamformerType] = None,
+        use_skip_connections: Optional[bool] = False,
     ):
         """
         Train the MLP to get directional beamformer weights for the amplitudes of each slope, as a function
@@ -143,6 +139,7 @@ class Directional_Beamforming_Weights_from_MLP(Directional_Beamforming_Weights
                 num_fourier_features (int): how much will the spatial locations expand as a feature
                 num_hidden_layers (int): Number of hidden layers.
                 num_neurons (int): Number of neurons in each hidden layer.
+                use_skip_connections (bool): whether to use ResNet style skip connections
 
         """
         super().__init__(num_groups, ambi_order, num_fourier_features,
@@ -153,14 +150,25 @@ class Directional_Beamforming_Weights_from_MLP(Directional_Beamforming_Weights
         num_input_features = 3 * num_fourier_features * 2
         self.encoder = SinusoidalEncoding(num_fourier_features)
 
-        self.mlp = MLP(num_input_features,
-                       num_hidden_layers,
-                       num_neurons,
-                       self.num_groups,
-                       num_biquads_in_cascade=1,
-                       num_params=self.num_out_features)
+        if use_skip_connections:
+            logger.info("Using ResNet style skip connections")
+            self.mlp = MLP_SkipConnections(num_input_features,
+                                           num_hidden_layers,
+                                           num_neurons,
+                                           self.num_groups,
+                                           num_biquads_in_cascade=1,
+                                           num_params=self.num_out_features)
+        else:
+            self.mlp = MLP(num_input_features,
+                           num_hidden_layers,
+                           num_neurons,
+                           self.num_groups,
+                           num_biquads_in_cascade=1,
+                           num_params=self.num_out_features)
 
-    def forward(self, x: Dict) -> torch.tensor:
+    def forward(self,
+                x: Dict,
+                normalise_weights: bool = False) -> torch.tensor:
         """Run the input features through the MLP. Output is of size batch_size x num_slopes x (N_sp+1)**2"""
         position = x['norm_listener_position']
         self.batch_size = position.shape[0]
@@ -174,6 +182,10 @@ class Directional_Beamforming_Weights_from_MLP(Directional_Beamforming_Weights
         reshape_size = (self.batch_size, self.num_groups,
                         self.num_out_features)
         self.weights = self.weights.reshape(reshape_size)
+
+        # normalise weights to have unit energy
+        if normalise_weights:
+            self.weights = super().normalise_weights(self.weights)
 
         return self.weights
 
