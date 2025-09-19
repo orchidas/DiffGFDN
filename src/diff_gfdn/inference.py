@@ -772,7 +772,7 @@ def infer_all_octave_bands_directional_fdn(
                 room_data,
                 config_dict,
                 model,
-                apply_filter_norm=True,
+                apply_filter_norm=False,
                 edc_len_ms=2000,
             )
 
@@ -828,7 +828,8 @@ def infer_all_octave_bands_directional_fdn(
                 pos_key = row["pos_key"]
                 rir = row["filtered_time_samples"].astype(np.float32)
 
-                if isinstance(pos_to_rir[pos_key], int):  # first time
+                # first time
+                if isinstance(pos_to_rir[pos_key], int):
                     pos_to_rir[pos_key] = rir
                     pos_to_pos[pos_key] = np.array(row["position"],
                                                    dtype=np.float64)
