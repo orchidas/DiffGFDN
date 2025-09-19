@@ -760,7 +760,7 @@ def infer_all_octave_bands_directional_fdn(
                 room_data,
                 config_dict,
                 model,
-                apply_filter_norm=True,
+                apply_filter_norm=False,
                 edc_len_ms=2000,
             )
 
