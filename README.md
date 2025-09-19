@@ -4,13 +4,13 @@ The goal of this work is to learn spatially-dynamic late reverberation propertie
 
 ## Data-driven late reverberation interpolation in coupled spaces using the Common Slopes model
 
-We investigate the modelling of position-dependent directional late reverberation in coupled spaces. We assume we have a set of <b> Spatial Room Impulse Responses (SRIRs) </b> (encoded in ambisonics) measured at several locations in the space.
+The modelling of position-dependent directional late reverberation in coupled spaces is investigated. From a set of <b> Spatial Room Impulse Responses (SRIRs) </b> (encoded in ambisonics) measured at several locations in the space, late reverberation at any location is generalised using machine learning.
 
-To generalise the late reverberation at any point in the space, we leverage the <b>Common Slopes (CS)</b> model. We train MLPs in octave bands to learn the weights of the decay kernels, known as the CS amplitudes, in the spherical harmonics domain. White noise, shaped in octave bands by the predicted CS parameters, is used to synthesise the direction-dependent late reverberation tail. As the user navigates, the MLPs update the CS amplitudes, a new reverberation tail is synthesised and time-varying convolution is performed on the input signal and the synthesised late tail.
+To do this, the <b>Common Slopes (CS)</b> model is leveraged. MLPs are trained in octave bands to learn the weights of the decay kernels, known as the CS amplitudes, in the spherical harmonics domain. White noise, shaped in octave bands by the predicted CS parameters, is used to synthesise the direction-dependent late reverberation tail. As the user navigates, the MLPs update the CS amplitudes, a new reverberation tail is synthesised and time-varying convolution is performed on the input signal and the synthesised late tail.
 
 ### Dataset
 
-We have been using the dataset published [here](https://zenodo.org/records/13338346) which has three coupled rooms simulated with Treble's hybrid solver and has 2nd order ambisonic SRIRs at 838 receiver locations for a single source location. This has been saved in the path `resources/Georg_3Room_FDTD/`. To parse the dataset and save the SRIRs and CS parameters in octave bands, run `python3 src/convert_mat_to_pkl_ambi.py`.
+We have tested on the dataset published [here](https://zenodo.org/records/13338346) which has three coupled rooms simulated with Treble's hybrid solver and has 2nd order ambisonic SRIRs at 838 receiver locations for a single source location. To parse the dataset and save the SRIRs and CS parameters in octave bands, run `python3 src/convert_mat_to_pkl_ambi.py`.
 
 ### Training
 
@@ -22,10 +22,10 @@ The scripts for training this model are in the [src/spatial_sampling](src/spatia
 
 ## Differentiable Grouped Feedback Delay Networks for data-driven late reverberation rendering in coupled spaces
 
-We proposed the [Grouped Feedback Delay Network](https://github.com/orchidas/GFDN) to render multi-slope late reverberation. In this work, we automatically learn the parameters of the GFDN to model multi-slope reverberation in a complex space from a set of measured <b>Room Impulse Responses</b>. 
+The [Grouped Feedback Delay Network](https://github.com/orchidas/GFDN) renders multi-slope late reverberation in coupled spaces. In this work, the parameters of the GFDN are learned to model multi-slope reverberation in a complex space from a set of measured Room Impulse Responses. 
 
 
-A dataset of RIRs measured in a coupled space, along with the corresponding source and receiver positions, can be used to train the DiffGFDN. Now, the RIR at a new (unmeasured) position can be extrapolated with the DiffGFDN network. More powerfully, we can parameterise the late reverberation in the entire space with a very efficient network which is ideal for real-time rendering as the source-listener moves. This not only
+A dataset of RIRs measured in a coupled space, along with the corresponding source and receiver positions, can be used to train the DiffGFDN. Now, the RIR at a new (unmeasured) position can be extrapolated with the DiffGFDN network. More powerfully, the late reverberation in the entire space can be parameterised with a very efficient network which is ideal for real-time rendering as the source-listener moves. This not only
 reduces memory requirements of storing measured RIRs, but is also faster than convolution with long reverberation tails.
 
 ### Dataset
