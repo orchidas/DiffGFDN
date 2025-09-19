@@ -1,4 +1,4 @@
-# Data-driven spatially-dynamic late reverberation rendering in coupled spaces for Augmented Reality
+# Data-driven 6DoF late reverberation rendering in coupled spaces for Augmented Reality
 
 The goal of this work is to learn spatially-dynamic late reverberation properties in a complex space from a measured set of RIRs / SRIRs, and render dynamic late reverberation as the user moves around the space. Models are trained to learn from a finite set of measurements, and extrapolate late reverberation behaviour at any location in the space. To setup the repository, follow instructions in [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -6,7 +6,7 @@ The goal of this work is to learn spatially-dynamic late reverberation propertie
 
 The modelling of position-dependent directional late reverberation in coupled spaces is investigated. From a set of <b> Spatial Room Impulse Responses (SRIRs) </b> (encoded in ambisonics) measured at several locations in the space, late reverberation at any location is generalised using machine learning.
 
-To do this, the <b>Common Slopes (CS)</b> model is leveraged. MLPs are trained in octave bands to learn the weights of the decay kernels, known as the CS amplitudes, in the spherical harmonics domain. White noise, shaped in octave bands by the predicted CS parameters, is used to synthesise the direction-dependent late reverberation tail. As the user navigates, the MLPs update the CS amplitudes, a new reverberation tail is synthesised and time-varying convolution is performed on the input signal and the synthesised late tail.
+To do this, the <b>Common Slopes (CS)</b> model is leveraged. MLPs are trained in octave bands to learn the weights of the decay kernels, known as the CS amplitudes, in the spherical harmonics domain. White noise, shaped in octave bands by the predicted CS parameters, is used to synthesise the direction-dependent late reverberation tail. For 6 DoF rendering, the MLPs update the CS amplitudes, a new reverberation tail is synthesised and time-varying convolution is performed on the input signal and the synthesised late tail.
 
 ### Dataset
 
