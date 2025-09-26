@@ -4,7 +4,7 @@ The goal of this work is to learn spatially-dynamic late reverberation propertie
 
 ## Data-driven late reverberation interpolation in coupled spaces using the Common Slopes model
 
-The modelling of position-dependent directional late reverberation in coupled spaces is investigated. From a set of <b> Spatial Room Impulse Responses (SRIRs) </b> (encoded in ambisonics) measured at several locations in the space, late reverberation at any location is generalised using machine learning.
+From a set of <b> Spatial Room Impulse Responses (SRIRs) </b> (encoded in ambisonics) measured at several locations in the space, late reverberation at any location is generalised using machine learning.
 
 To do this, the <b>Common Slopes (CS)</b> model is leveraged. MLPs are trained in octave bands to learn the weights of the decay kernels, known as the CS amplitudes, in the spherical harmonics domain. White noise, shaped in octave bands by the predicted CS parameters, is used to synthesise the direction-dependent late reverberation tail. For 6 DoF rendering, the MLPs update the CS amplitudes, a new reverberation tail is synthesised and time-varying convolution is performed on the input signal and the synthesised late tail.
 
@@ -61,8 +61,8 @@ To use an open-source dataset:
 
 ## Publications
 
-- <i>Neural-network based interpolation of late reverberation in coupled spaces using the common slopes model</i> - Das, Dal Santo, Schlecht and Zvetkovic, IEEE Work. Appl. of Sig. Process. Aud. Acous., IEEE WASPAA 2025.
-- <i>Differentiable Grouped Feedback Delay Networks: Learning from measured Room Impulse Responses for spatially dynamic late reverberation rendering</i> - Das, Dal Santo, Schlecht and Zvetkovic, submitted to IEEE Trans. Aud. Speech Lang. Process., IEEE TASLP, 2025.
+- <i>Neural-network based interpolation of late reverberation in coupled spaces using the common slopes model</i> - Das, Dal Santo, Schlecht and Zvetkovic, IEEE Work. Appl. of Sig. Process. Aud. Acous., IEEE WASPAA 2025 [link](https://kclpure.kcl.ac.uk/portal/en/publications/neural-network-based-interpolation-of-late-reverberation-in-coupl).
+- <i>Differentiable Grouped Feedback Delay Networks: Learning from measured Room Impulse Responses for spatially dynamic late reverberation rendering</i> - Das, Dal Santo, Schlecht and Zvetkovic, submitted to IEEE Trans. Aud. Speech Lang. Process., IEEE TASLP, 2025 [link](https://arxiv.org/html/2508.06686v1).
 - <i> Differentiable Grouped Feedback Delay Networks for Learning Position and Direction-Dependent Late Reverberation</i> - Das, Schlecht, Dal Santo, Cvetkovic, submitted to IEEE Int. Conf. Aud., Speech Sig. Process., ICASSP 2026.
 
 
