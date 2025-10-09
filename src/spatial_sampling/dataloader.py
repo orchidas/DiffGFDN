@@ -287,8 +287,6 @@ def create_2D_grid_data(
         x_lin_unique = np.unique(x_lin)
         y_lin_unique = np.unique(y_lin)
         x_mesh, y_mesh = np.meshgrid(x_lin_unique, y_lin_unique)
-        # print('Listener position in current batch')
-        # print(x_lin_unique, y_lin_unique)
 
         # TO-DO discard indices that don't fall in a regular grid
 

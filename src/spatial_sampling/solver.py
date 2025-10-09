@@ -423,6 +423,7 @@ class make_plots:
                                       est_amps[ordered_pos_idx],
                                       self.envelopes),
                          is_squared=True)
+
             error_db = torch.mean(torch.abs(original_edc - est_edc), dim=-1)
 
             logger.info(f'Mean EDC error in dB is {error_db.mean():.3f} dB')
@@ -439,10 +440,10 @@ class make_plots:
                         +
                         f'grid_resolution_m={np.round(grid_resolution_m, 3)}' +
                         extend + '.png').resolve(),
-                    # title=
-                    # f'az = {np.degrees(self.room_data.sph_directions[0, j]):.2f} deg,'
-                    # +
-                    # f' pol = {np.degrees(self.room_data.sph_directions[1, j]):.2f} deg'
+                    title=
+                    f'az = {np.degrees(self.room_data.sph_directions[0, j]):.2f} deg,'
+                    +
+                    f' pol = {np.degrees(self.room_data.sph_directions[1, j]):.2f} deg'
                 )
 
 
