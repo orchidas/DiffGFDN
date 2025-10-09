@@ -20,8 +20,8 @@ from torch import nn
 from tqdm import tqdm
 
 from spatial_sampling.config import DNNType
+from spatial_sampling.dataloader import SpatialRoomDataset, SpatialThreeRoomDataset
 from spatial_sampling.dataloader import load_dataset as load_spatial_dataset
-from spatial_sampling.dataloader import parse_three_room_data, SpatialRoomDataset
 from spatial_sampling.inference import convert_directional_rirs_to_ambisonics
 
 from .colorless_fdn.utils import get_colorless_fdn_params
@@ -713,7 +713,7 @@ def infer_all_octave_bands_directional_fdn(
             trainer_config = config_dict.trainer_config
 
             if "3room_FDTD" in config_dict.room_dataset_path:
-                room_data = parse_three_room_data(
+                room_data = SpatialThreeRoomDataset(
                     Path(config_dict.room_dataset_path).resolve())
             else:
                 logger.error("Other room data not supported currently")
