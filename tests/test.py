@@ -468,7 +468,6 @@ def test_spherical_filterbank():
     des_dir = room_dataset.sph_directions
     ambi_order = room_dataset.ambi_order
     num_channels = (ambi_order + 1)**2
-
     test_spherical_t_design_grid(ambi_order, des_dir)
 
     srir_ref = room_dataset.rirs[rec_pos_idx, :, :ir_len].squeeze()

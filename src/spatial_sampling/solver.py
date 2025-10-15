@@ -18,7 +18,7 @@ from diff_gfdn.save_results import save_loss
 from diff_gfdn.utils import db, db2lin, ms_to_samps, samps_to_ms
 
 from .config import DNNType, SpatialSamplingConfig
-from .dataloader import load_dataset, parse_three_room_data, SpatialRoomDataset
+from .dataloader import load_dataset, SpatialRoomDataset, SpatialThreeRoomDataset
 from .model import (
     Directional_Beamforming_Weights,
     Directional_Beamforming_Weights_from_CNN,
@@ -463,7 +463,7 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig,
     logger.info("Training the MLP to learn spatial mappings")
     if "3room_FDTD" in config_dict.room_dataset_path:
         # read the coupled room dataset
-        room_data = parse_three_room_data(
+        room_data = SpatialThreeRoomDataset(
             Path(config_dict.room_dataset_path).resolve())
     else:
         logger.error("Currently only the three room dataset is supported")

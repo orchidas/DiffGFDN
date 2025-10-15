@@ -141,7 +141,7 @@ def convert_directional_rirs_to_ambisonics(ambi_order: int,
 
     # ensure spatial band limitation of directional RIRs - see Holdt et al
     sh_matrix = sp.sph.sh_matrix(ambi_order, desired_directions[0, :],
-                                 desired_directions[1, :])
+                                 np.pi / 2 - desired_directions[1, :])
     # size is num_directions x num_directions
     spatial_cov_matrix = sh_matrix @ np.diag(
         sp.sph.repeat_per_order(modal_weights)) @ sh_matrix.T
