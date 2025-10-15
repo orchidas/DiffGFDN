@@ -192,7 +192,7 @@ class make_plots:
         sph_matrix_orig = spa.sph.sh_matrix(
             self.room_data.ambi_order,
             self.room_data.sph_directions[0, :],
-            self.room_data.sph_directions[1, :],
+            np.pi / 2 - self.room_data.sph_directions[1, :],
             sh_type='real')
 
         sph_matrix_dense = spa.sph.sh_matrix(self.room_data.ambi_order,

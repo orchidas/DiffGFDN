@@ -155,7 +155,7 @@ def convert_directional_rirs_to_ambisonics(ambi_order: int,
     _, synthesis_matrix = sp.sph.design_sph_filterbank(
         ambi_order,
         desired_directions[0, :],
-        desired_directions[1, :],
+        np.pi / 2 - desired_directions[1, :],
         modal_weights,
         mode='energy',
         sh_type='real')

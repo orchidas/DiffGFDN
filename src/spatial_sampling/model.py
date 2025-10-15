@@ -66,7 +66,7 @@ class Directional_Beamforming_Weights(nn.Module):
         self.analysis_matrix, _ = sp.sph.design_sph_filterbank(
             self.ambi_order,
             desired_directions[0, :],
-            desired_directions[1, :],
+            np.pi / 2 - desired_directions[1, :],
             self.modal_weights,
             mode='energy',
             sh_type='real')
