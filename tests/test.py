@@ -16,6 +16,7 @@ import spaudiopy as sp
 from diff_gfdn.config.config import DiffGFDNConfig
 from diff_gfdn.dataloader import ThreeRoomDataset
 from diff_gfdn.utils import db, db2lin, ms_to_samps
+from sofa_parser import convert_srir_to_brir, HRIRSOFAReader
 from spatial_sampling.config import BeamformerType
 from spatial_sampling.dataloader import SpatialThreeRoomDataset
 
@@ -433,8 +434,21 @@ def spatial_bandlimiting(ambi_order: int, des_dir: NDArray, drir: NDArray,
     # sum over any one dimension since the matrix is symmetric
     norm_factor = spatial_cov_matrix / np.sum(
         spatial_cov_matrix, axis=1, keepdims=True)
-    bandlimited_drir = np.einsum('jj, jt -> jt', norm_factor, drir)
+    bandlimited_drir = np.einsum('jk, kt -> kt', norm_factor, drir)
     return bandlimited_drir
+
+
+def convert_ambi_to_brir(hrir_path: str, srir: NDArray, fs: float,
+                         orientation: NDArray) -> NDArray:
+    """Convert SRIR to BRIR"""
+    hrtf_reader = HRIRSOFAReader(hrir_path)
+
+    if hrtf_reader.fs != fs:
+        hrtf_reader.resample_hrirs(fs)
+
+    brirs = convert_srir_to_brir(srir[np.newaxis, ...], hrtf_reader,
+                                 orientation)
+    return brirs.squeeze(axis=0)
 
 
 def test_spherical_t_design_grid(ambi_order: NDArray, des_dir: NDArray):
@@ -562,10 +576,25 @@ def test_wn_recons_with_spherical_filterbank():
             'figures/test_plots/test_wn_recons_spherical_filterbank_edc_spatial_bandlimit.png'
         ).resolve())
 
+    # convert to BRIRs and save wave files
+    hrtf_path = Path(
+        'resources/HRTF/48kHz/KEMAR_Knowl_EarSim_SmallEars_FreeFieldComp_48kHz.sofa'
+    ).resolve()
+    orientation = np.zeros((4, 2))
+    orientation[:, 0] = np.array([0, 90, 180, 270])
+    brir_ref = convert_ambi_to_brir(hrtf_path, srir_ref, fs, orientation)
+    brir_syn = convert_ambi_to_brir(hrtf_path, wgn_srir, fs, orientation)
+    audio_path = Path('audio/sph_filterbank_test/').resolve()
+    for k in range(len(orientation)):
+        fname_ref = f'{audio_path}/ref_brir_ori={orientation[k, 0]:.0f}.wav'
+        fname_syn = f'{audio_path}/syn_brir_ori={orientation[k, 0]:.0f}.wav'
+        sf.write(fname_ref, brir_ref[k, ...], int(fs))
+        sf.write(fname_syn, brir_syn[k, ...], int(fs))
+
 
 if __name__ == '__main__':
-    # test_pyfar_filterbank_white_noise()
-    # test_spherical_filterbank()
-    # test_pyfar_edc_broadband_wn_rir()
-    # test_pyfar_edc_broadband_gfdn_rir()
+    test_pyfar_filterbank_white_noise()
+    test_pyfar_edc_broadband_wn_rir()
+    test_pyfar_edc_broadband_gfdn_rir()
+    test_spherical_filterbank()
     test_wn_recons_with_spherical_filterbank()
