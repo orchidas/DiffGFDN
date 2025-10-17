@@ -387,7 +387,7 @@ class InferDiffDirectionalFDN:
         # get SH conversion matrix
         sh_matrix = self.model.sh_output_scalars.analysis_matrix
         # convert to directional response
-        h_dir = torch.einsum('blk, lj -> bjk', h_sh, sh_matrix.T)
+        h_dir = torch.einsum('jl, blk->bjk', sh_matrix, h_sh)
         return h_dir
 
     def get_model_output(

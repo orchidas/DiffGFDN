@@ -520,7 +520,7 @@ def test_wn_recons_with_spherical_filterbank():
     room_data_pkl_path = Path(
         'resources/Georg_3room_FDTD/srirs_spatial.pkl').resolve()
     room_dataset = SpatialThreeRoomDataset(room_data_pkl_path)
-    pos_to_investigate = [9.30, 6.60, 1.50]
+    pos_to_investigate = [9.30, 10.80, 1.50]
     rec_pos_idx = np.argwhere(
         np.all(np.round(room_dataset.receiver_position,
                         2) == pos_to_investigate,
@@ -593,8 +593,8 @@ def test_wn_recons_with_spherical_filterbank():
 
 
 if __name__ == '__main__':
-    test_pyfar_filterbank_white_noise()
-    test_pyfar_edc_broadband_wn_rir()
-    test_pyfar_edc_broadband_gfdn_rir()
-    test_spherical_filterbank()
+    # test_pyfar_filterbank_white_noise()
+    # test_pyfar_edc_broadband_wn_rir()
+    # test_pyfar_edc_broadband_gfdn_rir()
+    # test_spherical_filterbank()
     test_wn_recons_with_spherical_filterbank()
