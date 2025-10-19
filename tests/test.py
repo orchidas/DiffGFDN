@@ -485,13 +485,10 @@ def test_spherical_filterbank():
     test_spherical_t_design_grid(ambi_order, des_dir)
 
     srir_ref = room_dataset.rirs[rec_pos_idx, :, :ir_len].squeeze()
-    drir, sph_an_matrix = spherical_analysis_filterbank(ambi_order,
-                                                        des_dir,
-                                                        srir_ref,
-                                                        BeamformerType.MAX_DI,
-                                                        mode='perfect')
+    drir_ref, sph_an_matrix = spherical_analysis_filterbank(
+        ambi_order, des_dir, srir_ref, BeamformerType.MAX_DI, mode='perfect')
     srir_recon, sph_syn_matrix = spherical_synthesis_filterbank(
-        ambi_order, des_dir, drir, BeamformerType.MAX_DI, mode='perfect')
+        ambi_order, des_dir, drir_ref, BeamformerType.MAX_DI, mode='perfect')
 
     fig, ax = plt.subplots(num_channels, 1, figsize=(8, 10),
                            sharey=True)  # rows, cols
@@ -520,7 +517,8 @@ def test_wn_recons_with_spherical_filterbank():
     room_data_pkl_path = Path(
         'resources/Georg_3room_FDTD/srirs_spatial.pkl').resolve()
     room_dataset = SpatialThreeRoomDataset(room_data_pkl_path)
-    pos_to_investigate = [9.30, 10.80, 1.50]
+    # pos_to_investigate = [9.30, 10.80, 1.50]
+    pos_to_investigate = [6.4, 3.8, 1.5]
     rec_pos_idx = np.argwhere(
         np.all(np.round(room_dataset.receiver_position,
                         2) == pos_to_investigate,
@@ -550,10 +548,9 @@ def test_wn_recons_with_spherical_filterbank():
     )
 
     # convert to ambisonics signal
-    bandlimit_wgn_drir = spatial_bandlimiting(ambi_order, des_dir, wgn_drir,
-                                              BeamformerType.MAX_DI)
-    wgn_srir, _ = spherical_synthesis_filterbank(ambi_order, des_dir,
-                                                 bandlimit_wgn_drir,
+    # bandlimit_wgn_drir = spatial_bandlimiting(ambi_order, des_dir, wgn_drir,
+    #                                           BeamformerType.MAX_DI)
+    wgn_srir, _ = spherical_synthesis_filterbank(ambi_order, des_dir, wgn_drir,
                                                  BeamformerType.MAX_DI)
 
     # get EDC of reference and synthesised tails and plot them
@@ -572,9 +569,8 @@ def test_wn_recons_with_spherical_filterbank():
     # increase space between subplots
     fig.subplots_adjust(hspace=1.0)  # increase vertical spacing
     fig.savefig(
-        Path(
-            'figures/test_plots/test_wn_recons_spherical_filterbank_edc_spatial_bandlimit.png'
-        ).resolve())
+        Path('figures/test_plots/test_wn_recons_spherical_filterbank_edc.png').
+        resolve())
 
     # convert to BRIRs and save wave files
     hrtf_path = Path(

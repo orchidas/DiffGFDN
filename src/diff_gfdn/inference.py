@@ -321,8 +321,6 @@ class InferDiffDirectionalFDN:
                                         dtype=torch.float32)
         self.true_amps = torch.tensor(self.room_data.amplitudes,
                                       dtype=torch.float32)
-        self.mixing_time_samps = ms_to_samps(self.room_data.mixing_time_ms,
-                                             self.room_data.sample_rate)
 
         output_gains = []
         input_gains = []
