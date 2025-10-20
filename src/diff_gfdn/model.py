@@ -1105,7 +1105,7 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
         """Get output of MLP during inference"""
         param_np = {}
         try:
-            param_out_mlp = self.sh_output_scalars.get_param_dict(
+            param_out_mlp = self.dir_output_scalars.get_param_dict(
                 data, normalise_weights)
             param_np['output_scalars'] = param_out_mlp['beamformer_weights']
         except Exception as e:
