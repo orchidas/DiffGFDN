@@ -104,9 +104,9 @@ class Directional_Beamforming_Weights(nn.Module):
         return weights
 
     @torch.no_grad()
-    def get_param_dict(self, x: Dict) -> Dict:
+    def get_param_dict(self, x: Dict, normalise_weights: bool = False) -> Dict:
         """Return the parameters as a dict"""
-        self.forward(x, normalise_weights=True)
+        self.forward(x, normalise_weights=normalise_weights)
         param_np = {}
         param_np['beamformer_weights'] = self.weights.squeeze().cpu().numpy()
         param_np['directional_weights'] = self.get_directional_amplitudes(

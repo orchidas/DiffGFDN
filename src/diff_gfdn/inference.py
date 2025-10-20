@@ -440,7 +440,8 @@ class InferDiffDirectionalFDN:
                 position = data['listener_position']
 
                 # get parameter dictionary used in inferencing
-                inf_param_dict = self.model.get_param_dict_inference(data)
+                inf_param_dict = self.model.get_param_dict_inference(
+                    data, normalise_weights=True)
                 for num_pos in range(position.shape[0]):
                     if 'output_scalars' in inf_param_dict.keys():
                         self.all_output_sh_gains[num_epochs][

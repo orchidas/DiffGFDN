@@ -7,7 +7,7 @@ feedback_loop_config:
   coupling_matrix_type: scalar_matrix
 output_filter_config:
   num_fourier_features: 20
-  num_hidden_layers: 10
+  num_hidden_layers: 5
   num_neurons_per_layer: 128
   use_svfs: false
   beamformer_type: 'max_directivity'
