@@ -12,8 +12,8 @@ from slope2noise.dataclass import Slope2NoiseUnpickler
 import torch
 
 from spatial_sampling.config import DNNType
+from spatial_sampling.dataloader import SpatialRoomDataset, SpatialThreeRoomDataset
 from spatial_sampling.dataloader import load_dataset as load_dataset_spatial
-from spatial_sampling.dataloader import parse_three_room_data, SpatialRoomDataset
 
 from .colorless_fdn.dataloader import load_colorless_fdn_dataset
 from .colorless_fdn.model import ColorlessFDN
@@ -115,7 +115,7 @@ def data_parser_anisotropic_decay_var_receiver_pos(
     """
     if "3room_FDTD" in config_dict.room_dataset_path:
         # read the coupled room dataset
-        spatial_room_data = parse_three_room_data(
+        spatial_room_data = SpatialThreeRoomDataset(
             config_dict.room_dataset_path)
         return spatial_room_data
     else:

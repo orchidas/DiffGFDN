@@ -249,8 +249,6 @@ def inferencing(
             for data in train_dataset:
                 position = data['listener_position'].detach().cpu().numpy()
 
-                # TO-DO: change z_values to represent the particular frequency subband
-
                 if model.use_colorless_loss:
                     _, _, h = get_response(data, model)
                 else:

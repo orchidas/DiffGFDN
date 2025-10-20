@@ -11,7 +11,7 @@ from dataclass import NAFDatasetInfer
 from run_model import dump_config_to_pickle, load_and_validate_config
 from sofa_parser import convert_srir_to_brir, HRIRSOFAReader, save_to_sofa
 from spatial_sampling.config import SpatialSamplingConfig
-from spatial_sampling.dataloader import parse_three_room_data
+from spatial_sampling.dataloader import SpatialThreeRoomDataset
 from spatial_sampling.inference import get_ambisonic_rirs
 from spatial_sampling.solver import run_training_spatial_sampling
 
@@ -75,7 +75,7 @@ def run_inference_on_all_bands(
     infer_pos_list = infer_dataset.infer_receiver_pos
 
     # get the original dataset
-    room_data = parse_three_room_data(data_path)
+    room_data = SpatialThreeRoomDataset(data_path)
     pred_room_data = get_ambisonic_rirs(infer_pos_list,
                                         room_data,
                                         use_trained_model=True,

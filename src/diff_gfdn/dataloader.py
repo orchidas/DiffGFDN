@@ -539,7 +539,6 @@ class MultiRIRDataset(data.Dataset):
         self.listener_positions = torch.tensor(room_data.receiver_position)
         self.norm_listener_position = torch.tensor(
             room_data.norm_receiver_position)
-        self.mesh_2D = room_data.mesh_2D
         self.device = device
 
         # if we have multiple sources in the dataset
@@ -583,7 +582,6 @@ class MultiRIRDataset(data.Dataset):
             input_features = InputFeatures(torch.squeeze(self.source_position),
                                            self.listener_positions[idx],
                                            self.norm_listener_position[idx],
-                                           self.mesh_2D,
                                            z_values=self.z_values)
             target_labels = Target(self.early_rir_mag_response[idx, :],
                                    self.late_rir_mag_response[idx, :],
@@ -593,7 +591,6 @@ class MultiRIRDataset(data.Dataset):
             input_features = InputFeatures(self.source_position[idx1],
                                            self.listener_positions[idx2],
                                            self.norm_listener_position[idx2],
-                                           self.mesh_2D,
                                            z_values=self.z_values)
             target_labels = Target(self.early_rir_mag_response[idx1, idx2, :],
                                    self.late_rir_mag_response[idx1, idx2, :],
@@ -682,13 +679,6 @@ def custom_collate(batch: data.Dataset):
     # these are independent of the source/receiver locations
     z_values = batch[0]['input'].z_values
 
-    # mesh_2D is a Meshgrid object with attributes xmesh, ymesh
-    x_mesh = batch[0]['input'].mesh_2D.xmesh
-    y_mesh = batch[0]['input'].mesh_2D.ymesh
-
-    # this is of size (Lx * Ly * Lz) x 3
-    mesh_2D_data = torch.stack((x_mesh, y_mesh), dim=1)
-
     # depends on source/receiver positions
     source_positions = [item['input'].source_position for item in batch]
     listener_positions = [item['input'].listener_position for item in batch]
@@ -707,7 +697,6 @@ def custom_collate(batch: data.Dataset):
         'source_position': torch.stack(source_positions),
         'listener_position': torch.stack(listener_positions),
         'norm_listener_position': torch.stack(norm_listener_positions),
-        'mesh_2D': mesh_2D_data,
         'target_early_response': torch.stack(target_early_response),
         'target_late_response': torch.stack(target_late_response),
         'target_rir_response': torch.stack(target_rir_response)

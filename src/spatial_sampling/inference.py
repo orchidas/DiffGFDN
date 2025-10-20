@@ -113,10 +113,28 @@ def get_ambisonic_rirs(
     return cs_room_data
 
 
-def convert_directional_rirs_to_ambisonics(ambi_order: int,
-                                           desired_directions: NDArray,
-                                           beamformer_type: BeamformerType,
-                                           directional_rirs: NDArray):
+def spatial_bandlimiting(ambi_order: int, des_dir: NDArray, drirs: NDArray,
+                         modal_weights: NDArray):
+    """Ensure spatial band limitation of directional RIRs - see Holdt et al"""
+    sh_matrix = sp.sph.sh_matrix(ambi_order, des_dir[0, :],
+                                 np.pi / 2 - des_dir[1, :])
+    # size is num_directions x num_directions
+    spatial_cov_matrix = sh_matrix @ np.diag(
+        sp.sph.repeat_per_order(modal_weights)) @ sh_matrix.T
+
+    # sum over any one dimension since the matrix is symmetric
+    norm_factor = spatial_cov_matrix / np.sum(
+        spatial_cov_matrix, axis=1, keepdims=True)
+    bandlimited_drirs = np.einsum('jk, kbt -> jbt', norm_factor, drirs)
+    return bandlimited_drirs
+
+
+def convert_directional_rirs_to_ambisonics(
+        ambi_order: int,
+        desired_directions: NDArray,
+        beamformer_type: BeamformerType,
+        directional_rirs: NDArray,
+        apply_spatial_bandlimiting: bool = False):
     """
     Convert directional RIRs into the ambisonics domain by passing through a synthesis Spherical filterbank
     Args:
@@ -139,23 +157,17 @@ def convert_directional_rirs_to_ambisonics(ambi_order: int,
     else:
         raise NameError("Other types of beamformers not available")
 
-    # ensure spatial band limitation of directional RIRs - see Holdt et al
-    sh_matrix = sp.sph.sh_matrix(ambi_order, desired_directions[0, :],
-                                 desired_directions[1, :])
-    # size is num_directions x num_directions
-    spatial_cov_matrix = sh_matrix @ np.diag(
-        sp.sph.repeat_per_order(modal_weights)) @ sh_matrix.T
-    # sum over any one dimension since the matrix is symmetric
-    norm_factor = spatial_cov_matrix / np.sum(
-        spatial_cov_matrix, axis=1, keepdims=True)
-    bandlimited_directional_rirs = np.einsum('jj, jbt -> jbt', norm_factor,
-                                             directional_rirs)
+    if apply_spatial_bandlimiting:
+        bandlimited_directional_rirs = spatial_bandlimiting(
+            ambi_order, desired_directions, directional_rirs, modal_weights)
+    else:
+        bandlimited_directional_rirs = directional_rirs.copy()
 
     # size is num_ambi_channels x num_directions
     _, synthesis_matrix = sp.sph.design_sph_filterbank(
         ambi_order,
         desired_directions[0, :],
-        desired_directions[1, :],
+        np.pi / 2 - desired_directions[1, :],
         modal_weights,
         mode='energy',
         sh_type='real')

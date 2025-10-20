@@ -159,6 +159,67 @@ class SpatialRoomDataset(ABC):
         self.late_rirs[..., :win_len_samps // 2] *= fade_in_win
 
 
+class SpatialThreeRoomDataset(SpatialRoomDataset):
+    """Read the three coupled room dataset at filepath and return a SpatialRoomDataset object"""
+
+    def __init__(self, filepath: str):
+        """
+        Args:
+            filepath (str): path to pkl file where the ThreeRoomDataset is saved
+        """
+        assert str(filepath).endswith(
+            '.pkl'), "provide the path to the .pkl file"
+        # read contents from pkl file
+        try:
+            logger.info('Reading pkl file ...')
+            with open(filepath, 'rb') as f:
+                srir_mat = pickle.load(f)
+                sample_rate = srir_mat['fs']
+                source_position = srir_mat['srcPos'].T
+                receiver_position = srir_mat['rcvPos'].T
+                srirs = np.squeeze(srir_mat['srirs']).T
+                band_centre_hz = srir_mat['band_centre_hz']
+                common_decay_times = srir_mat['common_decay_times']
+                amplitudes = srir_mat['amplitudes_norm'].T
+                noise_floor = srir_mat['noise_floor_norm'].T
+                sph_directions = np.deg2rad(
+                    srir_mat['directions']
+                ) if 'directions' in srir_mat else None
+        except Exception as exc:
+            raise FileNotFoundError("pickle file not read correctly") from exc
+
+        logger.info("Done reading pkl file")
+        # number of rooms in dataset
+        num_rooms = 3
+        # (x,y) dimensions of the 3 rooms
+        room_dims = [(4.0, 8.0, 3.0), (6.0, 3.0, 3.0), (4.0, 8.0, 3.0)]
+        # this denotes the 3D position of the first vertex of the floor
+        room_start_coord = [(0, 0, 0), (4.0, 2.0, 0), (6.0, 5.0, 0)]
+        # coordinates of the aperture
+        aperture_coords = [[(4, 3), (4, 4.5)], [(8.5, 5), (10, 5)]]
+
+        super().__init__(
+            num_rooms,
+            sample_rate,
+            source_position,
+            receiver_position,
+            srirs,
+            common_decay_times,
+            room_dims,
+            room_start_coord,
+            band_centre_hz,
+            amplitudes,
+            noise_floor,
+            aperture_coords,
+            sph_directions=sph_directions,
+            ambi_order=2,
+            grid_spacing_m=0.3,
+        )
+
+
+####################################################################################
+
+
 class SpatialSamplingDataset(Dataset):
 
     def __init__(
@@ -287,8 +348,6 @@ def create_2D_grid_data(
         x_lin_unique = np.unique(x_lin)
         y_lin_unique = np.unique(y_lin)
         x_mesh, y_mesh = np.meshgrid(x_lin_unique, y_lin_unique)
-        # print('Listener position in current batch')
-        # print(x_lin_unique, y_lin_unique)
 
         # TO-DO discard indices that don't fall in a regular grid
 
@@ -748,54 +807,3 @@ def load_dataset(
         return train_loader, valid_loader, dataset
     else:
         return train_loader, None, dataset
-
-
-def parse_three_room_data(filepath: str):
-    """Read the three coupled room dataset at filepath and return a SpatialRoomDataset object"""
-    assert str(filepath).endswith('.pkl'), "provide the path to the .pkl file"
-    # read contents from pkl file
-    try:
-        logger.info('Reading pkl file ...')
-        with open(filepath, 'rb') as f:
-            srir_mat = pickle.load(f)
-            sample_rate = srir_mat['fs']
-            source_position = srir_mat['srcPos'].T
-            receiver_position = srir_mat['rcvPos'].T
-            srirs = np.squeeze(srir_mat['srirs']).T
-            band_centre_hz = srir_mat['band_centre_hz']
-            common_decay_times = srir_mat['common_decay_times']
-            amplitudes = srir_mat['amplitudes_norm'].T
-            noise_floor = srir_mat['noise_floor_norm'].T
-            sph_directions = np.deg2rad(
-                srir_mat['directions']) if 'directions' in srir_mat else None
-    except Exception as exc:
-        raise FileNotFoundError("pickle file not read correctly") from exc
-
-    logger.info("Done reading pkl file")
-    # number of rooms in dataset
-    num_rooms = 3
-    # (x,y) dimensions of the 3 rooms
-    room_dims = [(4.0, 8.0, 3.0), (6.0, 3.0, 3.0), (4.0, 8.0, 3.0)]
-    # this denotes the 3D position of the first vertex of the floor
-    room_start_coord = [(0, 0, 0), (4.0, 2.0, 0), (6.0, 5.0, 0)]
-    # coordinates of the aperture
-    aperture_coords = [[(4, 3), (4, 4.5)], [(8.5, 5), (10, 5)]]
-    grid_spacing_m = 0.3
-
-    return SpatialRoomDataset(
-        num_rooms,
-        sample_rate,
-        source_position,
-        receiver_position,
-        srirs,
-        common_decay_times,
-        room_dims,
-        room_start_coord,
-        band_centre_hz,
-        amplitudes,
-        noise_floor,
-        aperture_coords,
-        sph_directions=sph_directions,
-        ambi_order=2,
-        grid_spacing_m=grid_spacing_m,
-    )

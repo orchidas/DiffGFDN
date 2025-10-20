@@ -20,8 +20,8 @@ from torch import nn
 from tqdm import tqdm
 
 from spatial_sampling.config import DNNType
+from spatial_sampling.dataloader import SpatialRoomDataset, SpatialThreeRoomDataset
 from spatial_sampling.dataloader import load_dataset as load_spatial_dataset
-from spatial_sampling.dataloader import parse_three_room_data, SpatialRoomDataset
 from spatial_sampling.inference import convert_directional_rirs_to_ambisonics
 
 from .colorless_fdn.utils import get_colorless_fdn_params
@@ -321,8 +321,6 @@ class InferDiffDirectionalFDN:
                                         dtype=torch.float32)
         self.true_amps = torch.tensor(self.room_data.amplitudes,
                                       dtype=torch.float32)
-        self.mixing_time_samps = ms_to_samps(self.room_data.mixing_time_ms,
-                                             self.room_data.sample_rate)
 
         output_gains = []
         input_gains = []
@@ -427,7 +425,8 @@ class InferDiffDirectionalFDN:
                 position = data['listener_position']
 
                 # get parameter dictionary used in inferencing
-                inf_param_dict = self.model.get_param_dict_inference(data)
+                inf_param_dict = self.model.get_param_dict_inference(
+                    data, normalise_weights=True)
                 for num_pos in range(position.shape[0]):
                     if 'output_scalars' in inf_param_dict.keys():
                         self.all_output_dir_gains[num_epochs][
@@ -692,7 +691,7 @@ def infer_all_octave_bands_directional_fdn(
             trainer_config = config_dict.trainer_config
 
             if "3room_FDTD" in config_dict.room_dataset_path:
-                room_data = parse_three_room_data(
+                room_data = SpatialThreeRoomDataset(
                     Path(config_dict.room_dataset_path).resolve())
             else:
                 logger.error("Other room data not supported currently")
@@ -816,7 +815,8 @@ def infer_all_octave_bands_directional_fdn(
                 pos_key = row["pos_key"]
                 rir = row["filtered_time_samples"].astype(np.float32)
 
-                if isinstance(pos_to_rir[pos_key], int):  # first time
+                # first time
+                if isinstance(pos_to_rir[pos_key], int):
                     pos_to_rir[pos_key] = rir
                     pos_to_pos[pos_key] = np.array(row["position"],
                                                    dtype=np.float64)
