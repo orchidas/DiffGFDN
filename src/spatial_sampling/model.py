@@ -86,8 +86,8 @@ class Directional_Beamforming_Weights(nn.Module):
             torch.Tensor: output matrix of size batch size x num_directions x num_slopes
         """
         # we want the output shape to be num_batches, num_directions, num_slopes
-        output = torch.einsum('bkn, nj -> bjk', self.weights,
-                              self.analysis_matrix.T)
+        output = torch.einsum('jn, bkn -> bjk', self.analysis_matrix,
+                              self.weights)
 
         # ensure the amplitudes are between 0 and 1
         return self.scaling(output)
