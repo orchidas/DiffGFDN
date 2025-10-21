@@ -458,8 +458,8 @@ class InferDiffDirectionalFDN:
                 est_ambi_rirs = torch.vstack((est_ambi_rirs, cur_ambi_rir))
 
             if self.apply_filter_norm:
-                # needed for subband filtering
-                est_ambi_rirs *= self.subband_filter_norm_factor
+                # needed to compensate for subband filtering
+                est_ambi_rirs /= self.subband_filter_norm_factor
 
             # convert from ambisonics to directional RIRs
             if return_directional_rirs:
@@ -517,10 +517,11 @@ class InferDiffDirectionalFDN:
                                              sh_type='real')
 
         # project on original spherical harmonic matrix
-        weights = np.einsum('bjk, jn -> bkn', est_amps, sph_matrix_orig)
+        weights = np.einsum('nj, bjk -> bnk',
+                            sph_matrix_orig.T / self.room_data.num_directions,
+                            est_amps)
         # retrieve the amplitudes by projecting on denser spherical grid
-        amps_interp = np.einsum('bkn, nd -> bdk', weights, sph_matrix_dense.T)
-
+        amps_interp = np.einsum('dn, bnk -> bdk', sph_matrix_dense, weights)
         # find receiver position idx
         rec_pos_idx = ((self.room_data.receiver_position -
                         pos_to_investigate)**2).sum(axis=1).argmin()
@@ -667,6 +668,8 @@ def infer_all_octave_bands_directional_fdn(
     save_dir: str,
     fullband_room_data: SpatialRoomDataset,
     rec_pos_list: NDArray,
+    apply_filter_norm: bool = False,
+    sum_ambi_directly: bool = False,
 ) -> SpatialRoomDataset:
     """
     Run inference on all trained DiffDirectionalFDNs operating in all octave bands and save it in a dataframe
@@ -676,6 +679,9 @@ def infer_all_octave_bands_directional_fdn(
         save_dir (str): path where file is to be saved
         fullband_room_dataset_path (SpatialRoomDataset): dataset of ground truth fullband RIRs
         rec_pos_list (NDArray): receiver positions over which to carry out inference
+        apply_filter_norm (bool): whether to apply normalisation to undo subband filtering effect
+        sum_ambi_directly (bool): whether to sum the SRIRs in the ambisonics domain directly or convert
+                                  to directional RIRs first
     Returns:
         SpatialRoomDataset: room data with synthesised RIRs 
     """
@@ -771,17 +777,18 @@ def infer_all_octave_bands_directional_fdn(
                 room_data,
                 config_dict,
                 model,
-                apply_filter_norm=False,
+                apply_filter_norm=apply_filter_norm,
                 edc_len_ms=2000,
             )
 
             # get the ambisonics RIRs for the current frequency band
-            position, est_dir_rirs = cur_infer_fdn.get_model_output(
-                trainer_config.max_epochs, return_directional_rirs=True)
+            position, est_rirs = cur_infer_fdn.get_model_output(
+                trainer_config.max_epochs,
+                return_directional_rirs=not sum_ambi_directly)
 
             # loop over all positions for a particular frequency band and add it to a dataframe
             for num_pos in range(position.shape[0]):
-                cur_rir = est_dir_rirs[num_pos, ...].detach().cpu().numpy()
+                cur_rir = est_rirs[num_pos, ...].detach().cpu().numpy()
 
                 # filter the current SRIR
                 cur_rir_filtered = fftconvolve(
@@ -838,14 +845,16 @@ def infer_all_octave_bands_directional_fdn(
 
         # Now stack results into arrays
         synth_rirs = list(pos_to_rir.values())
-        est_dir_rirs = np.stack(
-            synth_rirs, axis=0)  # (num_positions, num_channels, num_samples)
+        # of shape (num_positions, num_channels, num_samples)
+        est_srirs = np.stack(synth_rirs, axis=0)
 
         # convert to ambisonics
-        est_srirs = convert_directional_rirs_to_ambisonics(
-            fullband_room_data.ambi_order, fullband_room_data.sph_directions,
-            config_dicts[0].output_filter_config.beamformer_type,
-            est_dir_rirs.transpose(1, 0, -1))
+        if not sum_ambi_directly:
+            est_srirs = convert_directional_rirs_to_ambisonics(
+                fullband_room_data.ambi_order,
+                fullband_room_data.sph_directions,
+                config_dicts[0].output_filter_config.beamformer_type,
+                est_srirs.transpose(1, 0, -1))
 
         # get receiver positions
         new_rec_pos_list = np.vstack(list(pos_to_pos.values()))
