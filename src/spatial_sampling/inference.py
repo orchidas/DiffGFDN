@@ -34,6 +34,7 @@ def get_ambisonic_rirs(
     config_path: Optional[str] = None,
     grid_resolution_m: Optional[float] = None,
     output_pkl_path: Optional[str] = None,
+    apply_spatial_bandlimiting: bool = False,
 ) -> SpatialRoomDataset:
     """
     Get ambisonic / omni RIRs predicted by the neural net using the
@@ -45,6 +46,8 @@ def get_ambisonic_rirs(
         config_path (str, optional): path to te config files
         use_trained_model (bool): whether to use trained model, or amplitudes from the dataset
         grid_resolution_m (float, optional): what grid resolution did we use to train the MLP?
+        apply_spatial_bandlimiting (bool): if true, spatial bandlimiting is applied to the 
+                                           synthesised SRIRs
     """
 
     freq_bands = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
@@ -77,7 +80,7 @@ def get_ambisonic_rirs(
             rec_pos_list,
             ir_len_samps,
             grid_resolution_m,
-        )
+            apply_spatial_bandlimiting=apply_spatial_bandlimiting)
     else:
         logger.info("Using common slope amplitudes from dataset")
         # find the closest positions from rec_pos_list in the dataset,
@@ -98,6 +101,7 @@ def get_ambisonic_rirs(
             cs_room_data.ambi_order,
             cs_room_data.sph_directions,
             beamformer_type=BeamformerType.MAX_DI,
+            apply_spatial_bandlimiting=apply_spatial_bandlimiting,
         )
         cs_room_data.update_receiver_pos(rec_pos_list)
 
@@ -188,6 +192,7 @@ def get_rirs_from_common_slopes_model(
     des_directions: Optional[NDArray] = None,
     beamformer_type: Optional[BeamformerType] = None,
     batch_size: int = 100,
+    apply_spatial_bandlimiting: bool = False,
 ) -> NDArray:
     """
     Use shaped Gaussian noise to return directional / omni RIRs using the common slopes model
@@ -236,7 +241,11 @@ def get_rirs_from_common_slopes_model(
         # convert to ambisonic RIRs
         logger.info("Converting directional RIRs into the SH domain")
         ambi_rirs = convert_directional_rirs_to_ambisonics(
-            ambi_order, des_directions, beamformer_type, directional_rirs)
+            ambi_order,
+            des_directions,
+            beamformer_type,
+            directional_rirs,
+            apply_spatial_bandlimiting=apply_spatial_bandlimiting)
 
         return ambi_rirs
     else:
@@ -252,9 +261,11 @@ def get_rirs_from_common_slopes_model(
 
 def get_soundfield_from_trained_model(
         config_dicts: List[SpatialSamplingConfig],
-        full_band_room_data: SpatialRoomDataset, rec_pos_list: NDArray,
+        full_band_room_data: SpatialRoomDataset,
+        rec_pos_list: NDArray,
         ir_len_samps: int,
-        grid_resolution_m: float) -> Tuple[NDArray, NDArray]:
+        grid_resolution_m: float,
+        apply_spatial_bandlimiting: bool = False) -> Tuple[NDArray, NDArray]:
     """
     For each frequency band, read the optimised model weights and generate
     the spherical harmonic weighting function for each position and group. Then generate
@@ -330,9 +341,16 @@ def get_soundfield_from_trained_model(
             [v.detach().numpy() for v in amp_values], axis=0)
 
     rirs = get_rirs_from_common_slopes_model(
-        sample_rate, rec_pos_list, freq_bands, ir_len_samps,
-        learned_amplitudes, decay_times, ambi_order, desired_directions,
-        config_dicts[0].dnn_config.beamformer_type)
+        sample_rate,
+        rec_pos_list,
+        freq_bands,
+        ir_len_samps,
+        learned_amplitudes,
+        decay_times,
+        ambi_order,
+        desired_directions,
+        config_dicts[0].dnn_config.beamformer_type,
+        apply_spatial_bandlimiting=apply_spatial_bandlimiting)
 
     return rirs, learned_amplitudes
 

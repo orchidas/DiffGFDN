@@ -9,8 +9,7 @@ import joblib
 from loguru import logger
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from slope2noise.utils import octave_filtering
-from slope2npise.utils import schroeder_backward_int
+from slope2noise.utils import octave_filtering, schroeder_backward_int
 import spaudiopy as sp
 from tqdm import tqdm
 

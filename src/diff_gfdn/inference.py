@@ -344,12 +344,10 @@ class InferDiffDirectionalFDN:
         ]
 
         # get normalising factor to compensate for subband filtering
-        if self.apply_filter_norm:
-            logger.info("Applying filter gain normalisation")
-            if self.config_dict.trainer_config.subband_process_config is not None:
-                self.subband_filter_norm_factor = InferDiffGFDN.get_norm_factor(
-                    self.config_dict.trainer_config.subband_process_config,
-                    self.room_data.sample_rate)
+        if self.config_dict.trainer_config.subband_process_config is not None:
+            self.subband_filter_norm_factor = InferDiffGFDN.get_norm_factor(
+                self.config_dict.trainer_config.subband_process_config,
+                self.room_data.sample_rate)
         self._init_decay_kernel(edc_len_ms)
 
     def _init_decay_kernel(self, edc_len_ms: Optional[float] = None):
@@ -668,7 +666,6 @@ def infer_all_octave_bands_directional_fdn(
     save_dir: str,
     fullband_room_data: SpatialRoomDataset,
     rec_pos_list: NDArray,
-    apply_filter_norm: bool = False,
     sum_ambi_directly: bool = False,
 ) -> SpatialRoomDataset:
     """
@@ -679,7 +676,6 @@ def infer_all_octave_bands_directional_fdn(
         save_dir (str): path where file is to be saved
         fullband_room_dataset_path (SpatialRoomDataset): dataset of ground truth fullband RIRs
         rec_pos_list (NDArray): receiver positions over which to carry out inference
-        apply_filter_norm (bool): whether to apply normalisation to undo subband filtering effect
         sum_ambi_directly (bool): whether to sum the SRIRs in the ambisonics domain directly or convert
                                   to directional RIRs first
     Returns:
@@ -687,11 +683,12 @@ def infer_all_octave_bands_directional_fdn(
     """
 
     # prepare the reconstructing filterbank
-    subband_filters, _ = pf.dsp.filter.reconstructing_fractional_octave_bands(
+    subband_filters, subband_freqs = pf.dsp.filter.reconstructing_fractional_octave_bands(
         None,
         num_fractions=config_dicts[0].trainer_config.subband_process_config.
         num_fraction_octaves,
-        frequency_range=(freqs_list[0], freqs_list[-1]),
+        frequency_range=(config_dicts[0].trainer_config.subband_process_config.
+                         frequency_range),
         sampling_rate=config_dicts[0].sample_rate,
     )
 
@@ -702,11 +699,14 @@ def infer_all_octave_bands_directional_fdn(
 
         for k in range(len(freqs_list)):
             band_filename = f"{save_dir}/synth_band_{freqs_list[k]}Hz.pkl"
+            band_idx = np.argmin(np.abs(subband_freqs - freqs_list[k]))
+
             if os.path.exists(band_filename):
                 logger.info(f"Skipping {freqs_list[k]} Hz (already computed)")
                 continue
             logger.info(
-                f'Running inferencing for subband = {freqs_list[k]} Hz')
+                f'Running inferencing for subband = {subband_freqs[band_idx]:.0f} Hz'
+            )
 
             # loop through all subband frequencies
             df_band = pd.DataFrame(columns=[
@@ -777,7 +777,7 @@ def infer_all_octave_bands_directional_fdn(
                 room_data,
                 config_dict,
                 model,
-                apply_filter_norm=apply_filter_norm,
+                apply_filter_norm=False,
                 edc_len_ms=2000,
             )
 
@@ -793,7 +793,7 @@ def infer_all_octave_bands_directional_fdn(
                 # filter the current SRIR
                 cur_rir_filtered = fftconvolve(
                     cur_rir,
-                    subband_filters.coefficients[k, :][None, :],
+                    subband_filters.coefficients[band_idx, :][None, :],
                     mode='same')
 
                 # position should be saved as tuple because numpy array is unhashable
@@ -854,7 +854,8 @@ def infer_all_octave_bands_directional_fdn(
                 fullband_room_data.ambi_order,
                 fullband_room_data.sph_directions,
                 config_dicts[0].output_filter_config.beamformer_type,
-                est_srirs.transpose(1, 0, -1))
+                est_srirs.transpose(1, 0, -1),
+                apply_spatial_bandlimiting=True)
 
         # get receiver positions
         new_rec_pos_list = np.vstack(list(pos_to_pos.values()))
