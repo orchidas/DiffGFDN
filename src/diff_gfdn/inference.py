@@ -459,7 +459,7 @@ class InferDiffDirectionalFDN:
 
             if self.apply_filter_norm:
                 # needed to compensate for subband filtering
-                est_ambi_rirs /= self.subband_filter_norm_factor
+                est_ambi_rirs *= self.subband_filter_norm_factor
 
             # convert from ambisonics to directional RIRs
             if return_directional_rirs:
