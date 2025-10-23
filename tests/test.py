@@ -522,7 +522,7 @@ def test_wn_recons_with_spherical_filterbank():
     a_vals = room_dataset.amplitudes[rec_pos_idx].squeeze().transpose(1, 0, -1)
 
     # get shaped white noise srir
-    wgn_subband_drir, _ = shaped_wgn(
+    _, wgn_drir = shaped_wgn(
         t_vals_exp,
         a_vals,
         fs,
@@ -532,14 +532,14 @@ def test_wn_recons_with_spherical_filterbank():
 
     # spatial bandlimiting
     modal_weights = get_beamformer_weights(ambi_order, BeamformerType.MAX_DI)
-    bandlimit_wgn_subband_drir = spatial_bandlimiting(
-        ambi_order, des_dir, wgn_subband_drir[:, np.newaxis, ...],
-        modal_weights).squeeze()
+    bandlimit_wgn_drir = spatial_bandlimiting(ambi_order, des_dir,
+                                              wgn_drir[:, np.newaxis, ...],
+                                              modal_weights).squeeze()
 
     # convert to ambisonics signal
-    wgn_srir, _ = spherical_synthesis_filterbank(
-        ambi_order, des_dir, bandlimit_wgn_subband_drir.sum(axis=-1),
-        BeamformerType.MAX_DI)
+    wgn_srir, _ = spherical_synthesis_filterbank(ambi_order, des_dir,
+                                                 bandlimit_wgn_drir,
+                                                 BeamformerType.MAX_DI)
 
     # get EDC of reference and synthesised tails and plot them
     edc_ref = schroeder_backward_int(srir_ref, normalize=False)

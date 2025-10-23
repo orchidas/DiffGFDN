@@ -855,7 +855,8 @@ def infer_all_octave_bands_directional_fdn(
                 fullband_room_data.sph_directions,
                 config_dicts[0].output_filter_config.beamformer_type,
                 est_srirs.transpose(1, 0, -1),
-                apply_spatial_bandlimiting=True)
+                apply_spatial_bandlimiting=True,
+                bandlimit_method='Hold')
 
         # get receiver positions
         new_rec_pos_list = np.vstack(list(pos_to_pos.values()))
