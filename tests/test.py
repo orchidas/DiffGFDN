@@ -19,6 +19,7 @@ from diff_gfdn.utils import db, db2lin, ms_to_samps
 from sofa_parser import convert_srir_to_brir, HRIRSOFAReader
 from spatial_sampling.config import BeamformerType
 from spatial_sampling.dataloader import SpatialThreeRoomDataset
+from spatial_sampling.inference import spatial_bandlimiting
 
 
 # flake8: noqa:E231
@@ -420,24 +421,6 @@ def spherical_synthesis_filterbank(ambi_order: int,
     return srir, sph_syn_matrix
 
 
-def spatial_bandlimiting(ambi_order: int, des_dir: NDArray, drir: NDArray,
-                         beamformer_type: BeamformerType):
-    """Ensure spatial band limitation of directional RIRs - see Holdt et al"""
-    modal_weights = get_beamformer_weights(ambi_order, beamformer_type)
-
-    sh_matrix = sp.sph.sh_matrix(ambi_order, des_dir[0, :],
-                                 np.pi / 2 - des_dir[1, :])
-    # size is num_directions x num_directions
-    spatial_cov_matrix = sh_matrix @ np.diag(
-        sp.sph.repeat_per_order(modal_weights)) @ sh_matrix.T
-
-    # sum over any one dimension since the matrix is symmetric
-    norm_factor = spatial_cov_matrix / np.sum(
-        spatial_cov_matrix, axis=1, keepdims=True)
-    bandlimited_drir = np.einsum('jk, kt -> kt', norm_factor, drir)
-    return bandlimited_drir
-
-
 def convert_ambi_to_brir(hrir_path: str, srir: NDArray, fs: float,
                          orientation: NDArray) -> NDArray:
     """Convert SRIR to BRIR"""
@@ -539,7 +522,7 @@ def test_wn_recons_with_spherical_filterbank():
     a_vals = room_dataset.amplitudes[rec_pos_idx].squeeze().transpose(1, 0, -1)
 
     # get shaped white noise srir
-    _, wgn_drir = shaped_wgn(
+    wgn_subband_drir, _ = shaped_wgn(
         t_vals_exp,
         a_vals,
         fs,
@@ -547,15 +530,20 @@ def test_wn_recons_with_spherical_filterbank():
         f_bands=room_dataset.band_centre_hz,
     )
 
+    # spatial bandlimiting
+    modal_weights = get_beamformer_weights(ambi_order, BeamformerType.MAX_DI)
+    bandlimit_wgn_subband_drir = spatial_bandlimiting(
+        ambi_order, des_dir, wgn_subband_drir[:, np.newaxis, ...],
+        modal_weights).squeeze()
+
     # convert to ambisonics signal
-    # bandlimit_wgn_drir = spatial_bandlimiting(ambi_order, des_dir, wgn_drir,
-    #                                           BeamformerType.MAX_DI)
-    wgn_srir, _ = spherical_synthesis_filterbank(ambi_order, des_dir, wgn_drir,
-                                                 BeamformerType.MAX_DI)
+    wgn_srir, _ = spherical_synthesis_filterbank(
+        ambi_order, des_dir, bandlimit_wgn_subband_drir.sum(axis=-1),
+        BeamformerType.MAX_DI)
 
     # get EDC of reference and synthesised tails and plot them
-    edc_ref = schroeder_backward_int(srir_ref, normalize=True)
-    edc_syn = schroeder_backward_int(wgn_srir, normalize=True)
+    edc_ref = schroeder_backward_int(srir_ref, normalize=False)
+    edc_syn = schroeder_backward_int(wgn_srir, normalize=False)
 
     fig, ax = plt.subplots(num_channels, 1, figsize=(8, 10),
                            sharey=True)  # rows, cols
@@ -569,8 +557,9 @@ def test_wn_recons_with_spherical_filterbank():
     # increase space between subplots
     fig.subplots_adjust(hspace=1.0)  # increase vertical spacing
     fig.savefig(
-        Path('figures/test_plots/test_wn_recons_spherical_filterbank_edc.png').
-        resolve())
+        Path(
+            'figures/test_plots/test_wn_recons_spherical_filterbank_spatial_bandlimit_no_norm_edc.png'
+        ).resolve())
 
     # convert to BRIRs and save wave files
     hrtf_path = Path(
