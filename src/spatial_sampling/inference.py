@@ -34,6 +34,7 @@ def get_ambisonic_rirs(
     config_path: Optional[str] = None,
     grid_resolution_m: Optional[float] = None,
     output_pkl_path: Optional[str] = None,
+    apply_spatial_bandlimiting: bool = False,
 ) -> SpatialRoomDataset:
     """
     Get ambisonic / omni RIRs predicted by the neural net using the
@@ -45,6 +46,9 @@ def get_ambisonic_rirs(
         config_path (str, optional): path to te config files
         use_trained_model (bool): whether to use trained model, or amplitudes from the dataset
         grid_resolution_m (float, optional): what grid resolution did we use to train the MLP?
+        apply_spatial_bandlimiting (bool): if true, spatial bandlimiting is applied to the 
+                                           synthesised SRIRs. False by default, because shaped WN
+                                           directions are decorrelated, and no spatial aliasing occurs.
     """
 
     freq_bands = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
@@ -77,7 +81,7 @@ def get_ambisonic_rirs(
             rec_pos_list,
             ir_len_samps,
             grid_resolution_m,
-        )
+            apply_spatial_bandlimiting=apply_spatial_bandlimiting)
     else:
         logger.info("Using common slope amplitudes from dataset")
         # find the closest positions from rec_pos_list in the dataset,
@@ -98,6 +102,7 @@ def get_ambisonic_rirs(
             cs_room_data.ambi_order,
             cs_room_data.sph_directions,
             beamformer_type=BeamformerType.MAX_DI,
+            apply_spatial_bandlimiting=apply_spatial_bandlimiting,
         )
         cs_room_data.update_receiver_pos(rec_pos_list)
 
@@ -113,17 +118,67 @@ def get_ambisonic_rirs(
     return cs_room_data
 
 
-def convert_directional_rirs_to_ambisonics(ambi_order: int,
-                                           desired_directions: NDArray,
-                                           beamformer_type: BeamformerType,
-                                           directional_rirs: NDArray):
+def spatial_bandlimiting(ambi_order: int,
+                         des_dir: NDArray,
+                         drirs: NDArray,
+                         modal_weights: NDArray,
+                         method: str = 'custom'):
+    """Ensure spatial band limitation of directional RIRs - see Holdt et al"""
+    sh_matrix = sp.sph.sh_matrix(ambi_order, des_dir[0, :],
+                                 np.pi / 2 - des_dir[1, :])
+
+    # size is num_directions x num_directions
+    des_spatial_cov_matrix = sh_matrix @ np.diag(
+        sp.sph.repeat_per_order(modal_weights)) @ sh_matrix.T
+
+    if method == 'Hold':
+        multiplier = des_spatial_cov_matrix / np.sum(
+            des_spatial_cov_matrix, axis=1, keepdims=True)
+
+        bandlimited_drirs = np.einsum('jk, krt -> jrt', multiplier, drirs)
+    elif method == 'custom':
+        # compute spatial covariance of DRIRs summed over time,
+        # for each subband and position
+        est_spatial_cov_matrix = np.einsum('jrt,krt->jkr', drirs,
+                                           np.conj(drirs)) / drirs.shape[-1]
+
+        # from the formula I have derived to maintain energy
+        denom = np.einsum('ij, jkr, kl -> ilr', des_spatial_cov_matrix,
+                          est_spatial_cov_matrix,
+                          np.conj(des_spatial_cov_matrix.T))
+
+        # size is (num_pos, num_bands)
+        norm_factor = np.sqrt(
+            np.trace(est_spatial_cov_matrix, axis1=0, axis2=1) /
+            np.trace(denom, axis1=0, axis2=1))
+        multiplier = np.einsum('jk, r -> jkr', des_spatial_cov_matrix,
+                               norm_factor)
+
+        bandlimited_drirs = np.einsum('jkr, krt -> jrt', multiplier, drirs)
+
+        # check if per-band energy is preserved
+        energy_drir = np.sum(np.abs(drirs**2), axis=(0, -1))
+        energy_bl_drirs = np.sum(np.abs(bandlimited_drirs)**2, axis=(0, -1))
+        assert np.allclose(energy_drir, energy_bl_drirs)
+
+    return bandlimited_drirs
+
+
+def convert_directional_rirs_to_ambisonics(
+        ambi_order: int,
+        desired_directions: NDArray,
+        beamformer_type: BeamformerType,
+        directional_rirs: NDArray,
+        apply_spatial_bandlimiting: bool = False,
+        bandlimit_method: str = 'custom'):
     """
     Convert directional RIRs into the ambisonics domain by passing through a synthesis Spherical filterbank
     Args:
         ambi_order (int): order of the ambisonics signal
         desired_directions (NDArray): 2 x num_directions array of directions on a uniform grid
         beamformer_type (BeamformerType): type of beamforming done - Butterworth, max-DI, or max-RE
-        directional_rirs (NDArray): directional RIRs of shape num_directions x num_pos x num_time_samples
+        directional_rirs (NDArray): directional RIRs 
+                                    of shape num_directions x num_pos x num_time_samples
     Returns:
         NDArray: ambisonics RIRs of shape num_pos x num_ambi_channels x num_time_samples 
     """
@@ -139,23 +194,18 @@ def convert_directional_rirs_to_ambisonics(ambi_order: int,
     else:
         raise NameError("Other types of beamformers not available")
 
-    # ensure spatial band limitation of directional RIRs - see Holdt et al
-    sh_matrix = sp.sph.sh_matrix(ambi_order, desired_directions[0, :],
-                                 desired_directions[1, :])
-    # size is num_directions x num_directions
-    spatial_cov_matrix = sh_matrix @ np.diag(
-        sp.sph.repeat_per_order(modal_weights)) @ sh_matrix.T
-    # sum over any one dimension since the matrix is symmetric
-    norm_factor = spatial_cov_matrix / np.sum(
-        spatial_cov_matrix, axis=1, keepdims=True)
-    bandlimited_directional_rirs = np.einsum('jj, jbt -> jbt', norm_factor,
-                                             directional_rirs)
+    if apply_spatial_bandlimiting:
+        bandlimited_directional_rirs = spatial_bandlimiting(
+            ambi_order, desired_directions, directional_rirs, modal_weights,
+            bandlimit_method)
+    else:
+        bandlimited_directional_rirs = directional_rirs.copy()
 
     # size is num_ambi_channels x num_directions
     _, synthesis_matrix = sp.sph.design_sph_filterbank(
         ambi_order,
         desired_directions[0, :],
-        desired_directions[1, :],
+        np.pi / 2 - desired_directions[1, :],
         modal_weights,
         mode='energy',
         sh_type='real')
@@ -176,6 +226,7 @@ def get_rirs_from_common_slopes_model(
     des_directions: Optional[NDArray] = None,
     beamformer_type: Optional[BeamformerType] = None,
     batch_size: int = 100,
+    apply_spatial_bandlimiting: bool = False,
 ) -> NDArray:
     """
     Use shaped Gaussian noise to return directional / omni RIRs using the common slopes model
@@ -199,6 +250,7 @@ def get_rirs_from_common_slopes_model(
     logger.info(f"Running in batches? {run_in_batches}")
 
     if ambi_order is not None:
+        # directional_rirs = np.zeros((num_directions, num_pos, ir_len_samps))
         directional_rirs = np.zeros((num_directions, num_pos, ir_len_samps))
         for n in range(num_directions):
             logger.info(f"Getting shaped noise output for direction {n}")
@@ -206,7 +258,7 @@ def get_rirs_from_common_slopes_model(
                 for batch_idx in tqdm(range(num_batches)):
                     cur_idx = slice(batch_idx * batch_size,
                                     min((batch_idx + 1) * batch_size, num_pos))
-                    _, directional_rirs[n, cur_idx, :] = shaped_wgn(
+                    _, directional_rirs[n, cur_idx, ...] = shaped_wgn(
                         t_vals_expanded[cur_idx, ...],
                         amplitudes[cur_idx, n, ...],
                         sample_rate,
@@ -224,7 +276,11 @@ def get_rirs_from_common_slopes_model(
         # convert to ambisonic RIRs
         logger.info("Converting directional RIRs into the SH domain")
         ambi_rirs = convert_directional_rirs_to_ambisonics(
-            ambi_order, des_directions, beamformer_type, directional_rirs)
+            ambi_order,
+            des_directions,
+            beamformer_type,
+            directional_rirs,
+            apply_spatial_bandlimiting=apply_spatial_bandlimiting)
 
         return ambi_rirs
     else:
@@ -240,9 +296,11 @@ def get_rirs_from_common_slopes_model(
 
 def get_soundfield_from_trained_model(
         config_dicts: List[SpatialSamplingConfig],
-        full_band_room_data: SpatialRoomDataset, rec_pos_list: NDArray,
+        full_band_room_data: SpatialRoomDataset,
+        rec_pos_list: NDArray,
         ir_len_samps: int,
-        grid_resolution_m: float) -> Tuple[NDArray, NDArray]:
+        grid_resolution_m: float,
+        apply_spatial_bandlimiting: bool = False) -> Tuple[NDArray, NDArray]:
     """
     For each frequency band, read the optimised model weights and generate
     the spherical harmonic weighting function for each position and group. Then generate
@@ -318,9 +376,16 @@ def get_soundfield_from_trained_model(
             [v.detach().numpy() for v in amp_values], axis=0)
 
     rirs = get_rirs_from_common_slopes_model(
-        sample_rate, rec_pos_list, freq_bands, ir_len_samps,
-        learned_amplitudes, decay_times, ambi_order, desired_directions,
-        config_dicts[0].dnn_config.beamformer_type)
+        sample_rate,
+        rec_pos_list,
+        freq_bands,
+        ir_len_samps,
+        learned_amplitudes,
+        decay_times,
+        ambi_order,
+        desired_directions,
+        config_dicts[0].dnn_config.beamformer_type,
+        apply_spatial_bandlimiting=apply_spatial_bandlimiting)
 
     return rirs, learned_amplitudes
 

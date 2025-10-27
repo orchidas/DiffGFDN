@@ -9,8 +9,9 @@ import joblib
 from loguru import logger
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from slope2noise.utils import octave_filtering
+from slope2noise.utils import octave_filtering, schroeder_backward_int
 import spaudiopy as sp
+from tqdm import tqdm
 
 from convert_mat_to_pkl import calculate_cs_params_custom
 
@@ -130,33 +131,90 @@ def save_subband_srirs(srirs: NDArray,
             f"Done saving pickle file for centre frequency {band_freq} Hz")
 
 
-def process_ambi_srirs(ambi_srirs: NDArray, ambi_order: int,
-                       des_dir: NDArray) -> NDArray:
+def process_srirs(srirs: NDArray,
+                  ambi_order: int,
+                  des_dir: NDArray,
+                  mode: str = 'analysis') -> NDArray:
     """
     Process the SRIRs reconrded with SMA to get RIRs in different directions,
     according to  Gotz et. al, "Common slope modelling of late reverberation"
     Args:
-        ambi_srirs (NDArray): ambi srirs of shape (N_sp + 1)^2 x time_samp  x num_receivers
+        ambi_srirs (NDArray): srirs of shape (N_sp + 1)^2 / num_directions x time_samp  x num_receivers,
         ambi_order (int): N_sp order of the ambisonics recordings
         des_dir (NDArray): azimuth and polar angles of desired directions
                            of size 2 x num_directions
+        mode (str): analysis (if converting ambi SRIRs to DRIRs) else synthesis
     Returns:
-        NDArray: directional RIRs of shape num_directions x time_samples x num_receivers
+        NDArray: SRIRs of shape num_directions / (N_sp + 1)^2 x time_samples x num_receivers
     """
-    # get spherical harmonics matrix
-    assert ambi_srirs.shape[0] == (ambi_order + 1)**2
-    # output of size num_directions x (N_sp+1)^2
-    sph_matrix = sp.sph.sh_matrix(ambi_order,
-                                  np.deg2rad(des_dir[0, :]),
-                                  np.deg2rad(des_dir[1, :]),
-                                  sh_type='real')
+
     # butterworth weights of size (N+1)^2
     beamform_weights = sp.sph.butterworth_modal_weights(ambi_order, k=5, n_c=3)
-    # beamforming matrix of size num_directions * (N+1)^2
-    beamform_matrix = sp.sph.repeat_per_order(beamform_weights) * sph_matrix
-    # desired SRIRs in given directions
-    dir_srirs = np.einsum('jn, ntr -> jtr', beamform_matrix, ambi_srirs)
-    return dir_srirs
+
+    [sph_an_matrix, sph_syn_matrix
+     ] = sp.sph.design_sph_filterbank(ambi_order,
+                                      np.deg2rad(des_dir[0, :]),
+                                      np.pi / 2 - np.deg2rad(des_dir[1, :]),
+                                      beamform_weights,
+                                      mode='perfect')
+    if mode == 'analysis':
+        assert srirs.shape[0] == (ambi_order + 1)**2
+        # multiply with sph matrix of size num_directions * (N_sp+1)^2
+        dir_srirs = np.einsum('jn, ntr -> jtr', sph_an_matrix, srirs)
+        return dir_srirs
+    else:
+        assert srirs.shape[0] == des_dir.shape[-1]
+        ambi_srirs = np.einsum('kn, ntr -> ktr', sph_syn_matrix, srirs)
+        return ambi_srirs
+
+
+def compensate_srirs_for_amplitude_normalisation(drirs: NDArray,
+                                                 ambi_order: int,
+                                                 des_dir: NDArray, freqs: List,
+                                                 fs: float) -> NDArray:
+    """
+    Normalise the reference SRIRs the same way CS amplitudes were normalised in each frequency band.
+    According to Georg, for each frequency band, amplitudes for all positions and for each channel are normalised by 
+    the global factor = max_over_positions(sum over slopes(aVals)). 
+    This is equivalent to finding the DRIR with the largest 0th value of EDC over all positions for each direction
+    for normalising all bandwise DRIRs. The SRIRs are then reconstructed from these normalised DRIRs.
+    Args:
+        drirs (NDArray): DRIRs of shape (num_dirs, time_samples, num_receivers)
+        ambi_order (int): ambisonics order
+        des_dir (NDArray): directions from t-design grid
+        freqs (List): octave band frequencies
+        fs (float): sampling rate
+    Returns:
+        NDArray: normalised SRIRs of shape (num_ambi_chans, time_samples, num_receivers)
+    """
+
+    # of shape (num_receivers, num_dirs, time_samples)
+    ref_drirs = drirs.transpose(-1, 0, 1)
+    num_bands = len(freqs)
+    ref_drirs_filtered = np.zeros((*ref_drirs.shape, num_bands))
+    for k in tqdm(range(ref_drirs.shape[1])):
+        ref_drirs_filtered[:, k, ...] = octave_filtering(
+            ref_drirs[:, k, :].squeeze(),
+            fs,
+            freqs,
+            compensate_filter_energy=True,
+            use_amp_preserving_filterbank=False)
+
+    ref_drirs_edc_filtered = schroeder_backward_int(ref_drirs_filtered,
+                                                    time_axis=-2)
+    # the maximum 0 time index of EDCs over all positions, unique for each direction
+    # and frequency band
+    norm_factor = np.sqrt(
+        np.max(ref_drirs_edc_filtered[..., 0, :], axis=0, keepdims=True))
+    # should be of shape num_channels x num_bands
+    ref_drirs_filtered_norm = ref_drirs_filtered / norm_factor
+    ref_drirs_norm = np.sum(ref_drirs_filtered_norm, axis=-1)
+    # shape is num_receivers x num_dirs x num_time_samples
+    ref_srirs_norm = process_srirs(ref_drirs_norm,
+                                   ambi_order,
+                                   des_dir,
+                                   mode='synthesis')
+    return ref_srirs_norm.transpose(1, -1, 0)
 
 
 def main():
@@ -205,7 +263,7 @@ def main():
                 directions = data['secDirs_deg'][:]
 
         # get beamformed signals in different directions
-        directional_rirs = process_ambi_srirs(srirs, ambi_order, directions)
+        directional_rirs = process_srirs(srirs, ambi_order, directions)
         common_t60 = np.asarray(common_t60)
         amplitudes_norm = np.asarray(amplitudes_norm)
         noise_floor_norm = np.asarray(noise_floor_norm)

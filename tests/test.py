@@ -11,10 +11,15 @@ from scipy.signal import fftconvolve
 from slope2noise.generate import shaped_wgn
 from slope2noise.utils import schroeder_backward_int
 import soundfile as sf
+import spaudiopy as sp
 
 from diff_gfdn.config.config import DiffGFDNConfig
 from diff_gfdn.dataloader import ThreeRoomDataset
 from diff_gfdn.utils import db, db2lin, ms_to_samps
+from sofa_parser import convert_srir_to_brir, HRIRSOFAReader
+from spatial_sampling.config import BeamformerType
+from spatial_sampling.dataloader import SpatialThreeRoomDataset
+from spatial_sampling.inference import spatial_bandlimiting
 
 
 # flake8: noqa:E231
@@ -357,7 +362,224 @@ def test_pyfar_edc_broadband_gfdn_rir():
         resolve())
 
 
+###############################################################################
+
+
+def get_beamformer_weights(ambi_order: int,
+                           beamformer_type: BeamformerType) -> NDArray:
+    # get the modal beamformer weights
+    if beamformer_type == BeamformerType.MAX_DI:
+        modal_weights = sp.sph.cardioid_modal_weights(ambi_order)
+    elif beamformer_type == BeamformerType.MAX_RE:
+        modal_weights = sp.sph.maxre_modal_weights(ambi_order)
+    elif beamformer_type == BeamformerType.BUTTER:
+        modal_weights = sp.sph.butterworth_modal_weights(ambi_order,
+                                                         k=5,
+                                                         n_c=3)
+    else:
+        raise NameError("Other types of beamformers not available")
+    return modal_weights
+
+
+def spherical_analysis_filterbank(ambi_order: int,
+                                  des_dir: NDArray,
+                                  srir: NDArray,
+                                  beamformer_type: BeamformerType,
+                                  mode: str = 'energy') -> NDArray:
+    """Convert SRIR to DRIR using spherical analysis filterbank"""
+    modal_weights = get_beamformer_weights(ambi_order, beamformer_type)
+
+    # output of size num_directions x (N_sp+1)^2
+    sph_an_matrix, _ = sp.sph.design_sph_filterbank(ambi_order,
+                                                    des_dir[0, :],
+                                                    np.pi / 2 - des_dir[1, :],
+                                                    modal_weights,
+                                                    mode=mode,
+                                                    sh_type='real')
+    # directional RIR in desired directions
+    dir_rir = np.einsum('jn, nt -> jt', sph_an_matrix, srir)
+    return dir_rir, sph_an_matrix
+
+
+def spherical_synthesis_filterbank(ambi_order: int,
+                                   des_dir: NDArray,
+                                   drir: NDArray,
+                                   beamformer_type: BeamformerType,
+                                   mode: str = 'energy') -> NDArray:
+    """Convert DRIR to ambi_order SRIR using spherical synthesis filterbank"""
+    # size is num_ambi_channels x num_directions
+    modal_weights = get_beamformer_weights(ambi_order, beamformer_type)
+
+    _, sph_syn_matrix = sp.sph.design_sph_filterbank(ambi_order,
+                                                     des_dir[0, :],
+                                                     np.pi / 2 - des_dir[1, :],
+                                                     modal_weights,
+                                                     mode=mode,
+                                                     sh_type='real')
+
+    srir = np.einsum('nj, jt -> nt', sph_syn_matrix, drir)
+    return srir, sph_syn_matrix
+
+
+def convert_ambi_to_brir(hrir_path: str, srir: NDArray, fs: float,
+                         orientation: NDArray) -> NDArray:
+    """Convert SRIR to BRIR"""
+    hrtf_reader = HRIRSOFAReader(hrir_path)
+
+    if hrtf_reader.fs != fs:
+        hrtf_reader.resample_hrirs(fs)
+
+    brirs = convert_srir_to_brir(srir[np.newaxis, ...], hrtf_reader,
+                                 orientation)
+    return brirs.squeeze(axis=0)
+
+
+def test_spherical_t_design_grid(ambi_order: NDArray, des_dir: NDArray):
+    """Test whether des_dir directions belong to a spherical t-design grid of order ambi_order"""
+    N = ambi_order
+    J = des_dir.shape[1]
+    Y = sp.sph.sh_matrix(N, des_dir[0, :], np.pi / 2 - des_dir[1, :],
+                         'real')  # shape (J, (N+1)^2)
+
+    # Compute approximate integral of Y^T Y over sphere
+    G = (4 * np.pi / J) * (Y.T @ Y)
+
+    # Compare to identity
+    err = np.linalg.norm(G - np.eye(
+        (N + 1)**2), ord='fro') / np.linalg.norm(np.eye((N + 1)**2), ord='fro')
+    assert err < 1e-10
+
+
+def test_spherical_filterbank():
+    """Test the spherical filterbank analysis -> synthesis pipeline with a reference SRIR"""
+
+    room_data_pkl_path = Path(
+        'resources/Georg_3room_FDTD/srirs_spatial.pkl').resolve()
+    room_dataset = SpatialThreeRoomDataset(room_data_pkl_path)
+    pos_to_investigate = [9.30, 6.60, 1.50]
+    rec_pos_idx = np.argwhere(
+        np.all(np.round(room_dataset.receiver_position,
+                        2) == pos_to_investigate,
+               axis=1))[0]
+    ir_len = room_dataset.rir_length
+    des_dir = room_dataset.sph_directions
+    ambi_order = room_dataset.ambi_order
+    num_channels = (ambi_order + 1)**2
+    test_spherical_t_design_grid(ambi_order, des_dir)
+
+    srir_ref = room_dataset.rirs[rec_pos_idx, :, :ir_len].squeeze()
+    drir_ref, sph_an_matrix = spherical_analysis_filterbank(
+        ambi_order, des_dir, srir_ref, BeamformerType.MAX_DI, mode='perfect')
+    srir_recon, sph_syn_matrix = spherical_synthesis_filterbank(
+        ambi_order, des_dir, drir_ref, BeamformerType.MAX_DI, mode='perfect')
+
+    fig, ax = plt.subplots(num_channels, 1, figsize=(8, 10),
+                           sharey=True)  # rows, cols
+    for j in range(num_channels):
+        ax[j].plot(srir_recon[j, :])
+        ax[j].plot(srir_ref[j, :])
+        ax[j].set_title(f'Channel = {j+1}')
+
+    ax[-1].set_xlabel('Time (samples)')
+    fig.text(0.04, 0.5, 'Amplitude', va='center', rotation='vertical')
+    # increase space between subplots
+    fig.subplots_adjust(hspace=1.0)  # increase vertical spacing
+    fig.savefig(
+        Path('figures/test_plots/test_spherical_filterbank.png').resolve())
+
+    assert almost_equal(sph_syn_matrix @ sph_an_matrix,
+                        np.eye(num_channels),
+                        eps=1e-6)
+    assert np.allclose(srir_ref, srir_recon, atol=1e-8)
+
+
+def test_wn_recons_with_spherical_filterbank():
+    """Shape white noise with common slope amplitudes to predict SRIR and 
+    plot EDC mismatch errors with reference SRIR"""
+
+    room_data_pkl_path = Path(
+        'resources/Georg_3room_FDTD/srirs_spatial.pkl').resolve()
+    room_dataset = SpatialThreeRoomDataset(room_data_pkl_path)
+    # pos_to_investigate = [9.30, 10.80, 1.50]
+    pos_to_investigate = [6.4, 3.8, 1.5]
+    rec_pos_idx = np.argwhere(
+        np.all(np.round(room_dataset.receiver_position,
+                        2) == pos_to_investigate,
+               axis=1))[0]
+
+    ir_len = room_dataset.rir_length
+    fs = room_dataset.sample_rate
+    des_dir = room_dataset.sph_directions
+    ambi_order = room_dataset.ambi_order
+    num_channels = (ambi_order + 1)**2
+    num_directions = room_dataset.num_directions
+    srir_ref = room_dataset.rirs[rec_pos_idx, :, :ir_len].squeeze()
+
+    # get CS model parameters
+    t_vals_exp = np.repeat(room_dataset.common_decay_times,
+                           num_directions,
+                           axis=1).transpose(1, -1, 0)
+    a_vals = room_dataset.amplitudes[rec_pos_idx].squeeze().transpose(1, 0, -1)
+
+    # get shaped white noise srir
+    _, wgn_drir = shaped_wgn(
+        t_vals_exp,
+        a_vals,
+        fs,
+        ir_len,
+        f_bands=room_dataset.band_centre_hz,
+    )
+
+    # spatial bandlimiting
+    modal_weights = get_beamformer_weights(ambi_order, BeamformerType.MAX_DI)
+    bandlimit_wgn_drir = spatial_bandlimiting(ambi_order, des_dir,
+                                              wgn_drir[:, np.newaxis, ...],
+                                              modal_weights).squeeze()
+
+    # convert to ambisonics signal
+    wgn_srir, _ = spherical_synthesis_filterbank(ambi_order, des_dir,
+                                                 bandlimit_wgn_drir,
+                                                 BeamformerType.MAX_DI)
+
+    # get EDC of reference and synthesised tails and plot them
+    edc_ref = schroeder_backward_int(srir_ref, normalize=False)
+    edc_syn = schroeder_backward_int(wgn_srir, normalize=False)
+
+    fig, ax = plt.subplots(num_channels, 1, figsize=(8, 10),
+                           sharey=True)  # rows, cols
+    for j in range(num_channels):
+        ax[j].plot(db(edc_ref[j, :], is_squared=True))
+        ax[j].plot(db(edc_syn[j, :], is_squared=True))
+        ax[j].set_title(f'Channel = {j+1}')
+
+    ax[-1].set_xlabel('Time (samples)')
+    fig.text(0.04, 0.5, 'EDC (dB)', va='center', rotation='vertical')
+    # increase space between subplots
+    fig.subplots_adjust(hspace=1.0)  # increase vertical spacing
+    fig.savefig(
+        Path(
+            'figures/test_plots/test_wn_recons_spherical_filterbank_spatial_bandlimit_no_norm_edc.png'
+        ).resolve())
+
+    # convert to BRIRs and save wave files
+    hrtf_path = Path(
+        'resources/HRTF/48kHz/KEMAR_Knowl_EarSim_SmallEars_FreeFieldComp_48kHz.sofa'
+    ).resolve()
+    orientation = np.zeros((4, 2))
+    orientation[:, 0] = np.array([0, 90, 180, 270])
+    brir_ref = convert_ambi_to_brir(hrtf_path, srir_ref, fs, orientation)
+    brir_syn = convert_ambi_to_brir(hrtf_path, wgn_srir, fs, orientation)
+    audio_path = Path('audio/sph_filterbank_test/').resolve()
+    for k in range(len(orientation)):
+        fname_ref = f'{audio_path}/ref_brir_ori={orientation[k, 0]:.0f}.wav'
+        fname_syn = f'{audio_path}/syn_brir_ori={orientation[k, 0]:.0f}.wav'
+        sf.write(fname_ref, brir_ref[k, ...], int(fs))
+        sf.write(fname_syn, brir_syn[k, ...], int(fs))
+
+
 if __name__ == '__main__':
     # test_pyfar_filterbank_white_noise()
     # test_pyfar_edc_broadband_wn_rir()
-    test_pyfar_edc_broadband_gfdn_rir()
+    # test_pyfar_edc_broadband_gfdn_rir()
+    # test_spherical_filterbank()
+    test_wn_recons_with_spherical_filterbank()

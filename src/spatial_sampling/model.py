@@ -66,7 +66,7 @@ class Directional_Beamforming_Weights(nn.Module):
         self.analysis_matrix, _ = sp.sph.design_sph_filterbank(
             self.ambi_order,
             desired_directions[0, :],
-            desired_directions[1, :],
+            np.pi / 2 - desired_directions[1, :],
             self.modal_weights,
             mode='energy',
             sh_type='real')
@@ -86,8 +86,8 @@ class Directional_Beamforming_Weights(nn.Module):
             torch.Tensor: output matrix of size batch size x num_directions x num_slopes
         """
         # we want the output shape to be num_batches, num_directions, num_slopes
-        output = torch.einsum('bkn, nj -> bjk', self.weights,
-                              self.analysis_matrix.T)
+        output = torch.einsum('jn, bkn-> bjk', self.analysis_matrix,
+                              self.weights)
 
         # ensure the amplitudes are between 0 and 1
         return self.scaling(output)
@@ -104,9 +104,9 @@ class Directional_Beamforming_Weights(nn.Module):
         return weights
 
     @torch.no_grad()
-    def get_param_dict(self, x: Dict) -> Dict:
+    def get_param_dict(self, x: Dict, normalise_weights: bool = False) -> Dict:
         """Return the parameters as a dict"""
-        self.forward(x, normalise_weights=True)
+        self.forward(x, normalise_weights=normalise_weights)
         param_np = {}
         param_np['beamformer_weights'] = self.weights.squeeze().cpu().numpy()
         param_np['directional_weights'] = self.get_directional_amplitudes(

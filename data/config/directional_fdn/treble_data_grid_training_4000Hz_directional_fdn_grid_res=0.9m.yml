@@ -14,7 +14,7 @@ output_filter_config:
   use_skip_connections: True
 room_dataset_path: 'resources/Georg_3room_FDTD/srirs_spatial_band_centre=4000Hz.pkl'
 sample_rate: 32000.0
-seed: 23649
+seed: 23645
 trainer_config:
   batch_size: 32
   edc_loss_weight: 10

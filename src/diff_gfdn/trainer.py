@@ -845,7 +845,7 @@ class DirectionalFDNVarReceiverPosTrainer(Trainer):
         # get SH conversion matrix
         sh_matrix = to_complex(self.net.sh_output_scalars.analysis_matrix)
         # convert to directional response
-        H_dir = torch.einsum('blk, lj -> bjk', H_sh, sh_matrix.T)
+        H_dir = torch.einsum('jl, blk -> bjk', sh_matrix, H_sh)
         return H_dir
 
     @torch.no_grad()
