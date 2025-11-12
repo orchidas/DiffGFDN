@@ -1,8 +1,8 @@
 from typing import List, Optional, Tuple
 
-from DecayFitNet.python.toolbox.DecayFitNetToolbox import DecayFitNetToolbox
-from DecayFitNet.python.toolbox.core import decay_model, discard_last_n_percent, PreprocessRIR
-from DecayFitNet.python.toolbox.utils import calc_mse
+from toolbox.DecayFitNetToolbox import DecayFitNetToolbox
+from toolbox.core import decay_model, discard_last_n_percent, PreprocessRIR
+from toolbox.utils import calc_mse
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
