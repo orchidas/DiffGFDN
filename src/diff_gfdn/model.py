@@ -1099,11 +1099,14 @@ class DiffDirectionalFDNVarReceiverPos(DiffGFDN):
                 sh_gains)
 
     @torch.no_grad()
-    def get_param_dict_inference(self, data: Dict) -> Dict:
+    def get_param_dict_inference(self,
+                                 data: Dict,
+                                 normalise_weights: bool = False) -> Dict:
         """Get output of MLP during inference"""
         param_np = {}
         try:
-            param_out_mlp = self.sh_output_scalars.get_param_dict(data)
+            param_out_mlp = self.sh_output_scalars.get_param_dict(
+                data, normalise_weights)
             param_np['output_scalars'] = param_out_mlp['beamformer_weights']
         except Exception as e:
             logger.warning(e)

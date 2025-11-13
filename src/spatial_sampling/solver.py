@@ -18,7 +18,7 @@ from diff_gfdn.save_results import save_loss
 from diff_gfdn.utils import db, db2lin, ms_to_samps, samps_to_ms
 
 from .config import DNNType, SpatialSamplingConfig
-from .dataloader import load_dataset, parse_three_room_data, SpatialRoomDataset
+from .dataloader import load_dataset, SpatialRoomDataset, SpatialThreeRoomDataset
 from .model import (
     Directional_Beamforming_Weights,
     Directional_Beamforming_Weights_from_CNN,
@@ -192,7 +192,7 @@ class make_plots:
         sph_matrix_orig = spa.sph.sh_matrix(
             self.room_data.ambi_order,
             self.room_data.sph_directions[0, :],
-            self.room_data.sph_directions[1, :],
+            np.pi / 2 - self.room_data.sph_directions[1, :],
             sh_type='real')
 
         sph_matrix_dense = spa.sph.sh_matrix(self.room_data.ambi_order,
@@ -200,10 +200,11 @@ class make_plots:
                                              polar_grid.ravel(),
                                              sh_type='real')
 
-        # project on original spherical harmonic matrix
-        weights = np.einsum('bjk, jn -> bkn', est_amps, sph_matrix_orig)
+        weights = np.einsum('nj, bjk -> bnk',
+                            sph_matrix_orig.T / self.room_data.num_directions,
+                            est_amps)
         # retrieve the amplitudes by projecting on denser spherical grid
-        amps_interp = np.einsum('bkn, nd -> bdk', weights, sph_matrix_dense.T)
+        amps_interp = np.einsum('dn, bnk -> bdk', sph_matrix_dense, weights)
 
         # find receiver position idx
         rec_pos_idx = ((self.room_data.receiver_position -
@@ -440,10 +441,10 @@ class make_plots:
                         +
                         f'grid_resolution_m={np.round(grid_resolution_m, 3)}' +
                         extend + '.png').resolve(),
-                    title=
-                    f'az = {np.degrees(self.room_data.sph_directions[0, j]):.2f} deg,'
-                    +
-                    f' pol = {np.degrees(self.room_data.sph_directions[1, j]):.2f} deg'
+                    # title=
+                    # f'az = {np.degrees(self.room_data.sph_directions[0, j]):.2f} deg,'
+                    # +
+                    # f' pol = {np.degrees(self.room_data.sph_directions[1, j]):.2f} deg'
                 )
 
 
@@ -463,7 +464,7 @@ def run_training_spatial_sampling(config_dict: SpatialSamplingConfig,
     logger.info("Training the MLP to learn spatial mappings")
     if "3room_FDTD" in config_dict.room_dataset_path:
         # read the coupled room dataset
-        room_data = parse_three_room_data(
+        room_data = SpatialThreeRoomDataset(
             Path(config_dict.room_dataset_path).resolve())
     else:
         logger.error("Currently only the three room dataset is supported")
