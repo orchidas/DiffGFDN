@@ -100,12 +100,24 @@ class InferDiffGFDN:
         self.use_direct_cs_params = use_direct_cs_params
 
         # prepare the dataset
-        self.train_dataset, _ = load_dataset(
-            self.room_data,
-            self.trainer_config.device,
-            train_valid_split_ratio=1.0,
-            batch_size=self.trainer_config.batch_size,
-            shuffle=False)
+        if self.trainer_config.hold_out_test_set is None:
+            self.dataset, _ = load_dataset(
+                self.room_data,
+                self.trainer_config.device,
+                train_valid_split_ratio=1.0,
+                batch_size=self.trainer_config.batch_size,
+                shuffle=False)
+        else:
+            # test set only
+            _, _, self.dataset = load_dataset(
+                self.room_data,
+                self.trainer_config.device,
+                train_valid_split_ratio=1.0,
+                batch_size=self.trainer_config.batch_size,
+                shuffle=False,
+                hold_out_test_set=True,
+                test_set_ratio=self.trainer_config.hold_out_test_set.ratio,
+                test_set_seed=self.trainer_config.hold_out_test_set.seed)
 
         # get normalising factor to compensate for subband filtering
         if self.trainer_config.subband_process_config is not None:
@@ -190,7 +202,7 @@ class InferDiffGFDN:
                 self.all_learned_params.coupling_matrix.append(
                     param_dict['coupling_matrix'])
 
-                for data in self.train_dataset:
+                for data in self.dataset:
                     position = data['listener_position']
 
                     if self.trainer_config.subband_process_config is not None and self.use_direct_cs_params:
@@ -306,7 +318,7 @@ class InferDiffDirectionalFDN:
         self.apply_filter_norm = apply_filter_norm
 
         # prepare the training and validation data
-        self.train_dataset, _, _ = load_spatial_dataset(
+        self.dataset, _, _ = load_spatial_dataset(
             room_data,
             config_dict.trainer_config.device,
             network_type=DNNType.MLP,
@@ -434,7 +446,7 @@ class InferDiffDirectionalFDN:
                 param_dict['coupling_matrix'])
             npos = 0
 
-            for data in tqdm(self.train_dataset):
+            for data in tqdm(self.dataset):
                 position = data['listener_position']
 
                 # get parameter dictionary used in inferencing

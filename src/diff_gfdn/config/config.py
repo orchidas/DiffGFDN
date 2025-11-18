@@ -96,6 +96,11 @@ class DecayFilterConfig(BaseModel):
     initialise_with_opt_values: bool = True
 
 
+class TestSetConfig(BaseModel):
+    seed: int = 4314
+    ratio: float = 0.1
+
+
 class TrainerConfig(BaseModel):
     # config file with training parameters
     # number of receivers in each training batch
@@ -106,6 +111,8 @@ class TrainerConfig(BaseModel):
     device: str = 'cpu'
     # split between traning and validation
     train_valid_split: float = 0.8
+    # whether to have a separate test set
+    hold_out_test_set: Optional[TestSetConfig] = None
     # grid resolution if training on a uniform grid
     grid_resolution_m: Optional[float] = None
     # maximum epochs for training

@@ -14,7 +14,7 @@ import torch
 import yaml
 
 from diff_gfdn.colorless_fdn.utils import get_colorless_fdn_params
-from diff_gfdn.config.config import DiffGFDNConfig
+from diff_gfdn.config.config import DiffGFDNConfig, TestSetConfig
 from diff_gfdn.config.config_loader import dump_config_to_pickle, load_and_validate_config
 from diff_gfdn.dataloader import load_dataset, ThreeRoomDataset
 from diff_gfdn.model import DiffGFDNVarReceiverPos
@@ -57,6 +57,8 @@ def create_config(
         num_hidden_layers = 3
         num_neurons_per_layer = 2**7
 
+    test_set_config = TestSetConfig()
+
     seed = seed_base + cur_freq_hz + np.random.randint(0, 100, 1).item()
     config_dict = {
         'seed': seed,
@@ -73,6 +75,10 @@ def create_config(
             'batch_size': 32,
             'save_true_irs': True,
             'train_valid_split': train_valid_split,
+            'hold_out_test_set': {
+                'seed': test_set_config.seed,
+                'ratio': 0.1,
+            },
             'num_freq_bins': 131072,
             'use_edc_mask': True,
             'edc_loss_weight': 10,

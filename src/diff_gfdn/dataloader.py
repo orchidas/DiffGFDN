@@ -18,6 +18,7 @@ from .config.config import DiffGFDNConfig
 from .utils import ms_to_samps
 
 # flake8: noqa: E231
+# pylint: disable=E0606
 
 
 @dataclass
@@ -703,23 +704,44 @@ def custom_collate(batch: data.Dataset):
     }
 
 
-def split_dataset(dataset: data.Dataset, split: float):
-    """
-    Randomly split a dataset into non-overlapping new datasets of 
-    sizes given in 'split' argument
-    """
-    logger.info(f'Length of the dataset is {len(dataset)}')
+def create_fixed_test_split(dataset: data.Dataset,
+                            test_ratio: float = 0.1,
+                            seed: int = 42):
+    """Create a fixed test split that never changes."""
+    num_meas = len(dataset)
+    test_size = int(num_meas * test_ratio)
 
-    # use split % of dataset for validation
+    gen = torch.Generator().manual_seed(seed)
+    indices = torch.randperm(num_meas, generator=gen)
+
+    test_indices = indices[:test_size]
+    remaining_indices = indices[test_size:]
+
+    test_set = torch.utils.data.Subset(dataset, test_indices)
+    remaining_set = torch.utils.data.Subset(dataset, remaining_indices)
+
+    logger.info(f"Test set size (fixed) = {len(test_set)}")
+    return test_set, remaining_set
+
+
+def split_dataset(dataset: data.Dataset, split: float, seed: int = None):
+    """
+    Split remaining (non-test) dataset into train and validation subsets.
+    """
+    logger.info(
+        f'Length of the dataset (train+valid region) is {len(dataset)}')
+
     train_set_size = int(len(dataset) * split)
     valid_set_size = len(dataset) - train_set_size
 
-    train_set, valid_set = torch.utils.data.random_split(
-        dataset, [train_set_size, valid_set_size])
+    gen = None
+    if seed is not None:
+        gen = torch.Generator().manual_seed(seed)
 
-    logger.info(
-        f'The size of the training set is {len(train_set)} and the size of the validation set is {len(valid_set)}'
-    )
+    train_set, valid_set = torch.utils.data.random_split(
+        dataset, [train_set_size, valid_set_size], generator=gen)
+
+    logger.info(f'Train = {len(train_set)}, Valid = {len(valid_set)}')
     return train_set, valid_set
 
 
@@ -761,7 +783,10 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
                  batch_size: int = 32,
                  shuffle: bool = True,
                  new_sampling_radius: Optional[float] = None,
-                 drop_last: bool = False):
+                 drop_last: bool = False,
+                 hold_out_test_set: bool = False,
+                 test_set_ratio: Optional[float] = None,
+                 test_set_seed: Optional[int] = None):
     """
     Get training and validation dataset
     Args:
@@ -775,6 +800,7 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
                                      in the frequency domain, sample points on a circle whose radius
                                      is larger than 1
         drop_last (bool): whether to drop the last batch if it has less elements than batch_size
+        hold_out_test_set (bool): whether to create a test set that is consistent across all training
     """
     if isinstance(room_data, RoomDataset):
         dataset = MultiRIRDataset(device,
@@ -782,8 +808,31 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
                                   new_sampling_radius=new_sampling_radius)
         dataset = to_device(dataset, device)
 
-        # split data into training and validation set
-        train_set, valid_set = split_dataset(dataset, train_valid_split_ratio)
+        if hold_out_test_set:
+            logger.info("Creating fixed test set")
+
+            # create fixed test set
+            test_set, remaining_set = create_fixed_test_split(
+                dataset, test_ratio=test_set_ratio, seed=test_set_seed)
+
+            # split remaining data set into train and valid sets
+            train_set, valid_set = split_dataset(
+                remaining_set,
+                split=train_valid_split_ratio,
+            )
+
+            test_loader = get_dataloader(test_set,
+                                         batch_size=batch_size,
+                                         shuffle=False,
+                                         device=device,
+                                         drop_last=False,
+                                         custom_collate_fn=custom_collate)
+
+        else:
+            train_set, valid_set = split_dataset(
+                dataset,
+                split=train_valid_split_ratio,
+            )
 
         # dataloaders
         train_loader = get_dataloader(train_set,
@@ -799,7 +848,10 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
                                       device=device,
                                       drop_last=drop_last,
                                       custom_collate_fn=custom_collate)
-        return train_loader, valid_loader
+
+        return (train_loader, valid_loader,
+                test_loader) if hold_out_test_set else (train_set,
+                                                        valid_loader)
 
     elif isinstance(room_data, RIRData):
         dataset = SingleRIRDataset(device,

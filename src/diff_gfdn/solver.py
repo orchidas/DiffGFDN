@@ -314,13 +314,24 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
         colorless_fdn_params = None
 
     # prepare the training and validation data for DiffGFDN
-    train_dataset, valid_dataset = load_dataset(
-        room_data,
-        trainer_config.device,
-        trainer_config.train_valid_split,
-        trainer_config.batch_size,
-        new_sampling_radius=1.0 / trainer_config.reduced_pole_radius,
-    )
+    if trainer_config.hold_out_test_set is None:
+        train_dataset, valid_dataset = load_dataset(
+            room_data,
+            trainer_config.device,
+            trainer_config.train_valid_split,
+            trainer_config.batch_size,
+            new_sampling_radius=1.0 / trainer_config.reduced_pole_radius,
+        )
+    else:
+        train_dataset, valid_dataset, _ = load_dataset(
+            room_data,
+            trainer_config.device,
+            trainer_config.train_valid_split,
+            trainer_config.batch_size,
+            new_sampling_radius=1.0 / trainer_config.reduced_pole_radius,
+            hold_out_test_set=True,
+            test_set_ratio=trainer_config.hold_out_test_set.ratio,
+            test_set_seed=trainer_config.hold_out_test_set.seed)
 
     # are we tuning hyperparameters?
     if config_dict.output_filter_config.mlp_tuning_config is not None:

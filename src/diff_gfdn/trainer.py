@@ -39,7 +39,11 @@ class Trainer:
         self.use_colorless_loss = trainer_config.use_colorless_loss
         self.reduced_pole_radius = trainer_config.reduced_pole_radius
         self.subband_process_config = trainer_config.subband_process_config
-        self.use_directional_fdn = self.net.ambi_order is not None
+        try:
+            self.use_directional_fdn = self.net.ambi_order is not None
+        except AttributeError:
+            logger.warning("Using omni DiffGFDN")
+            self.use_directional_fdn = False
 
         if self.subband_process_config is not None:
             self.init_subband_filters(trainer_config)
