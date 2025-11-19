@@ -18,7 +18,7 @@ from spatial_sampling.dataloader import load_dataset as load_dataset_spatial
 from .colorless_fdn.dataloader import load_colorless_fdn_dataset
 from .colorless_fdn.model import ColorlessFDN
 from .colorless_fdn.trainer import ColorlessFDNTrainer
-from .colorless_fdn.utils import ColorlessFDNResults
+from .colorless_fdn.utils import ColorlessFDNResults, get_colorless_fdn_params
 from .config.config import DiffGFDNConfig
 from .dataloader import load_dataset, RIRData, RoomDataset, ThreeRoomDataset
 from .hypertuning import mlp_hyperparameter_tuning, MLPTuningConfig
@@ -224,41 +224,66 @@ def run_training_colorless_fdn(
     params_opt = []
     num_delay_lines_per_group = int(config_dict.num_delay_lines /
                                     config_dict.num_groups)
+    run_optim = not config_dict.colorless_fdn_config.load_fixed_parameters
+
     for i in range(config_dict.num_groups):
+        if config_dict.colorless_fdn_config.load_fixed_parameters:
+            try:
+                logger.debug(
+                    "Using same colorless FDN parameters for all subband GFDNs"
+                )
+                # load saved parameters
+                params_opt.append(
+                    get_colorless_fdn_params(
+                        config_dict,
+                        config_dict.colorless_fdn_config.colorless_dir))
 
-        model = ColorlessFDN(
-            config_dict.sample_rate,
-            config_dict.delay_length_samps[i *
-                                           num_delay_lines_per_group:(i + 1) *
-                                           num_delay_lines_per_group],
-            trainer_config.device)
+            except Exception as e:
+                logger.warning(e)
+                logger.warning(
+                    "Colorless FDN parameters do not exist, creating them")
+                run_optim = True
 
-        # set default device
-        torch.set_default_device(trainer_config.device)
-        # move model to device (cuda or cpu)
-        model = model.to(trainer_config.device)
-        # create the trainer object
-        trainer = ColorlessFDNTrainer(model, trainer_config,
-                                      config_dict.colorless_fdn_config)
+            if run_optim:
+                model = ColorlessFDN(
+                    config_dict.sample_rate,
+                    config_dict.delay_length_samps[i *
+                                                   num_delay_lines_per_group:
+                                                   (i + 1) *
+                                                   num_delay_lines_per_group],
+                    trainer_config.device)
 
-        # save initial parameters and ir
-        save_colorless_fdn_parameters(
-            trainer.net, trainer_config.train_dir + "colorless-fdn/",
-            f'parameters_init_group={i + 1}.pkl')
+                # set default device
+                torch.set_default_device(trainer_config.device)
+                # move model to device (cuda or cpu)
+                model = model.to(trainer_config.device)
+                # create the trainer object
+                trainer = ColorlessFDNTrainer(model, trainer_config,
+                                              config_dict.colorless_fdn_config)
 
-        # train the network
-        trainer.train(train_dataset, valid_dataset)
-        # save final trained parameters
-        params_opt.append(
-            save_colorless_fdn_parameters(
-                trainer.net, trainer_config.train_dir + "colorless-fdn/",
-                f'parameters_opt_group={i + 1}.pkl'))
+                if config_dict.colorless_fdn_config.colorless_dir is None:
+                    colorless_dir = trainer_config.train_dir + "colorless-fdn/"
+                else:
+                    colorless_dir = config_dict.colorless_fdn_config.colorless_dir
 
-        # save loss evolution
-        save_loss(trainer.train_loss,
-                  trainer_config.train_dir + "colorless-fdn/",
-                  save_plot=True,
-                  filename=f'training_loss_vs_epoch_group={i + 1}')
+                # save initial parameters and ir
+                save_colorless_fdn_parameters(
+                    trainer.net, colorless_dir,
+                    f'parameters_init_group={i + 1}.pkl')
+
+                # train the network
+                trainer.train(train_dataset, valid_dataset)
+                # save final trained parameters
+                params_opt.append(
+                    save_colorless_fdn_parameters(
+                        trainer.net, colorless_dir,
+                        f'parameters_opt_group={i + 1}.pkl'))
+
+                # save loss evolution
+                save_loss(trainer.train_loss,
+                          colorless_dir,
+                          save_plot=True,
+                          filename=f'training_loss_vs_epoch_group={i + 1}')
 
     return params_opt
 

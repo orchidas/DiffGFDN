@@ -637,17 +637,19 @@ def plot_edc_error_in_space(
         """Get MSE error between the EDC mismatch"""
 
         if not pos_sorted:
-            ordered_pos_idx = order_position_matrices(original_points,
-                                                      est_points)
+            ordered_pos_idx = order_position_matrices(
+                est_points,
+                original_points,
+            )
         else:
             ordered_pos_idx = np.arange(0, len(est_points), dtype=np.int32)
-        est_rirs_ordered = estimated_rirs[ordered_pos_idx, ...]
+        true_rirs_ordered = original_rirs[ordered_pos_idx, ...]
 
-        original_edc = schroeder_backward_int(original_rirs,
+        original_edc = schroeder_backward_int(true_rirs_ordered,
                                               time_axis=-2,
                                               normalize=norm_flag,
                                               discard_last_zeros=False)
-        est_edc = schroeder_backward_int(est_rirs_ordered,
+        est_edc = schroeder_backward_int(estimated_rirs,
                                          time_axis=-2,
                                          normalize=norm_flag,
                                          discard_last_zeros=False)
@@ -726,7 +728,7 @@ def plot_edc_error_in_space(
                 var_to_plot = db2lin(error_func[..., k])
                 # plot the error in amplitude matching
                 room.plot_edc_error_at_receiver_points(
-                    rec_points,
+                    est_rec_pos,
                     cur_src_pos,
                     var_to_plot,
                     scatter_plot=scatter,
@@ -743,7 +745,7 @@ def plot_edc_error_in_space(
 
             # plot the error in amplitude matching
             room.plot_edc_error_at_receiver_points(
-                rec_points,
+                est_rec_pos,
                 cur_src_pos,
                 var_to_plot,
                 scatter_plot=scatter,
