@@ -657,7 +657,7 @@ def plot_edc_error_in_space(
             db(original_edc, is_squared=True) - db(est_edc, is_squared=True)),
                            axis=-2)
         error_mse = np.linalg.norm(error_db, axis=0) / np.sqrt(
-            original_points.shape[0])
+            est_points.shape[0])
         return error_db, error_mse
 
     num_rooms = room_data.num_rooms
