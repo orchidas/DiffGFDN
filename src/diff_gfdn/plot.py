@@ -348,7 +348,7 @@ def animate_coupled_feedback_matrix(
         # Initialize the figure and the first matrix display
         if coupling_matrix is None:
             fig, ax = plt.subplots()
-            mat_plot = ax.matshow(coupled_feedback_matrix[0],
+            mat_plot = ax.matshow(np.abs(coupled_feedback_matrix[0]),
                                   cmap='viridis')  # Initial display
             fig.colorbar(mat_plot, ax=ax)
             ax.set_title('Coupled feedback matrix')
@@ -356,7 +356,7 @@ def animate_coupled_feedback_matrix(
 
         else:
             fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(8, 6))
-            mat_plot = ax[0].matshow(coupled_feedback_matrix[0],
+            mat_plot = ax[0].matshow(np.abs(coupled_feedback_matrix[0]),
                                      cmap='viridis')  # Initial display
             coupled_mat_plot = ax[1].matshow(coupling_matrix[0],
                                              cmap='viridis',
@@ -374,12 +374,12 @@ def animate_coupled_feedback_matrix(
     # Update function for animation
     def update(frame: int):
         if coupling_matrix is None:
-            mat_plot.set_array(
-                coupled_feedback_matrix[frame])  # Update matrix data
+            mat_plot.set_array(np.abs(
+                coupled_feedback_matrix[frame]))  # Update matrix data
             return [mat_plot]
         else:
-            mat_plot.set_array(
-                coupled_feedback_matrix[frame])  # Update the first matrix
+            mat_plot.set_array(np.abs(
+                coupled_feedback_matrix[frame]))  # Update the first matrix
             # pylint: disable=E0606
             coupled_mat_plot.set_array(
                 coupling_matrix[frame])  # Update the second matrix

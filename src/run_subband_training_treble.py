@@ -78,9 +78,9 @@ def create_config(
 
     # different options for ablation study
     if allow_coupling:
-        str_append = 'colorless_loss_diff_delays_with_coupling'
+        str_append = '_colorless_loss_diff_delays_with_coupling'
     elif use_same_colorless_params:
-        str_append = 'same_colorless_params'
+        str_append = '_same_colorless_params'
         colorless_config_dict = {
             'use_colorless_prototype':
             True,
@@ -93,7 +93,7 @@ def create_config(
         }
         colorless_config_dict = ColorlessFDNConfig(**colorless_config_dict)
     else:
-        str_append = 'colorless_loss_diff_delays'
+        str_append = '_colorless_loss_diff_delays'
 
     # this ensures that the same delay line lengths are used if we are using the
     # same colorless FDN params, or else different delay line lengths are used for
@@ -128,9 +128,9 @@ def create_config(
             'sparsity_loss_weight': 2,
             'use_asym_spectral_loss': True,
             'train_dir':
-            f'output/train_split_test/{train_valid_split:.1f}/grid_rir_treble_band_centre={cur_freq_hz}Hz_{str_append}/',
+            f'output/train_split_test/{train_valid_split:.1f}/grid_rir_treble_band_centre={cur_freq_hz}Hz{str_append}/',
             'ir_dir':
-            f'audio/train_split_test/{train_valid_split:.1f}/grid_rir_treble_band_centre={cur_freq_hz}Hz_{str_append}/',
+            f'audio/train_split_test/{train_valid_split:.1f}/grid_rir_treble_band_centre={cur_freq_hz}Hz{str_append}/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
@@ -443,7 +443,7 @@ def main(freqs_list_train: Optional[List] = None,
             f'output/treble_data_grid_training_final_rirs_colorless_loss_diff_delays_split={split_ratio:.1f}.pkl'
         ).resolve()
         output_path = Path(
-            f"audio/grid_rir_treble_subband_processing_colorless_loss_diff_delays_split={split_ratio:.1f}"
+            f"audio/train_split_test/{split_ratio:.1f}/grid_rir_treble_subband_processing_colorless_loss_diff_delays"
         )
 
         inferencing(freqs_list, config_dicts, save_filename, output_path)
