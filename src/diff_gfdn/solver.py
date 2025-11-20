@@ -233,10 +233,11 @@ def run_training_colorless_fdn(
                     "Using same colorless FDN parameters for all subband GFDNs"
                 )
                 # load saved parameters
-                params_opt.append(
-                    get_colorless_fdn_params(
-                        config_dict,
-                        config_dict.colorless_fdn_config.colorless_dir))
+                params_per_group = get_colorless_fdn_params(
+                    config_dict,
+                    config_dict.colorless_fdn_config.saved_param_path)
+                params_opt = list(params_per_group)
+                return params_opt
 
             except Exception as e:
                 logger.warning(e)
@@ -261,10 +262,10 @@ def run_training_colorless_fdn(
                 trainer = ColorlessFDNTrainer(model, trainer_config,
                                               config_dict.colorless_fdn_config)
 
-                if config_dict.colorless_fdn_config.colorless_dir is None:
+                if config_dict.colorless_fdn_config.saved_param_path is None:
                     colorless_dir = trainer_config.train_dir + "colorless-fdn/"
                 else:
-                    colorless_dir = config_dict.colorless_fdn_config.colorless_dir
+                    colorless_dir = config_dict.colorless_fdn_config.saved_param_path
 
                 # save initial parameters and ir
                 save_colorless_fdn_parameters(
@@ -284,7 +285,6 @@ def run_training_colorless_fdn(
                           colorless_dir,
                           save_plot=True,
                           filename=f'training_loss_vs_epoch_group={i + 1}')
-
     return params_opt
 
 
@@ -434,7 +434,7 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
                                   'parameters_init.mat')
 
         # train the network
-        trainer.train(train_dataset)
+        trainer.train(train_dataset, valid_dataset)
         # save final trained parameters
         save_diff_gfdn_parameters(trainer.net, trainer_config.train_dir,
                                   'parameters_opt.mat')
@@ -445,14 +445,11 @@ def run_training_var_receiver_pos(config_dict: DiffGFDNConfig):
                   filename='training_loss_vs_epoch',
                   individual_losses=trainer.individual_train_loss)
 
-        # test the network with the validation set
-        trainer.validate(valid_dataset)
         # save the validation loss
         save_loss(trainer.valid_loss,
                   trainer_config.train_dir,
                   save_plot=True,
-                  filename='test_loss_vs_position',
-                  xaxis_label='Position #',
+                  filename='valid_loss_vs_epoch',
                   individual_losses=trainer.individual_valid_loss)
 
 
@@ -641,7 +638,7 @@ def run_training_anisotropic_decay_var_receiver_pos(
                               'parameters_init.mat')
 
     # train the network
-    trainer.train(train_dataset)
+    trainer.train(train_dataset, valid_dataset)
     # save final trained parameters
     save_diff_gfdn_parameters(trainer.net, trainer_config.train_dir,
                               'parameters_opt.mat')
@@ -652,12 +649,9 @@ def run_training_anisotropic_decay_var_receiver_pos(
               filename='training_loss_vs_epoch',
               individual_losses=trainer.individual_train_loss)
 
-    # test the network with the validation set
-    trainer.validate(valid_dataset)
     # save the validation loss
     save_loss(trainer.valid_loss,
               trainer_config.train_dir,
               save_plot=True,
-              filename='test_loss_vs_position',
-              xaxis_label='Position #',
+              filename='valid_loss_vs_epoch',
               individual_losses=trainer.individual_valid_loss)

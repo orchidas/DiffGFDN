@@ -74,6 +74,7 @@ def create_config(
 
     test_set_config = TestSetConfig()
     colorless_config_dict = ColorlessFDNConfig()
+    use_colorless_loss = not use_same_colorless_params
 
     # different options for ablation study
     if allow_coupling:
@@ -88,8 +89,9 @@ def create_config(
             'max_epochs':
             15,
             'saved_param_path':
-            Path('output/fixed_colorless_fdn_params/').resolve()
+            str(Path('output/fixed_colorless_fdn_params/').resolve())
         }
+        colorless_config_dict = ColorlessFDNConfig(**colorless_config_dict)
     else:
         str_append = 'colorless_loss_diff_delays'
 
@@ -121,9 +123,9 @@ def create_config(
             },
             'num_freq_bins': 131072,
             'use_edc_mask': True,
+            'use_colorless_loss': use_colorless_loss,
             'edc_loss_weight': 10,
             'sparsity_loss_weight': 2,
-            'use_colorless_loss': True,
             'use_asym_spectral_loss': True,
             'train_dir':
             f'output/train_split_test/{train_valid_split:.1f}/grid_rir_treble_band_centre={cur_freq_hz}Hz_{str_append}/',

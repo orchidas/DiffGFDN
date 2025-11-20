@@ -99,11 +99,9 @@ def mlp_hyperparameter_tuning(trial, hyp_config: MLPTuningConfig):
     model = model.to(trainer_config.device)
     # create the trainer object
     trainer = VarReceiverPosTrainer(model, trainer_config)
-    # train the network
-    trainer.train(hyp_config.train_dataset)
+    # train and validate the network
+    trainer.train(hyp_config.train_dataset, hyp_config.valid_dataset)
 
-    # test the network with the validation set
-    trainer.validate(hyp_config.valid_dataset)
     # save the validation loss
     save_loss(trainer.valid_loss,
               trainer_config.train_dir,
