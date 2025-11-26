@@ -234,8 +234,8 @@ class Directional_Beamforming_Weights_from_CNN(Directional_Beamforming_Weights
         mesh_2D = x['mesh_2D']
         # size is. (H*W, num_in_features)
         H, W, num_coords = mesh_2D.shape
-        mesh_2D = mesh_2D.view(H * W, num_coords)
         B = H * W
+        mesh_2D = mesh_2D.view(B, num_coords)
 
         encoded_mesh = self.encoder(mesh_2D)
         encoded_mesh = encoded_mesh.view(self.num_in_features, H, W)
