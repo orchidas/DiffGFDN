@@ -80,6 +80,7 @@ def create_config(
                 'seed': test_set_config.seed,
                 'ratio': 0.1,
             },
+            'lr': 1e-3,
             'num_freq_bins': 131072,
             'use_edc_mask': True,
             'edc_loss_weight': 10,
