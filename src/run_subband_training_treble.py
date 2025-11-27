@@ -121,6 +121,7 @@ def create_config(
                 'seed': test_set_config.seed,
                 'ratio': 0.1,
             },
+            'lr': 1e-3,
             'num_freq_bins': 131072,
             'use_edc_mask': True,
             'use_colorless_loss': use_colorless_loss,
