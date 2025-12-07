@@ -152,6 +152,7 @@ class FeedbackLoop(nn.Module):
                  delays: torch.tensor,
                  use_absorption_filters: bool,
                  coupling_matrix_type: CouplingMatrixType = None,
+                 use_zero_coupling: bool = True,
                  coupling_matrix_order: Optional[int] = None,
                  colorless_feedback_matrix: Optional[torch.tensor] = None,
                  gains: Optional[torch.Tensor] = None,
@@ -167,6 +168,7 @@ class FeedbackLoop(nn.Module):
             common_decay_times (list, optional): list of initial common decay times (one for each room). 
                                                  If none, they are learned by network
             use_absorption_filters (bool): whether the delay line gains are gains or filters
+            use_zero_coupling (bool): whether to have zero inter-group coupling
             coupling_matrix_type (CouplingMatrixType): scalar or filter coupling
             coupling_matrix_order (optional, int): order of the PU filter coupling matrix
             colorless_feedback_matrix (torch.tensor, optional): the block diagonal
@@ -180,6 +182,7 @@ class FeedbackLoop(nn.Module):
         self.delays = delays
         self.num_delays = len(self.delays)
         self.use_absorption_filters = use_absorption_filters
+        self.use_zero_coupling = use_zero_coupling
         self.device = device
         self._eps = 1e-9
         self.coupling_matrix_type = coupling_matrix_type
@@ -254,9 +257,10 @@ class FeedbackLoop(nn.Module):
                 logger.info("Using absorption gains")
                 self.delay_line_gains = gains
 
-    def _init_feedback_matrix(self,
-                              colorless_feedback_matrix: Optional[
-                                  torch.tensor] = None):
+    def _init_feedback_matrix(
+        self,
+        colorless_feedback_matrix: Optional[torch.tensor] = None,
+    ):
         """
         Initialise feedback matrix
         Args:
@@ -290,16 +294,20 @@ class FeedbackLoop(nn.Module):
                 # no coupling initialisation
                 self.nd_unitary = ND_Unitary()
 
-                # if colorless_feedback_matrix is None:
-                #     self.alpha = nn.Parameter(
-                #          np.pi / 4 * torch.ones(self.num_groups * (self.num_groups - 1) //
-                #                     2))
-
-                # else:
                 # no coupling allowed - this makes alpha a fixed parameter
-                self.register_buffer(
-                    "alpha",
-                    torch.zeros(self.num_groups * (self.num_groups - 1) // 2))
+                if self.use_zero_coupling:
+                    logger.debug("Using zero coupling coefficients")
+                    self.register_buffer(
+                        "alpha",
+                        torch.zeros(self.num_groups * (self.num_groups - 1) //
+                                    2))
+                else:
+                    logger.debug("Learning coupling coefficients")
+                    self.alpha = nn.Parameter(
+                        np.pi / 4 * torch.rand(self.num_groups *
+                                               (self.num_groups - 1) // 2,
+                                               device=self.device,
+                                               dtype=torch.float32))
 
             elif self.coupling_matrix_type == CouplingMatrixType.FILTER:
                 self.coupling_matrix_order = self.coupling_matrix_order
@@ -484,6 +492,10 @@ class FeedbackLoop(nn.Module):
                 'coupled_feedback_matrix'] = self.coupled_feedback_matrix.squeeze(
                 ).cpu().numpy()
         else:
+            if not self.use_zero_coupling:
+                param_np['coupling_coefficient'] = self.alpha.squeeze().cpu(
+                ).numpy()
+
             param_np['coupling_matrix'] = self.phi.squeeze().cpu().numpy()
             param_np['individual_mixing_matrix'] = self.M.squeeze().cpu(
             ).numpy()

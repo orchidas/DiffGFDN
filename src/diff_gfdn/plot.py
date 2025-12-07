@@ -348,7 +348,7 @@ def animate_coupled_feedback_matrix(
         # Initialize the figure and the first matrix display
         if coupling_matrix is None:
             fig, ax = plt.subplots()
-            mat_plot = ax.matshow(coupled_feedback_matrix[0],
+            mat_plot = ax.matshow(np.abs(coupled_feedback_matrix[0]),
                                   cmap='viridis')  # Initial display
             fig.colorbar(mat_plot, ax=ax)
             ax.set_title('Coupled feedback matrix')
@@ -356,7 +356,7 @@ def animate_coupled_feedback_matrix(
 
         else:
             fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(8, 6))
-            mat_plot = ax[0].matshow(coupled_feedback_matrix[0],
+            mat_plot = ax[0].matshow(np.abs(coupled_feedback_matrix[0]),
                                      cmap='viridis')  # Initial display
             coupled_mat_plot = ax[1].matshow(coupling_matrix[0],
                                              cmap='viridis',
@@ -374,12 +374,12 @@ def animate_coupled_feedback_matrix(
     # Update function for animation
     def update(frame: int):
         if coupling_matrix is None:
-            mat_plot.set_array(
-                coupled_feedback_matrix[frame])  # Update matrix data
+            mat_plot.set_array(np.abs(
+                coupled_feedback_matrix[frame]))  # Update matrix data
             return [mat_plot]
         else:
-            mat_plot.set_array(
-                coupled_feedback_matrix[frame])  # Update the first matrix
+            mat_plot.set_array(np.abs(
+                coupled_feedback_matrix[frame]))  # Update the first matrix
             # pylint: disable=E0606
             coupled_mat_plot.set_array(
                 coupling_matrix[frame])  # Update the second matrix
@@ -637,17 +637,19 @@ def plot_edc_error_in_space(
         """Get MSE error between the EDC mismatch"""
 
         if not pos_sorted:
-            ordered_pos_idx = order_position_matrices(original_points,
-                                                      est_points)
+            ordered_pos_idx = order_position_matrices(
+                est_points,
+                original_points,
+            )
         else:
             ordered_pos_idx = np.arange(0, len(est_points), dtype=np.int32)
-        est_rirs_ordered = estimated_rirs[ordered_pos_idx, ...]
+        true_rirs_ordered = original_rirs[ordered_pos_idx, ...]
 
-        original_edc = schroeder_backward_int(original_rirs,
+        original_edc = schroeder_backward_int(true_rirs_ordered,
                                               time_axis=-2,
                                               normalize=norm_flag,
                                               discard_last_zeros=False)
-        est_edc = schroeder_backward_int(est_rirs_ordered,
+        est_edc = schroeder_backward_int(estimated_rirs,
                                          time_axis=-2,
                                          normalize=norm_flag,
                                          discard_last_zeros=False)
@@ -655,7 +657,7 @@ def plot_edc_error_in_space(
             db(original_edc, is_squared=True) - db(est_edc, is_squared=True)),
                            axis=-2)
         error_mse = np.linalg.norm(error_db, axis=0) / np.sqrt(
-            original_points.shape[0])
+            est_points.shape[0])
         return error_db, error_mse
 
     num_rooms = room_data.num_rooms
@@ -726,7 +728,7 @@ def plot_edc_error_in_space(
                 var_to_plot = db2lin(error_func[..., k])
                 # plot the error in amplitude matching
                 room.plot_edc_error_at_receiver_points(
-                    rec_points,
+                    est_rec_pos,
                     cur_src_pos,
                     var_to_plot,
                     scatter_plot=scatter,
@@ -743,7 +745,7 @@ def plot_edc_error_in_space(
 
             # plot the error in amplitude matching
             room.plot_edc_error_at_receiver_points(
-                rec_points,
+                est_rec_pos,
                 cur_src_pos,
                 var_to_plot,
                 scatter_plot=scatter,

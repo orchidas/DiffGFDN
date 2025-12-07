@@ -848,10 +848,10 @@ def load_dataset(room_data: Union[RoomDataset, RIRData],
                                       device=device,
                                       drop_last=drop_last,
                                       custom_collate_fn=custom_collate)
-
-        return (train_loader, valid_loader,
-                test_loader) if hold_out_test_set else (train_set,
-                                                        valid_loader)
+        if hold_out_test_set:
+            return train_loader, valid_loader, test_loader
+        else:
+            return train_loader, valid_loader
 
     elif isinstance(room_data, RIRData):
         dataset = SingleRIRDataset(device,

@@ -83,25 +83,12 @@ class InferDiffGFDN:
         self.all_learned_params = DiffGFDNParams(
             output_gains, input_gains, input_scalars, coupled_feedback_matrix,
             coupling_matrix, output_scalars, output_biquad_coeffs)
-
-        self.all_pos = [
-            np.empty((self.room_data.num_rec, 3))
-            for i in range(-1, self.max_epochs)
-        ]
-        self.all_rirs = [
-            np.empty((self.room_data.num_rec, self.room_data.num_freq_bins))
-            for i in range(-1, self.max_epochs)
-        ]
-        self.all_output_scalars = [
-            np.empty((self.room_data.num_rec, self.room_data.num_rooms))
-            for i in range(-1, self.max_epochs)
-        ]
         self.h_approx_list = []
         self.use_direct_cs_params = use_direct_cs_params
 
         # prepare the dataset
         if self.trainer_config.hold_out_test_set is None:
-            self.dataset, _ = load_dataset(
+            self.dataloader, _ = load_dataset(
                 self.room_data,
                 self.trainer_config.device,
                 train_valid_split_ratio=1.0,
@@ -109,7 +96,7 @@ class InferDiffGFDN:
                 shuffle=False)
         else:
             # test set only
-            _, _, self.dataset = load_dataset(
+            _, _, self.dataloader = load_dataset(
                 self.room_data,
                 self.trainer_config.device,
                 train_valid_split_ratio=1.0,
@@ -118,6 +105,20 @@ class InferDiffGFDN:
                 hold_out_test_set=True,
                 test_set_ratio=self.trainer_config.hold_out_test_set.ratio,
                 test_set_seed=self.trainer_config.hold_out_test_set.seed)
+
+        num_rec_pos = len(self.dataloader.dataset)
+        logger.info(f"Length of the inference dataset is {num_rec_pos}")
+        self.all_pos = [
+            np.empty((num_rec_pos, 3)) for i in range(-1, self.max_epochs)
+        ]
+        self.all_rirs = [
+            np.empty((num_rec_pos, self.room_data.num_freq_bins))
+            for i in range(-1, self.max_epochs)
+        ]
+        self.all_output_scalars = [
+            np.empty((num_rec_pos, self.room_data.num_rooms))
+            for i in range(-1, self.max_epochs)
+        ]
 
         # get normalising factor to compensate for subband filtering
         if self.trainer_config.subband_process_config is not None:
@@ -202,7 +203,7 @@ class InferDiffGFDN:
                 self.all_learned_params.coupling_matrix.append(
                     param_dict['coupling_matrix'])
 
-                for data in self.dataset:
+                for data in self.dataloader:
                     position = data['listener_position']
 
                     if self.trainer_config.subband_process_config is not None and self.use_direct_cs_params:
@@ -318,7 +319,7 @@ class InferDiffDirectionalFDN:
         self.apply_filter_norm = apply_filter_norm
 
         # prepare the training and validation data
-        self.dataset, _, _ = load_spatial_dataset(
+        self.dataloader, _, _ = load_spatial_dataset(
             room_data,
             config_dict.trainer_config.device,
             network_type=DNNType.MLP,
@@ -446,7 +447,7 @@ class InferDiffDirectionalFDN:
                 param_dict['coupling_matrix'])
             npos = 0
 
-            for data in tqdm(self.dataset):
+            for data in tqdm(self.dataloader):
                 position = data['listener_position']
 
                 # get parameter dictionary used in inferencing

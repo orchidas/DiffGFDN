@@ -342,10 +342,12 @@ class VarReceiverPosTrainer(Trainer):
                  trainer_config: TrainerConfig):
         super().__init__(net, trainer_config)
 
-    def train(self, train_dataset: DataLoader):
+    def train(self, train_dataset: DataLoader, valid_dataset: DataLoader):
         """Train the network"""
         self.train_loss = []
         self.individual_train_loss = []
+        self.valid_loss = []
+        self.individual_valid_loss = []
 
         st = time.time()  # start time
         # save initial parameters
@@ -356,8 +358,10 @@ class VarReceiverPosTrainer(Trainer):
             st_epoch = time.time()
 
             # training
-            epoch_loss = 0.0
-            all_loss = {}
+            epoch_train_loss = 0.0
+            epoch_valid_loss = 0.0
+            all_train_loss = {}
+            all_valid_loss = {}
 
             if self.net.use_svf_in_output:
                 # normalise b, c at each epoch (but only once)
@@ -365,6 +369,7 @@ class VarReceiverPosTrainer(Trainer):
                 data = next(iter(train_dataset))
                 self.normalize(data)
 
+            # train step
             for data in train_dataset:
                 # normalise b, c at each training step to ensure the sub-FDNs have
                 # unit energy
@@ -372,19 +377,38 @@ class VarReceiverPosTrainer(Trainer):
                     super().normalize(data)
 
                 cur_loss, cur_all_loss = self.train_step(data)
-                epoch_loss += cur_loss
+                epoch_train_loss += cur_loss
 
-                if not all_loss:
-                    all_loss = {key: 0.0 for key in cur_all_loss}
+                if not all_train_loss:
+                    all_train_loss = {key: 0.0 for key in cur_all_loss}
 
                 for key, value in cur_all_loss.items():
-                    all_loss[key] += value.item()
+                    all_train_loss[key] += value.item()
+
+            # validation step
+            for data in valid_dataset:
+                cur_loss, cur_all_loss = self.valid_step(data)
+                epoch_valid_loss += cur_loss
+
+                if not all_valid_loss:
+                    all_valid_loss = {key: 0.0 for key in cur_all_loss}
+
+                for key, value in cur_all_loss.items():
+                    all_valid_loss[key] += value.item()
 
             self.scheduler.step()
-            self.train_loss.append(epoch_loss / len(train_dataset))
-            for key, value in all_loss.items():
-                all_loss[key] /= len(train_dataset)
-            self.individual_train_loss.append(all_loss)
+            self.train_loss.append(epoch_train_loss / len(train_dataset))
+            for key, value in all_train_loss.items():
+                all_train_loss[key] /= len(train_dataset)
+            self.individual_train_loss.append(all_train_loss)
+
+            self.valid_loss.append(epoch_valid_loss / len(valid_dataset))
+            for key, value in all_valid_loss.items():
+                all_valid_loss[key] /= len(valid_dataset)
+            self.individual_valid_loss.append(all_valid_loss)
+            logger.info(
+                f"The validation loss for the current epoch is {self.valid_loss[-1]:.4f}"
+            )
 
             et_epoch = time.time()
             super().save_model(epoch)
@@ -392,7 +416,7 @@ class VarReceiverPosTrainer(Trainer):
 
             # early stopping
             if epoch >= 1:
-                if abs(self.train_loss[-2] - self.train_loss[-1]) <= 0.0001:
+                if abs(self.valid_loss[-2] - self.valid_loss[-1]) <= 1e-3:
                     self.early_stop += 1
                 else:
                     self.early_stop = 0
@@ -413,6 +437,17 @@ class VarReceiverPosTrainer(Trainer):
                 src_pos=src_position,
                 rec_pos=rec_position,
             )
+
+        logger.info("Saving validation IRs...")
+        for data in valid_dataset:
+            rec_position = data['listener_position']
+            src_position = data['source_position']
+
+            self.save_ir(data,
+                         directory=self.ir_dir,
+                         src_pos=src_position,
+                         rec_pos=rec_position,
+                         filename_prefix="valid_ir")
 
     def train_step(self, data):
         """Single step of training"""
@@ -442,56 +477,28 @@ class VarReceiverPosTrainer(Trainer):
         return loss.item(), all_losses
 
     @torch.no_grad()
-    def validate(self, valid_dataset: DataLoader):
+    def valid_step(self, data):
         """Validate the training with unseen data and save the resulting IRs"""
-        total_loss = 0
-        self.valid_loss = []
-        self.individual_valid_loss = []
-
-        for data in valid_dataset:
-            rec_position = data['listener_position']
-            src_position = data['source_position']
-            logger.info("Running the network for new batch of positiions")
-            cur_all_losses = {}
-            if self.use_colorless_loss:
-                H, H_sub_fdn = self.save_ir(data,
-                                            directory=self.ir_dir,
-                                            src_pos=src_position,
-                                            rec_pos=rec_position,
-                                            filename_prefix="valid_ir")
-                if self.subband_process_config is not None:
-                    # filter H in subbands before calculating loss
-                    H_subband = H * self.subband_filter_freq_resp
-                    cur_all_losses = super().calculate_losses(
-                        data, H_subband, H_sub_fdn)
-                else:
-                    cur_all_losses = super().calculate_losses(
-                        data, H, H_sub_fdn)
-
+        if self.use_colorless_loss:
+            H, H_sub_fdn = self.net(data)
+            if self.subband_process_config is not None:
+                # filter H in subbands before calculating loss
+                H_subband = H * self.subband_filter_freq_resp
+                cur_all_losses = super().calculate_losses(
+                    data, H_subband, H_sub_fdn)
             else:
-                H = self.save_ir(data,
-                                 directory=self.ir_dir,
-                                 src_pos=src_position,
-                                 rec_pos=rec_position,
-                                 filename_prefix="valid_ir")
-                if self.subband_process_config is not None:
-                    # filter H in subbands before calculating loss
-                    H_subband = H * self.subband_filter_freq_resp
-                    cur_all_losses = super().calculate_losses(data, H_subband)
-                else:
-                    cur_all_losses = super().calculate_losses(data, H)
+                cur_all_losses = super().calculate_losses(data, H, H_sub_fdn)
+        else:
+            H = self.net(data)
+            if self.subband_process_config is not None:
+                # filter H in subbands before calculating loss
+                H_subband = H * self.subband_filter_freq_resp
+                cur_all_losses = super().calculate_losses(data, H_subband)
+            else:
+                cur_all_losses = super().calculate_losses(data, H)
 
-            cur_loss = sum(cur_all_losses.values())
-            total_loss += cur_loss
-
-            self.valid_loss.append(cur_loss)
-            self.individual_valid_loss.append(cur_all_losses)
-            logger.info(
-                f"The validation loss for the current position is {cur_loss:.4f}"
-            )
-
-        net_valid_loss = total_loss / len(valid_dataset)
-        logger.info(f"The net validation loss is {net_valid_loss:.4f}")
+        cur_loss = sum(cur_all_losses.values())
+        return cur_loss.item(), cur_all_losses
 
     @torch.no_grad()
     def save_ir(
@@ -687,10 +694,12 @@ class DirectionalFDNVarReceiverPosTrainer(Trainer):
                  trainer_config: TrainerConfig):
         super().__init__(net, trainer_config)
 
-    def train(self, train_dataset: DataLoader):
+    def train(self, train_dataset: DataLoader, valid_dataset: DataLoader):
         """Train the network"""
         self.train_loss = []
         self.individual_train_loss = []
+        self.valid_loss = []
+        self.individual_valid_loss = []
 
         st = time.time()  # start time
         # save initial parameters
@@ -701,35 +710,56 @@ class DirectionalFDNVarReceiverPosTrainer(Trainer):
             st_epoch = time.time()
 
             # training
-            epoch_loss = 0.0
-            all_loss = {}
+            epoch_train_loss = 0.0
+            all_train_loss = {}
 
+            # train step
             for data in train_dataset:
                 # normalise b, c at each training step to ensure the sub-FDNs have
                 # unit energy
                 super().normalize(data)
 
                 cur_loss, cur_all_loss = self.train_step(data)
-                epoch_loss += cur_loss
+                epoch_train_loss += cur_loss
 
-                if not all_loss:
-                    all_loss = {key: 0.0 for key in cur_all_loss}
+                if not all_train_loss:
+                    all_train_loss = {key: 0.0 for key in cur_all_loss}
 
                 for key, value in cur_all_loss.items():
-                    all_loss[key] += value.item()
+                    all_train_loss[key] += value.item()
+
+            # validation step
+            for data in valid_dataset:
+                cur_loss, cur_all_loss = self.valid_step(data)
+                epoch_valid_loss += cur_loss
+
+                if not all_valid_loss:
+                    all_valid_loss = {key: 0.0 for key in cur_all_loss}
+
+                for key, value in cur_all_loss.items():
+                    all_valid_loss[key] += value.item()
 
             self.scheduler.step()
-            self.train_loss.append(epoch_loss / len(train_dataset))
-            for key, value in all_loss.items():
-                all_loss[key] /= len(train_dataset)
-            self.individual_train_loss.append(all_loss)
+            self.train_loss.append(epoch_train_loss / len(train_dataset))
+            for key, value in all_train_loss.items():
+                all_train_loss[key] /= len(train_dataset)
+            self.individual_train_loss.append(all_train_loss)
+
+            self.valid_loss.append(epoch_valid_loss / len(valid_dataset))
+            for key, value in all_valid_loss.items():
+                all_valid_loss[key] /= len(valid_dataset)
+            self.individual_valid_loss.append(all_valid_loss)
+            logger.info(
+                f"The validation loss for the current epoch is {self.valid_loss[-1]:.4f}"
+            )
+
             et_epoch = time.time()
             super().save_model(epoch)
             super().print_results(epoch, et_epoch - st_epoch)
 
             # early stopping
             if epoch >= 1:
-                if abs(self.train_loss[-2] - self.train_loss[-1]) <= 0.0001:
+                if abs(self.valid_loss[-2] - self.valid_loss[-1]) <= 1e-3:
                     self.early_stop += 1
                 else:
                     self.early_stop = 0
@@ -750,6 +780,17 @@ class DirectionalFDNVarReceiverPosTrainer(Trainer):
                 src_pos=src_position,
                 rec_pos=rec_position,
             )
+
+        logger.info("Saving validation IRs...")
+        for data in valid_dataset:
+            rec_position = data['listener_position']
+            src_position = data['source_position']
+
+            self.save_ir(data,
+                         directory=self.ir_dir,
+                         src_pos=src_position,
+                         rec_pos=rec_position,
+                         filename_prefix="valid_ir")
 
     def train_step(self, data):
         """Single step of training"""
@@ -784,59 +825,30 @@ class DirectionalFDNVarReceiverPosTrainer(Trainer):
         return loss.item(), all_losses
 
     @torch.no_grad()
-    def validate(self, valid_dataset: DataLoader):
+    def valid_step(self, data):
         """Validate the training with unseen data and save the resulting IRs"""
-        total_loss = 0
-        self.valid_loss = []
-        self.individual_valid_loss = []
+        if self.use_colorless_loss:
+            H_sh, H_sub_fdn = self.net(data)
+            if self.subband_process_config is not None:
+                # filter H in subbands before calculating loss
+                H_sh = H_sh * self.subband_filter_freq_resp.to(torch.complex64)
 
-        for data in valid_dataset:
-            rec_position = data['listener_position']
-            src_position = data['source_position']
-            logger.info("Running the network for new batch of positiions")
-            cur_all_losses = {}
-            if self.use_colorless_loss:
-                H_sh, H_sub_fdn = self.save_ir(data,
-                                               directory=self.ir_dir,
-                                               src_pos=src_position,
-                                               rec_pos=rec_position,
-                                               filename_prefix="valid_ir")
-                if self.subband_process_config is not None:
-                    # filter H in subbands before calculating loss
-                    H_sh = H_sh * self.subband_filter_freq_resp.to(
-                        torch.complex64)
+            # convert SH domain mag response to directional mag response
+            H_dir = self.convert_ambi_rir_to_directional_rir(H_sh)
+            cur_all_losses = super().calculate_losses(data, H_dir, H_sub_fdn)
 
-                # convert SH domain mag response to directional mag response
-                H_dir = self.convert_ambi_rir_to_directional_rir(H_sh)
-                cur_all_losses = super().calculate_losses(
-                    data, H_dir, H_sub_fdn)
+        else:
+            H_sh = self.net(data)
+            if self.subband_process_config is not None:
+                # filter H in subbands before calculating loss
+                H_sh = H_sh * self.subband_filter_freq_resp.to(torch.complex64)
 
-            else:
-                H_sh = self.save_ir(data,
-                                    directory=self.ir_dir,
-                                    src_pos=src_position,
-                                    rec_pos=rec_position,
-                                    filename_prefix="valid_ir")
-                if self.subband_process_config is not None:
-                    # filter H in subbands before calculating loss
-                    H_sh = H_sh * self.subband_filter_freq_resp.to(
-                        torch.complex64)
+            # convert SH domain mag response to directional mag response
+            H_dir = self.convert_ambi_rir_to_directional_rir(H_sh)
+            cur_all_losses = super().calculate_losses(data, H_dir)
 
-                # convert SH domain mag response to directional mag response
-                H_dir = self.convert_ambi_rir_to_directional_rir(H_sh)
-                cur_all_losses = super().calculate_losses(data, H_dir)
-
-            cur_loss = sum(cur_all_losses.values())
-            total_loss += cur_loss
-
-            self.valid_loss.append(cur_loss)
-            self.individual_valid_loss.append(cur_all_losses)
-            logger.info(
-                f"The validation loss for the current position is {cur_loss:.4f}"
-            )
-
-        net_valid_loss = total_loss / len(valid_dataset)
-        logger.info(f"The net validation loss is {net_valid_loss:.4f}")
+        cur_loss = sum(cur_all_losses.values())
+        return cur_loss.item(), cur_all_losses
 
     def convert_ambi_rir_to_directional_rir(self, H_sh: torch.Tensor):
         """

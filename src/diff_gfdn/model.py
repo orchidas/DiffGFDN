@@ -178,6 +178,7 @@ class DiffGFDN(nn.Module):
                 self.delays,
                 self.use_absorption_filters,
                 gains=self.gain_per_sample,
+                use_zero_coupling=feedback_loop_config.use_zero_coupling,
                 common_decay_times=self.common_decay_times,
                 coupling_matrix_type=feedback_loop_config.coupling_matrix_type,
                 coupling_matrix_order=feedback_loop_config.pu_matrix_order,
@@ -199,6 +200,7 @@ class DiffGFDN(nn.Module):
                 self.delays,
                 self.use_absorption_filters,
                 gains=self.gain_per_sample,
+                use_zero_coupling=feedback_loop_config.use_zero_coupling,
                 common_decay_times=self.common_decay_times,
                 coupling_matrix_type=feedback_loop_config.coupling_matrix_type,
                 colorless_feedback_matrix=colorless_feedback_matrix,
@@ -254,9 +256,13 @@ class DiffGFDN(nn.Module):
         """Return the parameters as a dict"""
         param_np = {}
         param_np['delays'] = self.delays.squeeze().cpu().numpy()
-        param_np[
-            'gains_per_sample'] = self.feedback_loop.delay_line_gains.squeeze(
-            ).cpu().numpy()
+        try:
+            param_np[
+                'gains_per_sample'] = self.feedback_loop.delay_line_gains.squeeze(
+                ).cpu().numpy()
+        except Exception as e:
+            logger.warning(e)
+            param_np['gains_per_sample'] = self.feedback_loop.delay_line_gains
         param_np['input_gains'] = self.input_gains.squeeze().cpu().numpy()
         param_np['output_gains'] = self.output_gains.squeeze().cpu().numpy()
 
