@@ -113,7 +113,7 @@ def create_config(
             'initialise_with_opt_values': True,
         },
         'trainer_config': {
-            'max_epochs': 15,
+            'max_epochs': 50,
             'batch_size': 32,
             'save_true_irs': True,
             'train_valid_split': train_valid_split,
