@@ -113,8 +113,9 @@ def create_config(
             'initialise_with_opt_values': True,
         },
         'trainer_config': {
-            'max_epochs': 50,
+            'max_epochs': 20,
             'batch_size': 32,
+            'device': 'gpu',
             'save_true_irs': True,
             'train_valid_split': train_valid_split,
             'hold_out_test_set': {

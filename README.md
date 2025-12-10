@@ -62,7 +62,7 @@ To use an open-source dataset:
 ## Publications
 
 - <i>Neural-network based interpolation of late reverberation in coupled spaces using the common slopes model</i> - Das, Dal Santo, Schlecht and Zvetkovic, IEEE Work. Appl. of Sig. Process. Aud. Acous., IEEE WASPAA 2025 [link](https://kclpure.kcl.ac.uk/portal/en/publications/neural-network-based-interpolation-of-late-reverberation-in-coupl).
-- <i>Differentiable Grouped Feedback Delay Networks: Learning from measured Room Impulse Responses for spatially dynamic late reverberation rendering</i> - Das, Dal Santo, Schlecht and Zvetkovic, submitted to IEEE Trans. Aud. Speech Lang. Process., IEEE TASLP, 2025 [link](https://arxiv.org/html/2508.06686v1).
+- <i>Differentiable Grouped Feedback Delay Networks for Learning Coupled Volume Acoustics</i> - Das, Dal Santo, Schlecht and Zvetkovic, submitted to IEEE Trans. Aud. Speech Lang. Process., IEEE TASLP, 2025 [link](https://arxiv.org/html/2508.06686v1).
 - <i> Differentiable Grouped Feedback Delay Networks for Learning Position and Direction-Dependent Late Reverberation</i> - Das, Schlecht, Dal Santo, Cvetkovic, submitted to IEEE Int. Conf. Aud., Speech Sig. Process., ICASSP 2026.
 
 
