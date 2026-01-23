@@ -14,7 +14,7 @@ import torch
 import yaml
 
 from diff_gfdn.colorless_fdn.utils import get_colorless_fdn_params
-from diff_gfdn.config.config import DiffGFDNConfig, TestSetConfig
+from diff_gfdn.config.config import ColorlessFDNConfig, DiffGFDNConfig, TestSetConfig
 from diff_gfdn.config.config_loader import dump_config_to_pickle, load_and_validate_config
 from diff_gfdn.dataloader import load_dataset, ThreeRoomDataset
 from diff_gfdn.model import DiffGFDNVarReceiverPos
@@ -40,8 +40,23 @@ def create_config(
     train_valid_split: float,
     write_config: bool = True,
     seed_base: int = 23463,
+    allow_coupling: bool = False,
+    use_same_colorless_params: bool = False,
 ) -> DiffGFDNConfig:
-    """Create config file for each subband"""
+    """
+    Create config file for each subband
+    Args:
+        cur_freq_hz (int): frequency at which we will evaluate subband GFDN
+        data_path (str): path to original dataset
+        freq_range (List): maximum and minimum frequencies in octave band processing
+        config_path (str): path where config file is to be saved
+        train_valid_split (str): how to split dataset into training and validation
+        write_config (bool): whether to write the config file to disk
+        seed_base (int): base seed for all training
+        allow_coupling (bool): whether to allow coupling between groups in each subband GFDN
+        use_same_colorless_params (bool): use same m, A, b, c for all subband GFDNs
+
+    """
 
     # parameters from hypertuning
     if cur_freq_hz == 63:
@@ -58,8 +73,35 @@ def create_config(
         num_neurons_per_layer = 2**7
 
     test_set_config = TestSetConfig()
+    colorless_config_dict = ColorlessFDNConfig()
+    use_colorless_loss = not use_same_colorless_params
 
-    seed = seed_base + cur_freq_hz + np.random.randint(0, 100, 1).item()
+    # different options for ablation study
+    if allow_coupling:
+        str_append = '_colorless_loss_diff_delays_with_coupling'
+    elif use_same_colorless_params:
+        str_append = '_same_colorless_params'
+        colorless_config_dict = {
+            'use_colorless_prototype':
+            True,
+            'batch_size':
+            4000,
+            'max_epochs':
+            15,
+            'saved_param_path':
+            str(Path('output/fixed_colorless_fdn_params/').resolve())
+        }
+        colorless_config_dict = ColorlessFDNConfig(**colorless_config_dict)
+    else:
+        str_append = '_colorless_loss_diff_delays'
+
+    # this ensures that the same delay line lengths are used if we are using the
+    # same colorless FDN params, or else different delay line lengths are used for
+    # different subband GFDNs
+    if use_same_colorless_params:
+        seed = seed_base
+    else:
+        seed = seed_base + cur_freq_hz + np.random.randint(0, 100, 1).item()
     config_dict = {
         'seed': seed,
         'room_dataset_path': data_path,
@@ -83,14 +125,14 @@ def create_config(
             'lr': 1e-3,
             'num_freq_bins': 131072,
             'use_edc_mask': True,
+            'use_colorless_loss': use_colorless_loss,
             'edc_loss_weight': 10,
             'sparsity_loss_weight': 2,
-            'use_colorless_loss': True,
             'use_asym_spectral_loss': True,
             'train_dir':
-            f'output/train_split_test/{train_valid_split:.1f}/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays/',
+            f'output/train_split_test/{train_valid_split:.1f}/grid_rir_treble_band_centre={cur_freq_hz}Hz{str_append}/',
             'ir_dir':
-            f'audio/train_split_test/{train_valid_split:.1f}/grid_rir_treble_band_centre={cur_freq_hz}Hz_colorless_loss_diff_delays/',
+            f'audio/train_split_test/{train_valid_split:.1f}/grid_rir_treble_band_centre={cur_freq_hz}Hz{str_append}/',
             'subband_process_config': {
                 'centre_frequency': cur_freq_hz,
                 'num_fraction_octaves': 1,
@@ -100,6 +142,7 @@ def create_config(
         },
         'feedback_loop_config': {
             'coupling_matrix_type': 'scalar_matrix',
+            'use_zero_coupling': not allow_coupling,
         },
         'output_filter_config': {
             'use_svfs': False,
@@ -107,15 +150,23 @@ def create_config(
             'num_neurons_per_layer': num_neurons_per_layer,
             'num_fourier_features': 20,
         },
+        'colorless_fdn_config': colorless_config_dict,
     }
 
     # writing the dictionary to a YAML file
     if write_config:
         logger.info("Writing to config file")
-        cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz'\
-        + '_colorless_loss_diff_delays.yml'
+        cur_config_path = f'{config_path}/treble_data_grid_training_{cur_freq_hz}Hz_{str_append}.yml'
+
+        # Convert the Pydantic config to dict
+        dict_to_dump = config_dict.copy()
+
+        # this fixes the setting of colorless_fdn_config with a dict
+        dict_to_dump["colorless_fdn_config"] = dict_to_dump[
+            "colorless_fdn_config"].model_dump()
+
         with open(cur_config_path, "w", encoding="utf-8") as file:
-            yaml.safe_dump(config_dict, file, default_flow_style=False)
+            yaml.safe_dump(dict_to_dump, file, default_flow_style=False)
 
     diff_gfdn_config = DiffGFDNConfig(**config_dict)
     return diff_gfdn_config
@@ -325,12 +376,16 @@ def inferencing(
 
 
 def main(freqs_list_train: Optional[List] = None,
-         split_ratio: Optional[float] = None):
+         split_ratio: Optional[float] = None,
+         allow_coupling: bool = False,
+         use_same_colorless_params: bool = False):
     """
     Main function to run the training and inferencing
     Args:
         freqs_list_train (List): list of frequencies to train on
         split_ratio (float): training and validation set split ratios
+        allow_coupling (bool): allow coupling in the feedback matrix
+        use_same_colorless_params (bool): use same m, A, b, c for all subband GFDNs
     """
 
     # generate config file
@@ -353,6 +408,8 @@ def main(freqs_list_train: Optional[List] = None,
                 train_valid_split=split_ratio
                 if split_ratio is not None else 0.8,
                 write_config=not training_complete,
+                allow_coupling=allow_coupling,
+                use_same_colorless_params=use_same_colorless_params,
             )
             config_dicts.append(config_dict)
         logger.info("Done creating config files")
@@ -388,7 +445,7 @@ def main(freqs_list_train: Optional[List] = None,
             f'output/treble_data_grid_training_final_rirs_colorless_loss_diff_delays_split={split_ratio:.1f}.pkl'
         ).resolve()
         output_path = Path(
-            f"audio/grid_rir_treble_subband_processing_colorless_loss_diff_delays_split={split_ratio:.1f}"
+            f"audio/train_split_test/{split_ratio:.1f}/grid_rir_treble_subband_processing_colorless_loss_diff_delays"
         )
 
         inferencing(freqs_list, config_dicts, save_filename, output_path)
@@ -401,10 +458,18 @@ if __name__ == '__main__':
         nargs="+",  # Accepts multiple values
         type=float,  # Convert to float
         help="List of frequencies for training")
+    parser.add_argument("--allow_coupling",
+                        action="store_true",
+                        help="Allow coupling in feedback matrix")
+    parser.add_argument(
+        "--use_same_colorless_params",
+        action="store_true",
+        help="Use same delay line lengths and A, b, c for all subband GFDNs")
     parser.add_argument("--split",
                         type=float,
                         default=0.8,
                         help="Training and validation set split ratio")
 
     args = parser.parse_args()
-    main(args.freqs, args.split)
+    main(args.freqs, args.split, args.allow_coupling,
+         args.use_same_colorless_params)

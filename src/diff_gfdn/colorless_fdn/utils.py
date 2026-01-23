@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import os
 import pickle
-from typing import List
+from typing import List, Optional
 
 import torch
 
@@ -16,10 +16,18 @@ class ColorlessFDNResults:
 
 
 def get_colorless_fdn_params(
-        config_dict: DiffGFDNConfig) -> List[ColorlessFDNResults]:
-    """Return a list of ColorlessFDNResults objects, one for each group in the GFDN"""
+        config_dict: DiffGFDNConfig,
+        colorless_dir: Optional[str] = None) -> List[ColorlessFDNResults]:
+    """
+    Return a list of ColorlessFDNResults objects, one for each group in the GFDN
+    Args:
+        config_dict (DiffGFDNConfig): config file
+        colorless_dir (str, optional): directory where colorless optimisation 
+                                       parameters are saved
+    """
     params_opt = []
-    colorless_dir = config_dict.trainer_config.train_dir + "colorless-fdn/"
+    if colorless_dir is None:
+        colorless_dir = config_dict.trainer_config.train_dir + "colorless-fdn/"
     num_groups = config_dict.num_groups
 
     for k in range(num_groups):

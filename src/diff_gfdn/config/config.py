@@ -45,6 +45,8 @@ class FeedbackLoopConfig(BaseModel):
     pu_matrix_order: int = 2**5
     # coupling matrix type
     coupling_matrix_type: CouplingMatrixType = CouplingMatrixType.SCALAR
+    # whether to have non-zero coupling
+    use_zero_coupling: bool = True
 
 
 class MLPTuningConfig(BaseModel):
@@ -97,6 +99,8 @@ class DecayFilterConfig(BaseModel):
 
 
 class TestSetConfig(BaseModel):
+    """Config for creating a test set"""
+
     seed: int = 4314
     ratio: float = 0.1
 
@@ -193,6 +197,14 @@ class ColorlessFDNConfig(BaseModel):
     lr: float = 0.01
     # weigth for the sparsity loss
     alpha: float = 1
+    # whether to load fixed parameters for each subband
+    saved_param_path: Optional[str] = None
+
+    @computed_field
+    @property
+    def load_fixed_parameters(self) -> bool:
+        """Whether to load pre-saved A, b, c"""
+        return self.saved_param_path is not None
 
 
 class DiffGFDNConfig(BaseModel):
