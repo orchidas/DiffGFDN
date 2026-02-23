@@ -10,7 +10,7 @@ To do this, the <b>Common Slopes (CS)</b> model is leveraged. MLPs are trained i
 
 ### Dataset
 
-We have tested on the dataset published [here](https://zenodo.org/records/13338346) which has three coupled rooms simulated with Treble's hybrid solver and has 2nd order ambisonic SRIRs at 838 receiver locations for a single source location. To parse the dataset and save the SRIRs and CS parameters in octave bands, run `python3 src/convert_mat_to_pkl_ambi.py`.
+We have tested on the dataset published [here](https://zenodo.org/records/13338346) which has three coupled rooms simulated with Treble's hybrid solver and has 2nd order ambisonic SRIRs at 838 receiver locations for a single source location. The data is stored in `Resources/Georg_3room_FDTD`. To parse the dataset and save the SRIRs and CS parameters in octave bands, run `python3 src/convert_mat_to_pkl_ambi.py`.
 
 ### Training
 
@@ -62,8 +62,8 @@ To use an open-source dataset:
 ## Publications
 
 - <i>Neural-network based interpolation of late reverberation in coupled spaces using the common slopes model</i> - Das, Dal Santo, Schlecht and Zvetkovic, IEEE Work. Appl. of Sig. Process. Aud. Acous., IEEE WASPAA 2025 [link](https://kclpure.kcl.ac.uk/portal/en/publications/neural-network-based-interpolation-of-late-reverberation-in-coupl).
-- <i>Differentiable Grouped Feedback Delay Networks for Learning Coupled Volume Acoustics</i> - Das, Dal Santo, Schlecht and Zvetkovic, submitted to IEEE Trans. Aud. Speech Lang. Process., IEEE TASLP, 2025 [link](https://arxiv.org/html/2508.06686v1).
-- <i> Differentiable Grouped Feedback Delay Networks for Learning Position and Direction-Dependent Late Reverberation</i> - Das, Schlecht, Dal Santo, Cvetkovic, submitted to IEEE Int. Conf. Aud., Speech Sig. Process., ICASSP 2026.
+- <i>Differentiable Grouped Feedback Delay Networks for Learning Coupled Volume Acoustics</i> - Das, Dal Santo, Schlecht and Zvetkovic, in IEEE Trans. Aud. Speech Lang. Process., IEEE TASLP, 2025 [link](https://arxiv.org/html/2508.06686v1).
+- <i> Differentiable Grouped Feedback Delay Networks for Learning Position and Direction-Dependent Late Reverberation</i> - Das, Schlecht, Dal Santo, Cvetkovic, in IEEE Int. Conf. Aud., Speech Sig. Process., ICASSP 2026 [link](https://kclpure.kcl.ac.uk/portal/en/publications/differentiable-grouped-feedback-delay-networks-for-learning-direc/).
 
 
 
