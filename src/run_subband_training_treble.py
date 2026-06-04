@@ -6,30 +6,15 @@ from typing import List, Optional
 
 from loguru import logger
 import numpy as np
-import pandas as pd
-import pyfar as pf
-from scipy.signal import fftconvolve, sosfiltfilt
-import soundfile as sf
-import torch
 import yaml
 
-from diff_gfdn.colorless_fdn.utils import get_colorless_fdn_params
 from diff_gfdn.config.config import ColorlessFDNConfig, DiffGFDNConfig, TestSetConfig
 from diff_gfdn.config.config_loader import dump_config_to_pickle, load_and_validate_config
-from diff_gfdn.dataloader import load_dataset, ThreeRoomDataset
-from diff_gfdn.model import DiffGFDNVarReceiverPos
+from diff_gfdn.inference import infer_all_octave_bands_omni_gfdn
 from diff_gfdn.solver import run_training_var_receiver_pos
-from diff_gfdn.utils import get_response
 
 # flake8: noqa: E231
 # pylint: disable=W0621, W0632, E0402, C0301
-
-
-def sum_arrays(group):
-    """Sum subband RIRs to get a broadband RIR"""
-    filtered = np.stack(group['filtered_time_samples'].values)
-    summed_filtered = np.sum(filtered, axis=0)
-    return summed_filtered
 
 
 def create_config(
@@ -204,177 +189,6 @@ def training(freqs_list: List, config_dicts: List[DiffGFDNConfig]):
         logger.info('Training complete')
 
 
-def inferencing(
-    freqs_list: List,
-    config_dicts: List[DiffGFDNConfig],
-    save_filename: str,
-    output_path: Path,
-):
-    """Run inferencing and save the full band RIRs for each position"""
-
-    # prepare the reconstructing filterbank
-    if config_dicts[
-            0].trainer_config.subband_process_config.use_amp_preserving_filterbank:
-        subband_filters, _ = pf.dsp.filter.reconstructing_fractional_octave_bands(
-            None,
-            num_fractions=config_dicts[0].trainer_config.
-            subband_process_config.num_fraction_octaves,
-            frequency_range=(freqs_list[0], freqs_list[-1]),
-            sampling_rate=config_dicts[0].sample_rate,
-        )
-    else:
-        subband_filters = pf.dsp.filter.fractional_octave_bands(
-            None,
-            num_fractions=config_dicts[0].trainer_config.
-            subband_process_config.num_fraction_octaves,
-            frequency_range=(freqs_list[0], freqs_list[-1]),
-            sampling_rate=config_dicts[0].sample_rate,
-        )
-
-    if not os.path.exists(save_filename):
-        synth_subband_rirs = pd.DataFrame(columns=[
-            'frequency', 'position', 'time_samples', 'filtered_time_samples'
-        ])
-
-        if not os.path.exists(output_path.resolve()):
-            os.mkdir(output_path.resolve())
-
-        # loop through all subband frequencies
-        for k in range(len(freqs_list)):
-            logger.info(
-                f'Running inferencing for subband = {freqs_list[k]} Hz')
-
-            fdir = f'{output_path.resolve()}/fc={freqs_list[k]}Hz'
-            if not os.path.exists(fdir):
-                os.mkdir(fdir)
-
-            config_dict = config_dicts[k]
-            room_data = ThreeRoomDataset(
-                Path(config_dict.room_dataset_path).resolve(), config_dict)
-
-            config_dict = config_dict.model_copy(
-                update={"num_groups": room_data.num_rooms})
-            trainer_config = config_dict.trainer_config
-
-            # force the trainer config device to be CPU
-            if trainer_config.device != 'cpu':
-                trainer_config = trainer_config.model_copy(
-                    update={"device": 'cpu'})
-
-            # prepare the training and validation data for DiffGFDN
-            train_dataset, _ = load_dataset(
-                room_data,
-                trainer_config.device,
-                train_valid_split_ratio=1.0,
-                batch_size=trainer_config.batch_size,
-                shuffle=False)
-
-            if config_dict.colorless_fdn_config.use_colorless_prototype:
-                colorless_fdn_params = get_colorless_fdn_params(config_dict)
-            else:
-                colorless_fdn_params = None
-
-            # initialise the model
-            model = DiffGFDNVarReceiverPos(
-                config_dict.sample_rate,
-                config_dict.num_groups,
-                config_dict.delay_length_samps,
-                trainer_config.device,
-                config_dict.feedback_loop_config,
-                config_dict.output_filter_config,
-                config_dict.decay_filter_config.use_absorption_filters,
-                common_decay_times=room_data.common_decay_times
-                if config_dict.decay_filter_config.initialise_with_opt_values
-                else None,
-                learn_common_decay_times=config_dict.decay_filter_config.
-                learn_common_decay_times,
-                use_colorless_loss=trainer_config.use_colorless_loss,
-                colorless_fdn_params=colorless_fdn_params)
-
-            checkpoint_dir = Path(trainer_config.train_dir +
-                                  'checkpoints/').resolve()
-
-            # load the trained weights for the particular epoch
-            checkpoint = torch.load(
-                f'{checkpoint_dir}/model_e{trainer_config.max_epochs-1}.pt',
-                weights_only=True,
-                map_location=torch.device('cpu'))
-            # Load the trained model state
-            model.load_state_dict(checkpoint)
-            # in eval mode, no gradients are calculated
-            model.eval()
-
-            # loop through all positions
-            for data in train_dataset:
-                position = data['listener_position'].detach().cpu().numpy()
-
-                if model.use_colorless_loss:
-                    _, _, h = get_response(data, model)
-                else:
-                    _, h = get_response(data, model)
-
-                # loop over all positions for a particular frequency band and add it to a dataframe
-                for num_pos in range(position.shape[0]):
-                    cur_rir = h[num_pos, :].detach().cpu().numpy()
-
-                    if trainer_config.subband_process_config.use_amp_preserving_filterbank:
-                        cur_rir_filtered = fftconvolve(
-                            cur_rir,
-                            subband_filters.coefficients[k, :],
-                            mode='full')
-                    else:
-                        cur_rir_filtered = sosfiltfilt(
-                            subband_filters.coefficients[k, ...], cur_rir)
-
-                    # save filtered RIRs
-                    filename = f'{fdir}/ir_({position[num_pos, 0]:.2f}, {position[num_pos, 1]:.2f}, '\
-                    f'{position[num_pos, 2]:.2f}).wav'
-
-                    sf.write(filename, cur_rir_filtered,
-                             int(config_dicts[0].sample_rate))
-
-                    # position should be saved as tuple because numpy array is unhashable
-                    new_row = pd.DataFrame({
-                        'frequency': [freqs_list[k]],
-                        'position':
-                        [(position[num_pos, 0], position[num_pos,
-                                                         1], position[num_pos,
-                                                                      2])],
-                        'filtered_time_samples': [cur_rir_filtered],
-                        'time_samples': [cur_rir],
-                    })
-                    synth_subband_rirs = pd.concat(
-                        [synth_subband_rirs, new_row], ignore_index=True)
-
-        synth_subband_rirs.to_pickle(save_filename)
-    else:
-        logger.info('Reading saved pickle file')
-        synth_subband_rirs = pd.read_pickle(save_filename)
-
-    # Save the synthesised RIRs
-    logger.info('Saving synthesised RIRs')
-
-    # Group by position and sum the filtered_time_samples over each frequency band,
-    synth_rirs = synth_subband_rirs.groupby('position').apply(sum_arrays)
-
-    # Convert to DataFrame if needed
-    synth_rirs_df = synth_rirs.reset_index()
-    synth_rirs_df.columns = ['position', 'filtered_time_samples']
-
-    if not os.path.isdir(output_path):
-        os.makedir(output_path)
-
-    # Save each row's 'time_samples' as a WAV file
-    for _, row in synth_rirs_df.iterrows():
-        position = row['position']
-        values = row['filtered_time_samples']
-
-        filename = f'{output_path.resolve()}/ir_({position[0]:.2f}, {position[1]:.2f}, {position[2]:.2f}).wav'
-        sf.write(filename, values, int(config_dicts[0].sample_rate))
-
-    logger.info("Done...")
-
-
 def main(freqs_list_train: Optional[List] = None,
          split_ratio: Optional[float] = None,
          allow_coupling: bool = False,
@@ -448,7 +262,8 @@ def main(freqs_list_train: Optional[List] = None,
             f"audio/train_split_test/{split_ratio:.1f}/grid_rir_treble_subband_processing_colorless_loss_diff_delays"
         )
 
-        inferencing(freqs_list, config_dicts, save_filename, output_path)
+        infer_all_octave_bands_omni_gfdn(freqs_list, config_dicts,
+                                         save_filename, output_path)
 
 
 if __name__ == '__main__':
