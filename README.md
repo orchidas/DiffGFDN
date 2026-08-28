@@ -55,7 +55,7 @@ To use an open-source dataset:
 	- To run training with one frequency-independent omni-directional DiffGFDN for each octave band, create config files for each band, and run the training for each config file. Alternately, run `python3 src/run_subband_training_treble.py --freqs <list_of_octave_frequencies>`
 	- To only run inference on the trained parallel octave-band GFDNs, run `python3 src/run_subband_training_treble.py`. This will save the synthesised RIRs as a pkl file.
 - Directional DiffGFDN
-	- To run training on a single frequency band, create a config file (example [here](./data/config/directional_fdn/treble_data_grid_training_1000Hz_directional_fdn_grid_res=0.6m.yml)).
+	- To run training on a single frequency band, create a config file (example [here](./data/config/directional_fdn/treble_data_grid_training_1000Hz_directional_fdn_grid_res=0.6m.yml)). Then run python3 src/run_model.py -c <config_file_path>.
 	- After traning all frequency bands, inference can be run using `infer_all_octave_bands_directional_fdn` in [src/diff_gfdn.inference.py](src/diff_gfdn/inference.py).
 
 
